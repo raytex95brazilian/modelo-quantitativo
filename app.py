@@ -22,10 +22,21 @@ LIGAS = {
 @st.cache_data
 def extrair_dados(url):
     df = pd.read_csv(url)
+    
+    # TRADUTOR DE COLUNAS: Padroniza o modelo europeu para o nosso sistema
+    traducao = {
+        'HomeTeam': 'Home',
+        'AwayTeam': 'Away',
+        'FTHG': 'HG',
+        'FTAG': 'AG'
+    }
+    df = df.rename(columns=traducao)
+    
     if 'Season' in df.columns:
         df = df[df['Season'] == df['Season'].max()]
     if not ('HC' in df.columns and 'AC' in df.columns):
         df['HC'], df['AC'] = 0.0, 0.0
+        
     return df.dropna(subset=['Home', 'Away', 'HG', 'AG'])
 
 def calcular_power_rating(df, t_casa, t_fora):
