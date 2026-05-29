@@ -40,15 +40,49 @@ def extrair_dados(url):
     return df.dropna(subset=['Home', 'Away', 'HG', 'AG'])
 
 def calcular_power_rating(df, t_casa, t_fora):
-    m_hg, m_ag = df['HG'].mean(), df['AG'].mean()
-    j_c, j_f = df[df['Home'] == t_casa], df[df['Away'] == t_fora]
-    
-    atq_c = j_c['HG'].mean() / m_hg
-    def_f = j_f['HG'].mean() / m_hg
-    atq_f = j_f['AG'].mean() / m_ag
-    def_c = j_c['AG'].mean() / m_ag
-    
-    return atq_c * def_f * m_hg, atq_f * def_c * m_ag
+    # =================================================================
+    # MOTOR PURISTA DE POISSON (CÁLCULO ESTRITO CASA vs FORA)
+    # =================================================================
+
+    # 1. Médias Globais da Liga
+    media_gols_feitos_em_casa = df['HG'].mean()
+    media_gols_feitos_fora = df['AG'].mean()
+    # Pela simetria do jogo, gols sofridos em casa é a média de gols feitos fora, e vice-versa
+    media_gols_sofridos_em_casa = media_gols_feitos_fora  
+    media_gols_sofridos_fora = media_gols_feitos_em_casa
+
+    # 2. Desempenho Estrito do Mandante (APENAS JOGANDO EM CASA)
+    df_casa = df[df['Home'] == t_casa]
+    if not df_casa.empty:
+        gols_feitos_mandante = df_casa['HG'].mean()
+        gols_sofridos_mandante = df_casa['AG'].mean()
+    else:
+        # Fallback de segurança se não houver dados (início de temporada)
+        gols_feitos_mandante = media_gols_feitos_em_casa
+        gols_sofridos_mandante = media_gols_sofridos_em_casa
+
+    # 3. Desempenho Estrito do Visitante (APENAS JOGANDO FORA)
+    df_fora = df[df['Away'] == t_fora]
+    if not df_fora.empty:
+        gols_feitos_visitante = df_fora['AG'].mean()
+        gols_sofridos_visitante = df_fora['HG'].mean()
+    else:
+        # Fallback de segurança
+        gols_feitos_visitante = media_gols_feitos_fora
+        gols_sofridos_visitante = media_gols_sofridos_fora
+
+    # 4. Cálculo das Forças Isoladas
+    forca_atq_casa = gols_feitos_mandante / media_gols_feitos_em_casa
+    forca_def_casa = gols_sofridos_mandante / media_gols_sofridos_em_casa
+
+    forca_atq_fora = gols_feitos_visitante / media_gols_feitos_fora
+    forca_def_fora = gols_sofridos_visitante / media_gols_sofridos_fora
+
+    # 5. Expectativa de Gols (xG) Final
+    xg_c = forca_atq_casa * forca_def_fora * media_gols_feitos_em_casa
+    xg_f = forca_atq_fora * forca_def_casa * media_gols_feitos_fora
+
+    return xg_c, xg_f
 
 def calcular_probabilidades(xg_c, xg_f):
     p_c = [poisson.pmf(i, xg_c) for i in range(6)]
@@ -71,69 +105,4 @@ def acao_kelly(prob, odd_b):
     margem = (prob * odd_b) - 1
     stake = max(0, margem / (odd_b - 1)) * 100
     if margem > 0.02 and stake > 0.1:
-        return margem * 100, f"✅ APOSTAR: {stake:.2f}% DA BANCA"
-    return margem * 100, "❌ NÃO APOSTAR"
-
-# ==========================================
-# 2. INTERFACE VISUAL (FRONT-END)
-# ==========================================
-st.title("📈 Motor Quantitativo de Alavancagem")
-st.markdown("---")
-
-st.sidebar.header("⚙️ Configuração do Jogo")
-liga_selecionada = st.sidebar.selectbox("Escolha a Liga", list(LIGAS.keys()))
-
-df = extrair_dados(LIGAS[liga_selecionada])
-times = sorted(df['Home'].unique())
-
-c1, c2 = st.columns(2)
-with c1: t_casa = st.selectbox("🏠 Time Mandante", times)
-with c2: t_fora = st.selectbox("✈️ Time Visitante", times)
-
-st.sidebar.markdown("---")
-st.sidebar.header("📊 Odds da Banca (Opcional)")
-
-def ler_odd(label):
-    valor = st.sidebar.text_input(label, value="1.00")
-    try:
-        return float(valor.replace(',', '.'))
-    except:
-        return 1.00
-
-odd_h = ler_odd("Vitória Casa (1)")
-odd_d = ler_odd("Empate (X)")
-odd_a = ler_odd("Vitória Fora (2)")
-odd_o25 = ler_odd("Over 2.5")
-odd_btts = ler_odd("Ambas Marcam (Sim)")
-
-if st.button("🚀 EXECUTAR ANÁLISE", use_container_width=True):
-    if t_casa == t_fora:
-        st.error("Selecione times diferentes para análise.")
-    else:
-        xg_c, xg_f = calcular_power_rating(df, t_casa, t_fora)
-        probs = calcular_probabilidades(xg_c, xg_f)
-        
-        st.markdown("### 🎯 Expectativa de Gols (xG)")
-        col_x1, col_x2 = st.columns(2)
-        col_x1.metric(label=f"xG {t_casa}", value=f"{xg_c:.2f}")
-        col_x2.metric(label=f"xG {t_fora}", value=f"{xg_f:.2f}")
-        
-        st.markdown("### 💼 Veredito dos Mercados")
-        mercados = [
-            ("Vitória Casa", probs['H'], odd_h),
-            ("Empate", probs['D'], odd_d),
-            ("Vitória Fora", probs['A'], odd_a),
-            ("Over 2.5", probs['O25'], odd_o25),
-            ("Ambas Marcam", probs['BTTS_S'], odd_btts)
-        ]
-        
-        for nome, p, odd_b in mercados:
-            odd_j = 1/p
-            with st.expander(f"{nome} - Probabilidade: {p*100:.1f}% | Odd Justa: {odd_j:.2f}", expanded=True):
-                if odd_b > 1.0:
-                    margem, acao = acao_kelly(p, odd_b)
-                    st.write(f"**Cotação da Banca:** {odd_b:.2f} | **Valor Esperado (+EV):** {margem:+.2f}%")
-                    if "APOSTAR" in acao: st.success(acao)
-                    else: st.error(acao)
-                else:
-                    st.warning("Insira a Odd da banca no menu lateral para calcular a Stake.")
+        return margem
