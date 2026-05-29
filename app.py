@@ -5,7 +5,8 @@ from scipy.stats import poisson
 import requests
 import io
 
-st.set_page_config(page_title="Motor PRO 2.13 - Completo", layout="wide")
+# Configuração da página
+st.set_page_config(page_title="Motor PRO 2.14", layout="wide")
 
 LIGAS = {
     "Brasileirão Série A": "https://www.football-data.co.uk/new/BRA.csv",
@@ -42,10 +43,17 @@ def calcular_power_rating(df, t_casa, t_fora):
     xg_f = (gf_v / media_gf_f) * (gs_m / media_gf_c) * media_gf_f
     return xg_c, xg_f, amostra
 
+# Função para ler odds sem erro
+def ler_odd(label):
+    val = st.sidebar.text_input(label, value="")
+    if not val: return 1.00
+    try: return float(val.replace(',', '.'))
+    except: return 1.00
+
 # ==========================================
-# INTERFACE
+# INTERFACE E LÓGICA
 # ==========================================
-st.title("🚀 Motor Quantitativo PRO 2.13")
+st.title("🚀 Motor Quantitativo PRO 2.14")
 liga_sel = st.sidebar.selectbox("Liga", list(LIGAS.keys()))
 banca_total = st.sidebar.number_input("Banca Total (R$)", value=0.0, step=100.0)
 df = extrair_dados(LIGAS[liga_sel])
@@ -57,23 +65,23 @@ if not df.empty:
     t_fora = c2.selectbox("✈️ Visitante", times)
 
     st.sidebar.subheader("Odds da Corretora")
-    odds = {
-        "Vitória Casa": float(st.sidebar.text_input("Vitória Casa", "2.00").replace(',', '.')),
-        "Empate": float(st.sidebar.text_input("Empate", "3.30").replace(',', '.')),
-        "Vitória Fora": float(st.sidebar.text_input("Vitória Fora", "3.80").replace(',', '.')),
-        "Casa ou Empate": float(st.sidebar.text_input("Casa ou Empate", "1.25").replace(',', '.')),
-        "Fora ou Empate": float(st.sidebar.text_input("Fora ou Empate", "1.80").replace(',', '.')),
-        "Empate Anula Casa": float(st.sidebar.text_input("Empate Anula Casa", "1.45").replace(',', '.')),
-        "Empate Anula Fora": float(st.sidebar.text_input("Empate Anula Fora", "2.70").replace(',', '.')),
-        "Mais de 2.5 gols": float(st.sidebar.text_input("Mais de 2.5 gols", "1.90").replace(',', '.')),
-        "Ambos marcam": float(st.sidebar.text_input("Ambos marcam", "1.85").replace(',', '.'))
+    odds_map = {
+        "Vitória Casa": ler_odd("Vitória Casa"),
+        "Empate": ler_odd("Empate"),
+        "Vitória Fora": ler_odd("Vitória Fora"),
+        "Casa ou Empate": ler_odd("Casa ou Empate"),
+        "Fora ou Empate": ler_odd("Fora ou Empate"),
+        "Empate Anula Casa": ler_odd("Empate Anula Casa"),
+        "Empate Anula Fora": ler_odd("Empate Anula Fora"),
+        "Mais de 2.5 gols": ler_odd("Mais de 2.5 gols"),
+        "Ambos marcam": ler_odd("Ambos marcam")
     }
 
     if st.button("CALCULAR MOTOR"):
         xg_c, xg_f, amostra = calcular_power_rating(df, t_casa, t_fora)
         confianca = min(100, (amostra / 38) * 100)
         
-        # Indicador visual
+        # Indicador visual de confiança
         if confianca <= 50: st.markdown(f"# 🔴 CONFIANÇA: {confianca:.0f}%")
         elif confianca <= 85: st.markdown(f"# 🟡 CONFIANÇA: {confianca:.0f}%")
         else: st.markdown(f"# 🟢 CONFIANÇA: {confianca:.0f}%")
@@ -93,11 +101,11 @@ if not df.empty:
         prob["Mais de 2.5 gols"] = sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i + j > 2.5)
         prob["Ambos marcam"] = (1 - p_c[0]) * (1 - p_f[0])
 
-        apostar, nao_apostar = [], []
-
         st.subheader("📊 Análise Detalhada")
+        apostar, nao_apostar = [], []
+        
         for merc, p in prob.items():
-            odd_b = odds[merc]
+            odd_b = odds_map[merc]
             odd_j = 1/p
             margem = (p * odd_b) - 1
             
