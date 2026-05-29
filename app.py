@@ -21,7 +21,9 @@ LIGAS = {
 
 @st.cache_data
 def extrair_dados(url):
-    df = pd.read_csv(url)
+    # DISFARCE DE NAVEGADOR: Impede que o servidor bloqueie o app achando que é um bot
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    df = pd.read_csv(url, storage_options=headers)
     
     # TRADUTOR DE COLUNAS: Padroniza o modelo europeu para o nosso sistema
     traducao = {
@@ -38,7 +40,6 @@ def extrair_dados(url):
         df['HC'], df['AC'] = 0.0, 0.0
         
     return df.dropna(subset=['Home', 'Away', 'HG', 'AG'])
-
 def calcular_power_rating(df, t_casa, t_fora):
     # =================================================================
     # MOTOR PURISTA DE POISSON (CÁLCULO ESTRITO CASA vs FORA)
