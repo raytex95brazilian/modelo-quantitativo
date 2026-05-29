@@ -75,4 +75,23 @@ if not df.empty:
         
         prob_h = sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i > j)
         prob_d = sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i == j)
-        prob_a = sum(p_c[i] * p_f[j] for i in range(11)
+        prob_a = sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i < j)
+        
+        # Cálculos de prob
+        prob_1x = prob_h + prob_d
+        prob_x2 = prob_a + prob_d
+        prob_dnb_h = prob_h / (prob_h + prob_a) if (prob_h + prob_a) > 0 else 0
+        prob_dnb_a = prob_a / (prob_h + prob_a) if (prob_h + prob_a) > 0 else 0
+        prob_o25 = sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i + j > 2.5)
+        prob_btts = (1 - p_c[0]) * (1 - p_f[0])
+
+        # Tabela Final Limpa
+        res = pd.DataFrame({
+            "Mercado": ["Casa", "Empate", "Fora", "Casa ou Empate", "Fora ou Empate", "Casa ou Anula", "Fora ou Anula", "Mais de 2.5 Gols", "Ambas Marcam"],
+            "Fairline": [1/prob_h, 1/prob_d, 1/prob_a, 1/prob_1x, 1/prob_x2, 1/prob_dnb_h, 1/prob_dnb_a, 1/prob_o25, 1/prob_btts],
+            "Odd Banca": [odd_h, odd_d, odd_a, odd_1x, odd_x2, odd_dnb_h, odd_dnb_a, odd_o25, odd_btts],
+            "EV %": [(prob_h*odd_h-1)*100, (prob_d*odd_d-1)*100, (prob_a*odd_a-1)*100, (prob_1x*odd_1x-1)*100, 
+                     (prob_x2*odd_x2-1)*100, (prob_dnb_h*odd_dnb_h-1)*100, (prob_dnb_a*odd_dnb_a-1)*100, 
+                     (prob_o25*odd_o25-1)*100, (prob_btts*odd_btts-1)*100]
+        })
+        st.table(res.style.format({"Fairline": "{:.2f}", "Odd Banca": "{:.2f}", "EV %": "{:.1f}%"}))
