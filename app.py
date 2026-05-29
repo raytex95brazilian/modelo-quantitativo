@@ -5,8 +5,7 @@ from scipy.stats import poisson
 import requests
 import io
 
-# Configuração
-st.set_page_config(page_title="Motor PRO 2.9", layout="wide")
+st.set_page_config(page_title="Motor PRO 2.12", layout="wide")
 
 LIGAS = {
     "Brasileirão Série A": "https://www.football-data.co.uk/new/BRA.csv",
@@ -31,7 +30,6 @@ def extrair_dados(url):
 def calcular_power_rating(df, t_casa, t_fora):
     media_gf_c = np.average(df['HG'], weights=df['Peso'])
     media_gf_f = np.average(df['AG'], weights=df['Peso'])
-    
     df_c, df_f = df[df['Home'] == t_casa], df[df['Away'] == t_fora]
     amostra = len(df_c) + len(df_f)
     
@@ -47,57 +45,72 @@ def calcular_power_rating(df, t_casa, t_fora):
 # ==========================================
 # INTERFACE
 # ==========================================
-st.title("🚀 Motor Quantitativo PRO 2.9")
+st.title("🚀 Motor Quantitativo PRO 2.12")
 liga_sel = st.sidebar.selectbox("Liga", list(LIGAS.keys()))
+banca_total = st.sidebar.number_input("Banca Total (R$)", value=0.0, step=100.0)
 df = extrair_dados(LIGAS[liga_sel])
 
 if not df.empty:
     times = sorted(df['Home'].unique())
     c1, c2 = st.columns(2)
-    t_casa = c1.selectbox("🏠 Time da Casa", times)
-    t_fora = c2.selectbox("✈️ Time Visitante", times)
+    t_casa = c1.selectbox("🏠 Mandante", times)
+    t_fora = c2.selectbox("✈️ Visitante", times)
 
     st.sidebar.subheader("Odds da Corretora")
     odds = {
-        "Vitória Casa": float(st.sidebar.text_input("Vitória Casa", "2.00").replace(',', '.')),
+        "Casa": float(st.sidebar.text_input("Vitória Casa", "2.00").replace(',', '.')),
         "Empate": float(st.sidebar.text_input("Empate", "3.30").replace(',', '.')),
-        "Vitória Fora": float(st.sidebar.text_input("Vitória Fora", "3.80").replace(',', '.')),
+        "Fora": float(st.sidebar.text_input("Vitória Fora", "3.80").replace(',', '.')),
         "Casa ou Empate": float(st.sidebar.text_input("Casa ou Empate", "1.25").replace(',', '.')),
         "Fora ou Empate": float(st.sidebar.text_input("Fora ou Empate", "1.80").replace(',', '.')),
-        "Empate Anula Casa": float(st.sidebar.text_input("Empate Anula Casa", "1.45").replace(',', '.')),
-        "Empate Anula Fora": float(st.sidebar.text_input("Empate Anula Fora", "2.70").replace(',', '.')),
+        "Casa ou Anula": float(st.sidebar.text_input("Casa ou Anula", "1.45").replace(',', '.')),
+        "Fora ou Anula": float(st.sidebar.text_input("Fora ou Anula", "2.70").replace(',', '.')),
         "Mais de 2.5 gols": float(st.sidebar.text_input("Mais de 2.5 gols", "1.90").replace(',', '.')),
         "Ambos marcam": float(st.sidebar.text_input("Ambos marcam", "1.85").replace(',', '.'))
     }
 
     if st.button("CALCULAR MOTOR"):
         xg_c, xg_f, amostra = calcular_power_rating(df, t_casa, t_fora)
+        confianca = min(100, (amostra / 38) * 100)
+        
+        if confianca <= 50: st.markdown(f"# 🔴 CONFIANÇA: {confianca:.0f}%")
+        elif confianca <= 85: st.markdown(f"# 🟡 CONFIANÇA: {confianca:.0f}%")
+        else: st.markdown(f"# 🟢 CONFIANÇA: {confianca:.0f}%")
+
         p_c = [poisson.pmf(i, xg_c) for i in range(11)]
         p_f = [poisson.pmf(i, xg_f) for i in range(11)]
         
         prob = {
-            "Vitória Casa": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i > j),
+            "Casa": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i > j),
             "Empate": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i == j),
-            "Vitória Fora": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i < j)
+            "Fora": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i < j)
         }
-        prob["Casa ou Empate"] = prob["Vitória Casa"] + prob["Empate"]
-        prob["Fora ou Empate"] = prob["Vitória Fora"] + prob["Empate"]
-        prob["Empate Anula Casa"] = prob["Vitória Casa"] / (prob["Vitória Casa"] + prob["Vitória Fora"]) if (prob["Vitória Casa"] + prob["Vitória Fora"]) > 0 else 0
-        prob["Empate Anula Fora"] = prob["Vitória Fora"] / (prob["Vitória Casa"] + prob["Vitória Fora"]) if (prob["Vitória Casa"] + prob["Vitória Fora"]) > 0 else 0
+        prob["Casa ou Empate"] = prob["Casa"] + prob["Empate"]
+        prob["Fora ou Empate"] = prob["Fora"] + prob["Empate"]
+        prob["Casa ou Anula"] = prob["Casa"] / (prob["Casa"] + prob["Fora"]) if (prob["Casa"] + prob["Fora"]) > 0 else 0
+        prob["Fora ou Anula"] = prob["Fora"] / (prob["Casa"] + prob["Fora"]) if (prob["Casa"] + prob["Fora"]) > 0 else 0
         prob["Mais de 2.5 gols"] = sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i + j > 2.5)
         prob["Ambos marcam"] = (1 - p_c[0]) * (1 - p_f[0])
 
-        st.markdown(f"**Confiança:** {'ALTA' if amostra > 20 else 'BAIXA'} ({amostra} jogos)")
+        apostar, nao_apostar = [], []
 
         for merc, p in prob.items():
-            odd_banca = odds[merc]
-            odd_justa = 1/p
-            margem = (p * odd_banca) - 1
+            odd_b = odds[merc]
+            margem = (p * odd_b) - 1
             
-            with st.expander(f"{merc} - Chance: {p*100:.1f}%"):
-                if margem >= 0.10 and amostra > 20:
-                    st.success(f"✅ APOSTAR: Vantagem de {margem*100:.1f}%")
-                else:
-                    st.error("❌ NÃO APOSTAR")
-                
-                st.write(f"Odd justa: **{odd_justa:.2f}** | Odd da banca: **{odd_banca:.2f}**")
+            # Lógica da Stake Condicional
+            if banca_total > 0:
+                valor_stake = banca_total * 0.04
+                msg_stake = f"| APOSTAR 4% (R$ {valor_stake:.2f})"
+            else:
+                msg_stake = "| APOSTAR 4%"
+            
+            if margem >= 0.10 and confianca > 50:
+                apostar.append(f"✅ **{merc}** ({p*100:.1f}% chance) {msg_stake}")
+            else:
+                nao_apostar.append(f"❌ **{merc}** (EV: {margem*100:.1f}%)")
+
+        st.markdown("---")
+        st.subheader("📋 Resumo Executivo")
+        if apostar: st.success("SUGESTÕES DE OPERAÇÃO:\n\n" + "\n\n".join(apostar))
+        if nao_apostar: st.warning("NÃO OPERAR (Risco elevado ou sem valor): \n\n" + "\n\n".join(nao_apostar))
