@@ -5,7 +5,6 @@ from scipy.stats import poisson
 import requests
 import io
 
-# Configuração da página
 st.set_page_config(page_title="Motor PRO 2.14", layout="wide")
 
 LIGAS = {
@@ -43,7 +42,6 @@ def calcular_power_rating(df, t_casa, t_fora):
     xg_f = (gf_v / media_gf_f) * (gs_m / media_gf_c) * media_gf_f
     return xg_c, xg_f, amostra
 
-# Função para ler odds sem erro
 def ler_odd(label):
     val = st.sidebar.text_input(label, value="")
     if not val: return 1.00
@@ -51,7 +49,7 @@ def ler_odd(label):
     except: return 1.00
 
 # ==========================================
-# INTERFACE E LÓGICA
+# INTERFACE
 # ==========================================
 st.title("🚀 Motor Quantitativo PRO 2.14")
 liga_sel = st.sidebar.selectbox("Liga", list(LIGAS.keys()))
@@ -65,7 +63,7 @@ if not df.empty:
     t_fora = c2.selectbox("✈️ Visitante", times)
 
     st.sidebar.subheader("Odds da Corretora")
-    odds_map = {
+    odds = {
         "Vitória Casa": ler_odd("Vitória Casa"),
         "Empate": ler_odd("Empate"),
         "Vitória Fora": ler_odd("Vitória Fora"),
@@ -81,7 +79,6 @@ if not df.empty:
         xg_c, xg_f, amostra = calcular_power_rating(df, t_casa, t_fora)
         confianca = min(100, (amostra / 38) * 100)
         
-        # Indicador visual de confiança
         if confianca <= 50: st.markdown(f"# 🔴 CONFIANÇA: {confianca:.0f}%")
         elif confianca <= 85: st.markdown(f"# 🟡 CONFIANÇA: {confianca:.0f}%")
         else: st.markdown(f"# 🟢 CONFIANÇA: {confianca:.0f}%")
@@ -102,25 +99,29 @@ if not df.empty:
         prob["Ambos marcam"] = (1 - p_c[0]) * (1 - p_f[0])
 
         st.subheader("📊 Análise Detalhada")
-        apostar, nao_apostar = [], []
-        
+        sugestoes_verde = []
+        sugestoes_vermelho = []
+
         for merc, p in prob.items():
-            odd_b = odds_map[merc]
-            odd_j = 1/p
+            odd_b = odds[merc]
             margem = (p * odd_b) - 1
+            status = margem >= 0.10 and confianca > 50
             
-            with st.expander(f"{merc} - Chance: {p*100:.1f}%"):
-                st.write(f"Odd justa: **{odd_j:.2f}** | Odd da banca: **{odd_b:.2f}**")
-                st.write(f"Valor Esperado: **{margem*100:.1f}%**")
+            # Título do Expander com ícone de status
+            prefixo = "✅ APOSTAR" if status else "❌ NÃO APOSTAR"
             
-            # Lógica para o Resumo
-            stake_txt = f" (Apostar 4% = R$ {banca_total*0.04:.2f})" if banca_total > 0 else " (Apostar 4% da banca)"
-            if margem >= 0.10 and confianca > 50:
-                apostar.append(f"✅ **{merc}** ({p*100:.1f}% de chance){stake_txt}")
+            with st.expander(f"{prefixo} | {merc} ({p*100:.1f}%)"):
+                st.write(f"Odd justa: **{1/p:.2f}** | Odd da banca: **{odd_b:.2f}**")
+                st.write(f"Valor Esperado (EV): **{margem*100:+.1f}%**")
+            
+            stake_txt = f" (4% = R$ {banca_total*0.04:.2f})" if banca_total > 0 else " (4%)"
+            
+            if status:
+                sugestoes_verde.append(f"✅ **{merc}** ({p*100:.1f}% chance){stake_txt}")
             else:
-                nao_apostar.append(f"❌ **{merc}** (EV: {margem*100:.1f}%)")
+                sugestoes_vermelho.append(f"❌ **{merc}** (EV: {margem*100:+.1f}%)")
 
         st.markdown("---")
         st.subheader("📋 Resumo Executivo")
-        if apostar: st.success("SUGESTÕES DE OPERAÇÃO:\n\n" + "\n\n".join(apostar))
-        if nao_apostar: st.warning("NÃO OPERAR (Risco elevado ou sem valor): \n\n" + "\n\n".join(nao_apostar))
+        if sugestoes_verde: st.success("SUGESTÕES DE OPERAÇÃO:\n\n" + "\n\n".join(sugestoes_verde))
+        if sugestoes_vermelho: st.error("NÃO OPERAR (Risco elevado ou sem valor): \n\n" + "\n\n".join(sugestoes_vermelho))
