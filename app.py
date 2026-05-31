@@ -5,14 +5,46 @@ from scipy.stats import poisson
 import requests
 import io
 
-st.set_page_config(page_title="Motor PRO 2.14", layout="wide")
+# ==========================================
+# CONFIGURAÇÃO DA PÁGINA
+# ==========================================
+st.set_page_config(page_title="Motor TEX STATISTICS PRO 2.15", layout="wide")
 
+# ==========================================
+# BANCO DE DADOS GLOBAL (12 MESES DE OPERAÇÃO)
+# ==========================================
 LIGAS = {
+    # Américas (Operam em calendário anual/verão)
     "Brasileirão Série A": "https://www.football-data.co.uk/new/BRA.csv",
-    "Premier League": "https://www.football-data.co.uk/mmz4281/2526/E0.csv",
-    "La Liga": "https://www.football-data.co.uk/mmz4281/2526/SP1.csv",
-    "Série A Itália": "https://www.football-data.co.uk/mmz4281/2526/I1.csv",
-    "Bundesliga": "https://www.football-data.co.uk/mmz4281/2526/D1.csv"
+    "Argentina - Primera Division": "https://www.football-data.co.uk/new/ARG.csv",
+    "EUA - MLS": "https://www.football-data.co.uk/new/USA.csv",
+    "México - Liga MX": "https://www.football-data.co.uk/new/MEX.csv",
+
+    # Ásia (Operam no Verão)
+    "Japão - J1 League": "https://www.football-data.co.uk/new/JPN.csv",
+    "China - Super League": "https://www.football-data.co.uk/new/CHN.csv",
+
+    # Europa - Ligas Nórdicas e de Verão
+    "Suécia - Allsvenskan": "https://www.football-data.co.uk/new/SWE.csv",
+    "Noruega - Eliteserien": "https://www.football-data.co.uk/new/NOR.csv",
+    "Finlândia - Veikkausliiga": "https://www.football-data.co.uk/new/FIN.csv",
+    "Irlanda - Premier Division": "https://www.football-data.co.uk/new/IRL.csv",
+
+    # Europa - Principais (Calendário Agosto - Maio)
+    "Inglaterra - Premier League": "https://www.football-data.co.uk/mmz4281/2526/E0.csv",
+    "Inglaterra - Championship": "https://www.football-data.co.uk/mmz4281/2526/E1.csv",
+    "Espanha - La Liga": "https://www.football-data.co.uk/mmz4281/2526/SP1.csv",
+    "Espanha - Segunda Divisão": "https://www.football-data.co.uk/mmz4281/2526/SP2.csv",
+    "Itália - Série A": "https://www.football-data.co.uk/mmz4281/2526/I1.csv",
+    "Itália - Série B": "https://www.football-data.co.uk/mmz4281/2526/I2.csv",
+    "Alemanha - Bundesliga": "https://www.football-data.co.uk/mmz4281/2526/D1.csv",
+    "Alemanha - 2. Bundesliga": "https://www.football-data.co.uk/mmz4281/2526/D2.csv",
+    "França - Ligue 1": "https://www.football-data.co.uk/mmz4281/2526/F1.csv",
+    "Portugal - Primeira Liga": "https://www.football-data.co.uk/mmz4281/2526/P1.csv",
+    "Holanda - Eredivisie": "https://www.football-data.co.uk/mmz4281/2526/N1.csv",
+    "Bélgica - Pro League": "https://www.football-data.co.uk/mmz4281/2526/B1.csv",
+    "Turquia - Super Lig": "https://www.football-data.co.uk/mmz4281/2526/T1.csv",
+    "Grécia - Super League": "https://www.football-data.co.uk/mmz4281/2526/G1.csv"
 }
 
 @st.cache_data(ttl=3600)
@@ -49,9 +81,9 @@ def ler_odd(label):
     except: return 1.00
 
 # ==========================================
-# INTERFACE
+# INTERFACE PRINCIPAL
 # ==========================================
-st.title("🚀 Motor Quantitativo PRO 2.14")
+st.title("🚀 Motor TEX STATISTICS PRO 2.15")
 liga_sel = st.sidebar.selectbox("Liga", list(LIGAS.keys()))
 banca_total = st.sidebar.number_input("Banca Total (R$)", value=0.0, step=100.0)
 df = extrair_dados(LIGAS[liga_sel])
