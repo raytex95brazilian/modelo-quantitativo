@@ -11,12 +11,12 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 15.0 — HÍBRIDO
+# TEX STATISTICS PRO 15.2 — HÍBRIDO
 # Coração da versão 2.14 + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX PRO 15 — Blocos", layout="wide")
+st.set_page_config(page_title="TEX PRO 15.2 — Blocos", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -615,99 +615,218 @@ def calcular_resultado(status: str, entrada_rs: float, odd_entrada: float, valor
 
 
 
-def gerar_excel_auditoria(auditoria: pd.DataFrame, banca_inicial: float) -> bytes:
-    """Gera um Excel completo da auditoria, com histórico e resumos."""
+
+def limpar_nome_aba(nome: str, usados: set) -> str:
+    """Limpa nome de aba para Excel sem depender de biblioteca externa."""
+    proibidos = ['\\', '/', '*', '[', ']', ':', '?']
+    nome = str(nome or "Aba")
+    for c in proibidos:
+        nome = nome.replace(c, "-")
+    nome = nome.strip()[:31] or "Aba"
+    base = nome
+    i = 2
+    while nome in usados:
+        sufixo = f" {i}"
+        nome = (base[:31 - len(sufixo)] + sufixo).strip()
+        i += 1
+    usados.add(nome)
+    return nome
+
+
+def coluna_excel(n: int) -> str:
+    """Converte 1 -> A, 27 -> AA."""
+    s = ""
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def gerar_excel_simples(abas: Dict[str, pd.DataFrame]) -> bytes:
+    """
+    Gera arquivo .xlsx usando apenas bibliotecas internas do Python.
+    Assim o app não quebra se o Streamlit Cloud não tiver openpyxl instalado.
+    """
+    import zipfile
+    import html
+
     buffer = io.BytesIO()
-    df = auditoria.copy()
+    usados = set()
+    nomes_abas = [limpar_nome_aba(nome, usados) for nome in abas.keys()]
 
-    if df.empty:
-        df = pd.DataFrame([{"Aviso": "Ainda não há entradas registradas na auditoria."}])
+    def valor_xml(valor):
+        if valor is None:
+            return ""
+        try:
+            if pd.isna(valor):
+                return ""
+        except Exception:
+            pass
+        if isinstance(valor, (datetime, date)):
+            return valor.strftime("%Y-%m-%d")
+        return str(valor)
 
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Historico")
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        content_types = [
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+            '<Default Extension="xml" ContentType="application/xml"/>',
+            '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
+        ]
+        for i in range(1, len(nomes_abas) + 1):
+            content_types.append(
+                f'<Override PartName="/xl/worksheets/sheet{i}.xml" '
+                f'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            )
+        content_types.append('</Types>')
+        z.writestr('[Content_Types].xml', ''.join(content_types))
 
-        if not auditoria.empty:
-            base = auditoria.copy()
-            base["Resultado R$"] = pd.to_numeric(base.get("Resultado R$", 0), errors="coerce").fillna(0.0)
-            base["Entrada R$"] = pd.to_numeric(base.get("Entrada R$", 0), errors="coerce").fillna(0.0)
-            base["Valor esperado %"] = pd.to_numeric(base.get("Valor esperado %", 0), errors="coerce")
-            base["Vantagem no fechamento %"] = pd.to_numeric(base.get("Vantagem no fechamento %", 0), errors="coerce")
+        z.writestr(
+            '_rels/.rels',
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+            '</Relationships>'
+        )
 
-            fechadas = base[base["Status"].astype(str).isin(["Green", "Red", "Void", "Cashout"])].copy()
-            pendentes = base[base["Status"].astype(str) == "Pendente"].copy()
+        sheets_xml = []
+        rels_xml = []
+        for i, nome in enumerate(nomes_abas, start=1):
+            nome_esc = html.escape(nome, quote=True)
+            sheets_xml.append(f'<sheet name="{nome_esc}" sheetId="{i}" r:id="rId{i}"/>')
+            rels_xml.append(
+                f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>'
+            )
 
-            lucro_total = float(base["Resultado R$"].sum())
-            total_entradas = int(len(base))
-            total_fechadas = int(len(fechadas))
-            valor_total_apostado = float(fechadas["Entrada R$"].sum()) if total_fechadas else 0.0
-            retorno_percentual = (lucro_total / valor_total_apostado * 100.0) if valor_total_apostado > 0 else 0.0
-            banca_final = float(banca_inicial + lucro_total)
-            acertos = int((fechadas["Status"].astype(str) == "Green").sum()) if total_fechadas else 0
-            reds = int((fechadas["Status"].astype(str) == "Red").sum()) if total_fechadas else 0
-            anuladas = int((fechadas["Status"].astype(str) == "Void").sum()) if total_fechadas else 0
-            taxa_acerto = (acertos / max(1, acertos + reds) * 100.0) if total_fechadas else 0.0
-            vantagem_media = float(fechadas["Vantagem no fechamento %"].dropna().mean()) if not fechadas.empty else 0.0
+        z.writestr(
+            'xl/workbook.xml',
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets>' + ''.join(sheets_xml) + '</sheets></workbook>'
+        )
+        z.writestr(
+            'xl/_rels/workbook.xml.rels',
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            + ''.join(rels_xml) +
+            '</Relationships>'
+        )
 
-            resumo = pd.DataFrame([
-                {"Indicador": "Banca inicial", "Valor": banca_inicial},
-                {"Indicador": "Banca atual pela auditoria", "Valor": banca_final},
-                {"Indicador": "Resultado total R$", "Valor": lucro_total},
-                {"Indicador": "Entradas registradas", "Valor": total_entradas},
-                {"Indicador": "Entradas fechadas", "Valor": total_fechadas},
-                {"Indicador": "Entradas pendentes", "Valor": int(len(pendentes))},
-                {"Indicador": "Greens", "Valor": acertos},
-                {"Indicador": "Reds", "Valor": reds},
-                {"Indicador": "Anuladas", "Valor": anuladas},
-                {"Indicador": "Taxa de acerto %", "Valor": round(taxa_acerto, 2)},
-                {"Indicador": "Total apostado em entradas fechadas", "Valor": round(valor_total_apostado, 2)},
-                {"Indicador": "Retorno sobre valor apostado %", "Valor": round(retorno_percentual, 2)},
-                {"Indicador": "Vantagem média no fechamento %", "Valor": round(vantagem_media, 2)},
-            ])
-            resumo.to_excel(writer, index=False, sheet_name="Resumo")
+        for idx, (aba_original, df) in enumerate(abas.items(), start=1):
+            df = df.copy()
+            if df.empty:
+                df = pd.DataFrame([{"Aviso": "Sem registros."}])
 
-            for coluna, aba in [
-                ("Mercado", "Por mercado"),
-                ("Liga", "Por liga"),
-                ("Casa de apostas", "Por casa"),
-            ]:
-                if coluna in fechadas.columns and not fechadas.empty:
-                    agrupado = (
-                        fechadas.groupby(coluna, dropna=False)
-                        .agg(
-                            Entradas=("ID", "count"),
-                            Total_apostado=("Entrada R$", "sum"),
-                            Resultado=("Resultado R$", "sum"),
-                            Valor_esperado_medio=("Valor esperado %", "mean"),
-                            Vantagem_fechamento_media=("Vantagem no fechamento %", "mean"),
-                        )
-                        .reset_index()
-                    )
-                    agrupado["Retorno_%"] = np.where(
-                        agrupado["Total_apostado"] > 0,
-                        agrupado["Resultado"] / agrupado["Total_apostado"] * 100.0,
-                        0.0,
-                    )
-                    agrupado = agrupado.round(2)
-                    agrupado.to_excel(writer, index=False, sheet_name=aba)
+            linhas = [list(df.columns)] + df.astype(object).where(pd.notnull(df), "").values.tolist()
+            max_cols = max([len(linha) for linha in linhas] + [1])
 
-            if not pendentes.empty:
-                pendentes.to_excel(writer, index=False, sheet_name="Pendentes")
+            # Largura simples das colunas
+            cols_xml = ['<cols>']
+            for c in range(1, max_cols + 1):
+                textos_coluna = [valor_xml(linha[c - 1]) if c - 1 < len(linha) else "" for linha in linhas[:200]]
+                largura = min(max(10, max(len(t) for t in textos_coluna) + 2), 38)
+                cols_xml.append(f'<col min="{c}" max="{c}" width="{largura}" customWidth="1"/>')
+            cols_xml.append('</cols>')
 
-        # Ajuste visual simples: congela cabeçalho e aumenta um pouco as colunas.
-        for sheet in writer.book.worksheets:
-            sheet.freeze_panes = "A2"
-            for col in sheet.columns:
-                max_len = 10
-                col_letter = col[0].column_letter
-                for cell in col[:200]:
-                    try:
-                        max_len = max(max_len, len(str(cell.value)) if cell.value is not None else 0)
-                    except Exception:
-                        pass
-                sheet.column_dimensions[col_letter].width = min(max_len + 2, 38)
+            rows_xml = []
+            for r_idx, linha in enumerate(linhas, start=1):
+                cells = []
+                for c_idx, valor in enumerate(linha, start=1):
+                    ref = f"{coluna_excel(c_idx)}{r_idx}"
+                    if isinstance(valor, (int, float, np.integer, np.floating)) and np.isfinite(valor):
+                        cells.append(f'<c r="{ref}" t="n"><v>{float(valor)}</v></c>')
+                    else:
+                        texto = html.escape(valor_xml(valor), quote=False)
+                        cells.append(f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{texto}</t></is></c>')
+                rows_xml.append(f'<row r="{r_idx}">' + ''.join(cells) + '</row>')
+
+            sheet_xml = (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                + ''.join(cols_xml) +
+                '<sheetData>' + ''.join(rows_xml) + '</sheetData>'
+                '</worksheet>'
+            )
+            z.writestr(f'xl/worksheets/sheet{idx}.xml', sheet_xml)
 
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def gerar_excel_auditoria(auditoria: pd.DataFrame, banca_inicial: float) -> bytes:
+    """Gera Excel completo da auditoria sem depender de openpyxl."""
+    if auditoria.empty:
+        return gerar_excel_simples({"Historico": pd.DataFrame([{"Aviso": "Ainda não há entradas registradas na auditoria."}])})
+
+    base = auditoria.copy()
+    base["Resultado R$"] = pd.to_numeric(base.get("Resultado R$", 0), errors="coerce").fillna(0.0)
+    base["Entrada R$"] = pd.to_numeric(base.get("Entrada R$", 0), errors="coerce").fillna(0.0)
+    base["Valor esperado %"] = pd.to_numeric(base.get("Valor esperado %", 0), errors="coerce")
+    base["Vantagem no fechamento %"] = pd.to_numeric(base.get("Vantagem no fechamento %", 0), errors="coerce")
+
+    fechadas = base[base["Status"].astype(str).isin(["Green", "Red", "Void", "Cashout"])].copy()
+    pendentes = base[base["Status"].astype(str) == "Pendente"].copy()
+
+    lucro_total = float(base["Resultado R$"].sum())
+    total_entradas = int(len(base))
+    total_fechadas = int(len(fechadas))
+    valor_total_apostado = float(fechadas["Entrada R$"].sum()) if total_fechadas else 0.0
+    retorno_percentual = (lucro_total / valor_total_apostado * 100.0) if valor_total_apostado > 0 else 0.0
+    banca_final = float(banca_inicial + lucro_total)
+    acertos = int((fechadas["Status"].astype(str) == "Green").sum()) if total_fechadas else 0
+    reds = int((fechadas["Status"].astype(str) == "Red").sum()) if total_fechadas else 0
+    anuladas = int((fechadas["Status"].astype(str) == "Void").sum()) if total_fechadas else 0
+    taxa_acerto = (acertos / max(1, acertos + reds) * 100.0) if total_fechadas else 0.0
+    vantagem_media = float(fechadas["Vantagem no fechamento %"].dropna().mean()) if not fechadas.empty else 0.0
+
+    resumo = pd.DataFrame([
+        {"Indicador": "Banca inicial", "Valor": banca_inicial},
+        {"Indicador": "Banca atual pela auditoria", "Valor": banca_final},
+        {"Indicador": "Resultado total R$", "Valor": lucro_total},
+        {"Indicador": "Entradas registradas", "Valor": total_entradas},
+        {"Indicador": "Entradas fechadas", "Valor": total_fechadas},
+        {"Indicador": "Entradas pendentes", "Valor": int(len(pendentes))},
+        {"Indicador": "Greens", "Valor": acertos},
+        {"Indicador": "Reds", "Valor": reds},
+        {"Indicador": "Anuladas", "Valor": anuladas},
+        {"Indicador": "Taxa de acerto %", "Valor": round(taxa_acerto, 2)},
+        {"Indicador": "Total apostado em entradas fechadas", "Valor": round(valor_total_apostado, 2)},
+        {"Indicador": "Retorno sobre valor apostado %", "Valor": round(retorno_percentual, 2)},
+        {"Indicador": "Vantagem média no fechamento %", "Valor": round(vantagem_media, 2)},
+    ])
+
+    abas = {"Historico": base, "Resumo": resumo}
+
+    for coluna, aba in [
+        ("Mercado", "Por mercado"),
+        ("Liga", "Por liga"),
+        ("Casa de apostas", "Por casa"),
+    ]:
+        if coluna in fechadas.columns and not fechadas.empty:
+            agrupado = (
+                fechadas.groupby(coluna, dropna=False)
+                .agg(
+                    Entradas=("ID", "count"),
+                    Total_apostado=("Entrada R$", "sum"),
+                    Resultado=("Resultado R$", "sum"),
+                    Valor_esperado_medio=("Valor esperado %", "mean"),
+                    Vantagem_fechamento_media=("Vantagem no fechamento %", "mean"),
+                )
+                .reset_index()
+            )
+            agrupado["Retorno_%"] = np.where(
+                agrupado["Total_apostado"] > 0,
+                agrupado["Resultado"] / agrupado["Total_apostado"] * 100.0,
+                0.0,
+            )
+            abas[aba] = agrupado.round(2)
+
+    if not pendentes.empty:
+        abas["Pendentes"] = pendentes
+
+    return gerar_excel_simples(abas)
 
 
 CALENDARIO_LIGAS = [
@@ -785,7 +904,7 @@ def render_card(resultado: Dict[str, object], banca: float, time_casa: str, time
 # APP
 # ============================================================
 
-st.title("TEX STATISTICS PRO 15.0")
+st.title("TEX STATISTICS PRO 15.2")
 st.caption("Motor em blocos: simples para operar, com banca dinâmica e auditoria.")
 
 with st.sidebar:
@@ -1102,7 +1221,32 @@ with aba_calendario:
     )
 
     calendario_df = pd.DataFrame(CALENDARIO_LIGAS)
-    st.dataframe(calendario_df, use_container_width=True, hide_index=True)
+
+    mes_atual = st.selectbox(
+        "Escolha o mês para ver as ligas mais úteis",
+        ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"],
+        index=datetime.now().month - 1,
+    )
+
+    ativas = calendario_df[calendario_df[mes_atual].astype(str).str.strip() != ""].copy()
+    st.markdown(f"### Ligas com movimento em {mes_atual}")
+    if ativas.empty:
+        st.info("Nenhuma liga marcada para este mês no calendário do app.")
+    else:
+        for _, linha in ativas.iterrows():
+            st.markdown(
+                f"""
+                <div class="card-aposta card-leve">
+                    <div class="mercado-card">{linha['Liga']}</div>
+                    <div class="linha-info"><b>Status no mês:</b> {linha[mes_atual]}</div>
+                    <div class="linha-info"><b>Observação:</b> {linha['Observação']}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    with st.expander("Ver tabela completa do calendário"):
+        st.dataframe(calendario_df, use_container_width=True, hide_index=True)
 
     st.markdown("### Como usar na prática")
     st.markdown(
@@ -1115,19 +1259,10 @@ with aba_calendario:
         """
     )
 
-    excel_cal = io.BytesIO()
-    with pd.ExcelWriter(excel_cal, engine="openpyxl") as writer:
-        calendario_df.to_excel(writer, index=False, sheet_name="Calendario")
-        for sheet in writer.book.worksheets:
-            sheet.freeze_panes = "A2"
-            for col in sheet.columns:
-                col_letter = col[0].column_letter
-                max_len = max(len(str(cell.value)) if cell.value is not None else 0 for cell in col[:200])
-                sheet.column_dimensions[col_letter].width = min(max_len + 2, 35)
-    excel_cal.seek(0)
+    excel_cal = gerar_excel_simples({"Calendario": calendario_df})
     st.download_button(
         "BAIXAR CALENDÁRIO DAS LIGAS EM EXCEL",
-        data=excel_cal.getvalue(),
+        data=excel_cal,
         file_name="calendario_ligas_tex_pro_15.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
