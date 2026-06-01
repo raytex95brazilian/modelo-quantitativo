@@ -587,6 +587,305 @@ st.markdown(
             font-size: 1.12rem;
         }
     }
+
+
+    /* =========================================================
+       FORÇA TEMA CLARO EM TODOS OS CAMPOS DO STREAMLIT/BASEWEB
+       Corrige caixas que ficam escuras no celular ou navegador
+       em modo noturno: selectbox, text_input, number_input,
+       text_area, multiselect, dropdown aberto, calendário, radio,
+       checkbox e estados de foco/hover.
+       ========================================================= */
+
+    html {
+        color-scheme: light !important;
+        background: #f6f7fb !important;
+    }
+
+    body,
+    .stApp,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    [data-testid="stVerticalBlock"],
+    [data-testid="stForm"],
+    [data-testid="stFormSubmitButton"] {
+        background-color: #f6f7fb !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    /* Labels e textos comuns */
+    label,
+    p,
+    span,
+    small,
+    div[data-testid="stMarkdownContainer"],
+    div[data-testid="stWidgetLabel"],
+    .stMarkdown,
+    .stCaption {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    .stCaption,
+    [data-testid="stCaptionContainer"],
+    .mini,
+    .help,
+    small {
+        color: #64748b !important;
+        -webkit-text-fill-color: #64748b !important;
+    }
+
+    /* Inputs fechados: texto, número, senha, área de texto */
+    .stTextInput,
+    .stNumberInput,
+    .stTextArea,
+    .stDateInput,
+    .stSelectbox,
+    .stMultiSelect {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    .stTextInput > div,
+    .stNumberInput > div,
+    .stTextArea > div,
+    .stDateInput > div,
+    .stSelectbox > div,
+    .stMultiSelect > div {
+        background: transparent !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    input,
+    textarea,
+    input:focus,
+    textarea:focus,
+    input:active,
+    textarea:active,
+    [data-baseweb="input"],
+    [data-baseweb="input"] > div,
+    [data-baseweb="input"] input,
+    [data-baseweb="textarea"],
+    [data-baseweb="textarea"] > div,
+    [data-baseweb="textarea"] textarea,
+    [data-baseweb="base-input"],
+    [data-baseweb="base-input"] input,
+    [data-baseweb="base-input"] textarea {
+        background: #ffffff !important;
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        caret-color: #111827 !important;
+        border-color: #cbd5e1 !important;
+        box-shadow: none !important;
+        outline: none !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder,
+    [data-baseweb="input"] input::placeholder,
+    [data-baseweb="textarea"] textarea::placeholder {
+        color: #94a3b8 !important;
+        -webkit-text-fill-color: #94a3b8 !important;
+        opacity: 1 !important;
+    }
+
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    textarea:-webkit-autofill,
+    textarea:-webkit-autofill:hover,
+    textarea:-webkit-autofill:focus {
+        -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+        -webkit-text-fill-color: #111827 !important;
+        caret-color: #111827 !important;
+        transition: background-color 9999s ease-in-out 0s !important;
+    }
+
+    /* Selectbox e multiselect fechados */
+    [data-baseweb="select"],
+    [data-baseweb="select"] > div,
+    [data-baseweb="select"] div,
+    [data-baseweb="select"] input,
+    [data-baseweb="select"] span {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        border-color: #cbd5e1 !important;
+    }
+
+    [data-baseweb="select"] svg,
+    [data-testid="stSelectbox"] svg,
+    [data-testid="stMultiSelect"] svg {
+        fill: #334155 !important;
+        color: #334155 !important;
+    }
+
+    [data-baseweb="tag"],
+    [data-baseweb="tag"] span {
+        background-color: #ecfdf5 !important;
+        color: #065f46 !important;
+        -webkit-text-fill-color: #065f46 !important;
+    }
+
+    /* Dropdown aberto: este é o trecho que corrige a caixa escura */
+    [data-baseweb="popover"],
+    [data-baseweb="popover"] > div,
+    [data-baseweb="menu"],
+    [data-baseweb="menu"] ul,
+    [data-baseweb="menu"] li,
+    [role="listbox"],
+    [role="listbox"] ul,
+    [role="listbox"] li,
+    ul[role="listbox"],
+    li[role="option"],
+    div[role="option"],
+    [data-baseweb="option"] {
+        background: #ffffff !important;
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        border-color: #e5e7eb !important;
+    }
+
+    [data-baseweb="popover"] *,
+    [data-baseweb="menu"] *,
+    [role="listbox"] *,
+    [role="option"] * {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    [role="option"]:hover,
+    [role="option"][aria-selected="true"],
+    [data-baseweb="menu"] li:hover,
+    [data-baseweb="menu"] li[aria-selected="true"] {
+        background: #f1f5f9 !important;
+        background-color: #f1f5f9 !important;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+    }
+
+    /* Menu suspenso, tooltips e caixas flutuantes */
+    div[data-baseweb="popover"],
+    div[data-baseweb="popover"] div,
+    div[data-baseweb="tooltip"],
+    div[data-baseweb="tooltip"] div {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        border-color: #e5e7eb !important;
+    }
+
+    /* Calendário do date_input */
+    [data-baseweb="calendar"],
+    [data-baseweb="calendar"] *,
+    [data-baseweb="datepicker"],
+    [data-baseweb="datepicker"] * {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    /* Radio e checkbox */
+    .stRadio,
+    .stCheckbox,
+    .stRadio *,
+    .stCheckbox * {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    [data-baseweb="radio"] div,
+    [data-baseweb="checkbox"] div {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        border-color: #cbd5e1 !important;
+    }
+
+    /* Slider */
+    .stSlider,
+    .stSlider *,
+    [data-baseweb="slider"],
+    [data-baseweb="slider"] * {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    /* Number input: botões de + e - */
+    .stNumberInput button,
+    [data-testid="stNumberInput"] button,
+    button[aria-label="Increment"],
+    button[aria-label="Decrement"] {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        border-color: #cbd5e1 !important;
+        box-shadow: none !important;
+    }
+
+    .stNumberInput button svg,
+    [data-testid="stNumberInput"] button svg,
+    button[aria-label="Increment"] svg,
+    button[aria-label="Decrement"] svg {
+        fill: #111827 !important;
+        color: #111827 !important;
+    }
+
+    /* Expanders e cards internos */
+    [data-testid="stExpander"],
+    [data-testid="stExpander"] details,
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] div {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    /* Tabelas/Dataframes */
+    [data-testid="stDataFrame"],
+    [data-testid="stTable"],
+    [data-testid="stDataFrame"] *,
+    [data-testid="stTable"] * {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    /* Sidebar totalmente clara */
+    [data-testid="stSidebar"],
+    [data-testid="stSidebar"] > div,
+    [data-testid="stSidebarContent"],
+    [data-testid="stSidebarContent"] > div {
+        background: #ffffff !important;
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] textarea,
+    [data-testid="stSidebar"] [data-baseweb="select"],
+    [data-testid="stSidebar"] [data-baseweb="select"] div,
+    [data-testid="stSidebar"] [data-baseweb="input"],
+    [data-testid="stSidebar"] [data-baseweb="input"] div,
+    [data-testid="stSidebar"] [data-baseweb="base-input"] {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        border-color: #cbd5e1 !important;
+    }
+
+    /* Evita que o navegador/tema escuro pinte componentes nativos */
+    select,
+    option,
+    optgroup {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
