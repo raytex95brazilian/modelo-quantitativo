@@ -112,29 +112,30 @@ def encontrar_melhor_match(nome_api, lista_csv):
 def calcular_power_rating(df, t_casa, t_fora):
     media_gf_c = np.average(df['HG'], weights=df['Peso'])
     media_gf_f = np.average(df['AG'], weights=df['Peso'])
-   
+    
     df_c = df[df['Home'] == t_casa].copy()
     df_f = df[df['Away'] == t_fora].copy()
-   
+    
     min_jogos = 6
     peso_reg = 0.48
-   
+    
     gf_m = np.average(df_c['HG'], weights=df_c['Peso']) if len(df_c) >= min_jogos else media_gf_c
     gs_m = np.average(df_c['AG'], weights=df_c['Peso']) if len(df_c) >= min_jogos else media_gf_f
     gf_v = np.average(df_f['AG'], weights=df_f['Peso']) if len(df_f) >= min_jogos else media_gf_f
     gs_v = np.average(df_f['HG'], weights=df_f['Peso']) if len(df_f) >= min_jogos else media_gf_c
-   
+    
     gf_m = gf_m * (1 - peso_reg) + media_gf_c * peso_reg
     gs_m = gs_m * (1 - peso_reg) + media_gf_f * peso_reg
     gf_v = gf_v * (1 - peso_reg) + media_gf_f * peso_reg
     gs_v = gs_v * (1 - peso_reg) + media_gf_c * peso_reg
-   
+    
     xg_c = gf_m * (gs_v / media_gf_f)
     xg_f = gf_v * (gs_m / media_gf_c)
-   
-    xg_c = max(0.85, min(xg_c, 2.5))
-    xg_f = max(0.85, min(xg_f, 2.5))
-   
+    
+    # CLAMP REAJUSTADO PARA A REALIDADE DO FUTEBOL
+    xg_c = max(0.5, min(xg_c, 3.0))
+    xg_f = max(0.5, min(xg_f, 3.0))
+    
     amostra = len(df_c) + len(df_f)
     return xg_c, xg_f, amostra
 
@@ -163,6 +164,9 @@ df = extrair_dados(LIGAS_CSV[liga_sel])
 if not df.empty:
     times_csv = sorted(df['Home'].unique())
 
+    # ==========================================
+    # LÓGICA MODO MANUAL
+    # ==========================================
     if modo_operacao == "Modo Manual (Laboratório)":
         c1, c2 = st.columns(2)
         t_casa = c1.selectbox("🏠 Mandante", times_csv, key="sel_casa_manual")
@@ -182,10 +186,13 @@ if not df.empty:
         }
         pronto_para_calcular = st.button("CALCULAR MOTOR MANUAL")
 
-    else:  # MODO FULL AUTO
+    # ==========================================
+    # LÓGICA MODO AUTOMÁTICO
+    # ==========================================
+    else:  
         with st.spinner("Buscando cotações em tempo real..."):
             dados_api = extrair_odds_api(API_KEY, LIGAS_API[liga_sel])
-       
+        
         if dados_api:
             jogos_disponiveis = {f"{j['home_team']} vs {j['away_team']}": j for j in dados_api}
             jogo_sel = st.selectbox("🎯 Selecione a Partida (Radar Mundial)", list(jogos_disponiveis.keys()))
@@ -265,10 +272,10 @@ if not df.empty:
     # ==========================================
     if 'pronto_para_calcular' in locals() and pronto_para_calcular:
         xg_c, xg_f, amostra = calcular_power_rating(df, t_casa, t_fora)
-       
+        
         confianca = min(100, (amostra / 12) * 100)
         confianca = max(30, confianca)
-       
+        
         if confianca <= 50: st.markdown(f"# 🔴 CONFIANÇA: {confianca:.0f}%")
         elif confianca <= 85: st.markdown(f"# 🟡 CONFIANÇA: {confianca:.0f}%")
         else: st.markdown(f"# 🟢 CONFIANÇA: {confianca:.0f}%")
@@ -282,7 +289,7 @@ if not df.empty:
 
         p_c = [poisson.pmf(i, xg_c) for i in range(11)]
         p_f = [poisson.pmf(i, xg_f) for i in range(11)]
-       
+        
         prob = {
             "Vitória Casa": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i > j),
             "Empate": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i == j),
@@ -307,9 +314,13 @@ if not df.empty:
             if odd_b <= 1.01 and modo_operacao == "Modo FULL AUTO (Institucional)":
                 continue
 
-            # Pegar nome da casa/bookmaker
-            info = st.session_state.get('melhores_odds_info', {}).get(merc, {})
-            nome_casa = info.get("casa", "N/A") if isinstance(info, dict) else "N/A"
+            # ISOLAMENTO DE MEMÓRIA VISUAL: Só mostra o nome da casa de aposta no Modo Automático
+            if modo_operacao == "Modo FULL AUTO (Institucional)":
+                info = st.session_state.get('melhores_odds_info', {}).get(merc, {})
+                nome_casa = info.get("casa", "N/A") if isinstance(info, dict) else "N/A"
+                texto_casa = f" *(Casa: {nome_casa})*"
+            else:
+                texto_casa = ""
 
             margem = (p * odd_b) - 1
             status = margem >= 0.10 and confianca > 50
@@ -317,11 +328,11 @@ if not df.empty:
 
             with st.expander(f"{prefixo} | {merc} ({p*100:.1f}%)"):
                 st.write(f"Odd justa da Máquina: **{1/p:.2f}**")
-                st.write(f"Odd do Mercado: **{odd_b:.2f}** *(Casa: {nome_casa})*")
+                st.write(f"Odd do Mercado: **{odd_b:.2f}**{texto_casa}")
                 st.write(f"Valor Esperado (EV): **{margem*100:+.1f}%**")
 
             stake_txt = f" (4% = R$ {banca_total*0.04:.2f})" if banca_total > 0 else " (4%)"
-           
+            
             if status:
                 sugestoes_verde.append(f"✅ **{merc}** ({p*100:.1f}% chance){stake_txt}")
             else:
