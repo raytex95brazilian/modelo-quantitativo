@@ -89,7 +89,6 @@ def extrair_dados(url):
 
 def extrair_odds_api(api_key, sport_key):
     try:
-        # CORREÇÃO CRÍTICA AQUI: Removido o 'btts' da requisição. O mercado inválido causava o bloqueio.
         url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}&regions=eu,uk,us&markets=h2h,totals&oddsFormat=decimal"
         response = requests.get(url, timeout=15)
         if response.status_code == 200: 
@@ -98,7 +97,7 @@ def extrair_odds_api(api_key, sport_key):
             st.error("❌ ERRO 401: A chave da API é inválida ou não tem permissão.")
             return []
         elif response.status_code == 429:
-            st.error("❌ ERRO 429: Esgotou o seu limite mensal de requisições da API.")
+            st.error("❌ ERRO 429: Você esgotou o limite mensal de requisições da API.")
             return []
         elif response.status_code == 422:
             st.error(f"❌ ERRO 422 da API: A requisição tem parâmetros não suportados. Detalhes: {response.text}")
@@ -134,7 +133,7 @@ def ler_odd(label):
 # ==========================================
 # ESTRUTURA VISUAL E INTERRUPTOR
 # ==========================================
-st.sidebar.markdown("## 🎛️ Painel de Controlo Mestre")
+st.sidebar.markdown("## 🎛️ Painel de Controle")
 modo_operacao = st.sidebar.radio("Selecione o Ambiente de Execução:", ["Modo Manual (Laboratório)", "Modo FULL AUTO (Institucional)"])
 st.sidebar.markdown("---")
 
@@ -176,7 +175,7 @@ if not df.empty:
     # LÓGICA MODO AUTOMÁTICO
     # ==========================================
     else:
-        with st.spinner("A buscar cotações em tempo real nos servidores mundiais..."):
+        with st.spinner("Buscando cotações em tempo real nos servidores mundiais..."):
             dados_api = extrair_odds_api(API_KEY, LIGAS_API[liga_sel])
         
         if dados_api:
@@ -194,8 +193,12 @@ if not df.empty:
                             elif outcome['name'] == jogo_dados['away_team']: odd_A = max(odd_A, outcome['price'])
                     elif market['key'] == 'totals':
                         for outcome in market['outcomes']:
-                            if outcome['name'] == 'Over' and outcome.get('point') == 2.5: odd_O25 = max(odd_O25, outcome['price'])
-                            
+                            if outcome['name'] == 'Over':
+                                point_val = outcome.get('point')
+                                # TRAVA DE SEGURANÇA: Só aceita exatamente a linha de 2.5 gols
+                                if point_val is not None and float(point_val) == 2.5:
+                                    odd_O25 = max(odd_O25, outcome['price'])
+
             # Matemática Oculta
             odd_1X = 1 / ((1 / odd_H) + (1 / odd_D)) if odd_H > 1.01 and odd_D > 1.01 else 1.01
             odd_X2 = 1 / ((1 / odd_A) + (1 / odd_D)) if odd_A > 1.01 and odd_D > 1.01 else 1.01
@@ -220,7 +223,7 @@ if not df.empty:
                 "Empate Anula Casa": odd_DNB_H,
                 "Empate Anula Fora": odd_DNB_A,
                 "Mais de 2.5 gols": odd_O25,
-                "Ambos marcam": odd_BTTS # Ficará em branco/1.01 no modo Auto pois a API limitou
+                "Ambos marcam": odd_BTTS # Ficará em branco/1.01 no modo Auto pois a API não puxa isso de graça
             }
 
             pronto_para_calcular = st.button("CALCULAR MOTOR AUTOMATIZADO")
