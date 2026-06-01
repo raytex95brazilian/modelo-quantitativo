@@ -11,12 +11,12 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 15.5 — HÍBRIDO
+# TEX STATISTICS PRO 15.7 — HÍBRIDO
 # Coração da versão 2.14 + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX PRO 15.5 — Blocos", layout="wide")
+st.set_page_config(page_title="TEX PRO 15.6 — Blocos", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -68,8 +68,11 @@ LIGAS_CSV = {
     "EUA - MLS": "https://www.football-data.co.uk/new/USA.csv",
     "México - Liga MX": "https://www.football-data.co.uk/new/MEX.csv",
     "Japão - J1 League": "https://www.football-data.co.uk/new/JPN.csv",
+    "China - Super League": "https://www.football-data.co.uk/new/CHN.csv",
     "Suécia - Allsvenskan": "https://www.football-data.co.uk/new/SWE.csv",
     "Noruega - Eliteserien": "https://www.football-data.co.uk/new/NOR.csv",
+    "Finlândia - Veikkausliiga": "https://www.football-data.co.uk/new/FIN.csv",
+    "Irlanda - Premier Division": "https://www.football-data.co.uk/new/IRL.csv",
     "Inglaterra - Premier League": "https://www.football-data.co.uk/mmz4281/2526/E0.csv",
     "Inglaterra - Championship": "https://www.football-data.co.uk/mmz4281/2526/E1.csv",
     "Espanha - La Liga": "https://www.football-data.co.uk/mmz4281/2526/SP1.csv",
@@ -83,16 +86,19 @@ LIGAS_CSV = {
     "Holanda - Eredivisie": "https://www.football-data.co.uk/mmz4281/2526/N1.csv",
     "Bélgica - Pro League": "https://www.football-data.co.uk/mmz4281/2526/B1.csv",
     "Turquia - Super Lig": "https://www.football-data.co.uk/mmz4281/2526/T1.csv",
+    "Grécia - Super League": "https://www.football-data.co.uk/mmz4281/2526/G1.csv",
 }
-
 LIGAS_API = {
     "Brasileirão Série A": "soccer_brazil_campeonato",
     "Argentina - Primera Division": "soccer_argentina_primera_division",
     "EUA - MLS": "soccer_usa_mls",
     "México - Liga MX": "soccer_mexico_ligamx",
     "Japão - J1 League": "soccer_japan_j_league",
+    "China - Super League": "soccer_china_superleague",
     "Suécia - Allsvenskan": "soccer_sweden_allsvenskan",
     "Noruega - Eliteserien": "soccer_norway_eliteserien",
+    "Finlândia - Veikkausliiga": "soccer_finland_veikkausliiga",
+    "Irlanda - Premier Division": "soccer_ireland_premier_division",
     "Inglaterra - Premier League": "soccer_epl",
     "Inglaterra - Championship": "soccer_efl_champ",
     "Espanha - La Liga": "soccer_spain_la_liga",
@@ -106,8 +112,8 @@ LIGAS_API = {
     "Holanda - Eredivisie": "soccer_netherlands_eredivisie",
     "Bélgica - Pro League": "soccer_belgium_first_div",
     "Turquia - Super Lig": "soccer_turkey_super_league",
+    "Grécia - Super League": "soccer_greece_super_league",
 }
-
 MERCADOS = [
     "Vitória Casa",
     "Empate",
@@ -895,26 +901,149 @@ def gerar_excel_auditoria(auditoria: pd.DataFrame, banca_inicial: float) -> byte
 
 
 CALENDARIO_LIGAS = [
-    {"Liga": "Brasileirão Série A", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "ativo", "Jun": "ativo", "Jul": "ativo", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "encerra", "Observação": "Temporada 2026 prevista de jan/fev a dez. Melhor para análises: depois da 6ª rodada."},
-    {"Liga": "Argentina - Primera Division", "Jan": "início", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "ativo", "Jun": "ativo", "Jul": "ativo", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "encerra", "Observação": "Calendário longo em 2026. Boa liga para volume, mas cuidado com formato e mata-mata."},
-    {"Liga": "EUA - MLS", "Jan": "", "Fev": "início", "Mar": "ativo", "Abr": "ativo", "Mai": "pausa", "Jun": "pausa", "Jul": "retoma", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "playoffs", "Dez": "playoffs", "Observação": "Pausa longa pela Copa do Mundo. Boa para volume fora do calendário europeu."},
-    {"Liga": "México - Liga MX", "Jan": "Clausura", "Fev": "Clausura", "Mar": "Clausura", "Abr": "Clausura", "Mai": "mata-mata", "Jun": "pausa", "Jul": "Apertura", "Ago": "Apertura", "Set": "Apertura", "Out": "Apertura", "Nov": "mata-mata", "Dez": "mata-mata", "Observação": "Dois torneios. Boa liga para manter operação quase o ano todo."},
-    {"Liga": "Japão - J1 League", "Jan": "", "Fev": "início", "Mar": "ativo", "Abr": "ativo", "Mai": "ativo", "Jun": "playoff/pausa", "Jul": "pausa", "Ago": "nova temporada", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "2026 é ano de transição: torneio especial no 1º semestre e novo calendário a partir de agosto."},
-    {"Liga": "Suécia - Allsvenskan", "Jan": "", "Fev": "", "Mar": "", "Abr": "início", "Mai": "ativo", "Jun": "ativo", "Jul": "ativo", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "encerra", "Dez": "", "Observação": "Excelente para cobrir o meio do ano europeu."},
-    {"Liga": "Noruega - Eliteserien", "Jan": "", "Fev": "", "Mar": "início", "Abr": "ativo", "Mai": "ativo", "Jun": "ativo", "Jul": "ativo", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "encerra", "Observação": "Outra ótima liga de calendário anual para cobrir março a dezembro."},
-    {"Liga": "Inglaterra - Premier League", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Temporada 26/27 começa em agosto. Mercado líquido, mas mais difícil de bater."},
-    {"Liga": "Inglaterra - Championship", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra/playoffs", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Muito volume. Cuidado com calendário congestionado e rotação."},
-    {"Liga": "Espanha - La Liga", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Liga forte e mais eficiente. Use como referência, mas exige preço muito bom."},
-    {"Liga": "Espanha - Segunda Divisão", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "ativo", "Jun": "playoffs", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Boa para volume, mas muitos jogos truncados; olhar Under também."},
-    {"Liga": "Itália - Série A", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Temporada 26/27 começa em agosto e termina em maio."},
-    {"Liga": "Itália - Série B", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra/playoffs", "Jun": "playoffs", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Boa para volume, mas com maior variação de elencos e odds menos perfeitas."},
-    {"Liga": "Alemanha - Bundesliga", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Bundesliga 26/27 começa no fim de agosto."},
-    {"Liga": "Alemanha - 2. Bundesliga", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Começa antes da Bundesliga. Boa para retomar operação em agosto."},
-    {"Liga": "França - Ligue 1", "Jan": "retoma", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Tem pausa de fim de ano e volta em janeiro."},
-    {"Liga": "Portugal - Primeira Liga", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Começa no início de agosto; boa janela antes das ligas maiores aquecerem."},
-    {"Liga": "Holanda - Eredivisie", "Jan": "retoma", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo/pausa", "Observação": "Tende a ter bom volume de gols; útil para mercados de gols."},
-    {"Liga": "Bélgica - Pro League", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Calendário europeu; atenção a mudanças de formato."},
-    {"Liga": "Turquia - Super Lig", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Começa em agosto; atenção a variação de elenco e mando forte."},
+    {
+        "Liga": "Brasileirão Série A",
+        "Jan": "fora/consultar", "Fev": "fora/consultar", "Mar": "início provável", "Abr": "jogos", "Mai": "jogos", "Jun": "pausa Copa/consultar", "Jul": "retoma/consultar", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "encerra/consultar",
+        "Observação": "Use somente Brasileirão Série A. Não misture estaduais, Copa do Brasil, Série B ou Sub-20. Em 2026, confira a pausa da Copa e a tabela real antes de analisar.",
+    },
+    {
+        "Liga": "Argentina - Primera Division",
+        "Jan": "início", "Fev": "jogos", "Mar": "jogos", "Abr": "jogos", "Mai": "jogos", "Jun": "consultar Copa", "Jul": "consultar/retoma", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "encerra",
+        "Observação": "Use somente Liga Profesional/Primera División principal. Cuidado com Copa Argentina, Primera Nacional, reservas e fases de mata-mata.",
+    },
+    {
+        "Liga": "EUA - MLS",
+        "Jan": "fora", "Fev": "início", "Mar": "jogos", "Abr": "jogos", "Mai": "pausa após 25/05", "Jun": "pausa Copa", "Jul": "retoma após 16/07", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "playoffs", "Dez": "playoffs/consultar",
+        "Observação": "Use somente MLS principal. NÃO use MLS Next Pro, times II, reservas ou sub-23; esses jogos são outra competição.",
+    },
+    {
+        "Liga": "México - Liga MX",
+        "Jan": "Clausura", "Fev": "Clausura", "Mar": "Clausura", "Abr": "Clausura", "Mai": "mata-mata", "Jun": "pausa", "Jul": "Apertura/início", "Ago": "Apertura", "Set": "Apertura", "Out": "Apertura", "Nov": "mata-mata", "Dez": "mata-mata/consultar",
+        "Observação": "Use somente Liga MX principal. Não confundir com Liga de Expansión, Sub-23 ou amistosos.",
+    },
+    {
+        "Liga": "Japão - J1 League",
+        "Jan": "fora", "Fev": "temporada especial", "Mar": "temporada especial", "Abr": "temporada especial", "Mai": "temporada especial", "Jun": "fim especial/consultar", "Jul": "pausa", "Ago": "nova temporada", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente J1. Em 2026 há transição de calendário: temporada especial no 1º semestre e J1 2026/27 a partir de agosto. Não misture J2/J3, Copa da Liga ou Copa do Imperador.",
+    },
+    {
+        "Liga": "China - Super League",
+        "Jan": "fora", "Fev": "fora/consultar", "Mar": "início", "Abr": "jogos", "Mai": "jogos", "Jun": "jogos/consultar", "Jul": "jogos/consultar", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "encerra", "Dez": "fora",
+        "Observação": "Use somente Chinese Super League. Não misture China League One, FA Cup ou torneios sub-21. Sempre confirme jogos reais na casa/API.",
+    },
+    {
+        "Liga": "Suécia - Allsvenskan",
+        "Jan": "fora", "Fev": "fora", "Mar": "fora/consultar", "Abr": "início", "Mai": "jogos", "Jun": "pausa/sem jogos elite", "Jul": "retoma início de julho", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "encerra", "Dez": "fora",
+        "Observação": "Allsvenskan é a elite sueca. NÃO confundir com 'Suécia - 1ª Div' das casas, que geralmente é Ettan/Division 1, terceira divisão e fora da base do app.",
+    },
+    {
+        "Liga": "Noruega - Eliteserien",
+        "Jan": "fora", "Fev": "fora", "Mar": "início", "Abr": "jogos", "Mai": "jogos", "Jun": "pausa/consultar", "Jul": "retoma/jogos", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "encerra",
+        "Observação": "Use somente Eliteserien. Não misture OBOS-ligaen, copa ou reservas. Em 2026, confira pausas de Copa e jogos adiados.",
+    },
+    {
+        "Liga": "Finlândia - Veikkausliiga",
+        "Jan": "fora", "Fev": "fora", "Mar": "fora/consultar", "Abr": "início", "Mai": "jogos", "Jun": "jogos", "Jul": "jogos", "Ago": "jogos", "Set": "fase final/consultar", "Out": "fase final/consultar", "Nov": "encerra", "Dez": "fora",
+        "Observação": "Use somente Veikkausliiga. Não misture Ykkösliiga/Ykkönen, Copa da Finlândia ou amistosos.",
+    },
+    {
+        "Liga": "Irlanda - Premier Division",
+        "Jan": "fora/supercopa", "Fev": "início", "Mar": "jogos", "Abr": "jogos", "Mai": "jogos", "Jun": "jogos/consultar", "Jul": "jogos/consultar", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "encerra", "Dez": "fora",
+        "Observação": "Use somente League of Ireland Premier Division. Não misture First Division, FAI Cup ou amistosos.",
+    },
+    {
+        "Liga": "Inglaterra - Premier League",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "25/26 encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 22/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente Premier League. Não misture FA Cup, EFL Cup ou amistosos de pré-temporada. A temporada 26/27 começa em 22/08.",
+    },
+    {
+        "Liga": "Inglaterra - Championship",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "playoffs/encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 14-16/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente Championship. Não misture League One, League Two, Carabao Cup ou amistosos.",
+    },
+    {
+        "Liga": "Espanha - La Liga",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início/consultar", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente La Liga. Não misture Copa del Rey, Segunda ou amistosos. Mercado costuma ser eficiente; exigir preço bom.",
+    },
+    {
+        "Liga": "Espanha - Segunda Divisão",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "jogos", "Jun": "playoffs/consultar", "Jul": "pausa", "Ago": "início/consultar", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente Segunda División/LaLiga Hypermotion. Não misture Primera RFEF. Muitos jogos são truncados; olhar mercados de gols com cautela.",
+    },
+    {
+        "Liga": "Itália - Série A",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 22-23/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos/pausa natal",
+        "Observação": "Use somente Serie A. Não misture Coppa Italia, Serie B ou amistosos.",
+    },
+    {
+        "Liga": "Itália - Série B",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "playoffs/encerra", "Jun": "playoffs/consultar", "Jul": "pausa", "Ago": "início/consultar", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente Serie B. Cuidado com playoffs/playouts e variação grande de elencos.",
+    },
+    {
+        "Liga": "Alemanha - Bundesliga",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 28/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos/pausa",
+        "Observação": "Use somente Bundesliga. Não misture 2. Bundesliga, DFB-Pokal ou amistosos.",
+    },
+    {
+        "Liga": "Alemanha - 2. Bundesliga",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 07/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos/pausa",
+        "Observação": "Use somente 2. Bundesliga. Ela começa antes da Bundesliga em 2026/27; confirme sempre se é liga, não copa.",
+    },
+    {
+        "Liga": "França - Ligue 1",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 23/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "até 13/12",
+        "Observação": "Use somente Ligue 1. Não misture Ligue 2, Coupe de France ou amistosos. Em 26/27 há pausa no fim de dezembro.",
+    },
+    {
+        "Liga": "Portugal - Primeira Liga",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 09/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente Primeira Liga/Liga Portugal Betclic. Não misture Liga Portugal 2, Taça ou amistosos.",
+    },
+    {
+        "Liga": "Holanda - Eredivisie",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 07-09/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos/pausa",
+        "Observação": "Use somente Eredivisie. Não misture Eerste Divisie, KNVB Cup ou amistosos. Boa liga para mercados de gols, mas audite.",
+    },
+    {
+        "Liga": "Bélgica - Pro League",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa/consultar", "Ago": "início 07/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente Belgian/Jupiler Pro League principal. Não misture Challenger Pro League, playoffs antigos, copa ou reservas.",
+    },
+    {
+        "Liga": "Turquia - Super Lig",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "25/26 jogos", "Abr": "25/26 jogos", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 14/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente Süper Lig principal. Não misture 1. Lig turca, copa ou amistosos. Atenção a mando forte e elencos instáveis.",
+    },
+    {
+        "Liga": "Grécia - Super League",
+        "Jan": "25/26 jogos", "Fev": "25/26 jogos", "Mar": "fase final/consultar", "Abr": "fase final/consultar", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início 22/08", "Set": "26/27 jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos",
+        "Observação": "Use somente Super League Greece 1. Não misture Super League 2, copa ou amistosos. Atenção a formato com playoffs/playouts.",
+    },
+]
+
+LIGAS_NAO_COBERTAS = [
+    "Suécia - Division 1 / Ettan Norra / Ettan Södra: aparece como 'Suécia - 1ª Div' em algumas casas, mas NÃO é Allsvenskan.",
+    "EUA - MLS Next Pro / times II / reservas: Vancouver Whitecaps II, Portland Timbers II, Tacoma Defiance, Real Monarchs etc.",
+    "Brasil: estaduais, Série B, Série C, Copa do Brasil, Sub-20 ou feminino.",
+    "Argentina: Primera Nacional, Copa Argentina, reservas ou torneios regionais.",
+    "México: Liga de Expansión, Sub-23, feminino ou amistosos.",
+    "Japão: J2, J3, Copa da Liga, Copa do Imperador e amistosos.",
+    "China: China League One/Two, FA Cup e sub-21.",
+    "Noruega: OBOS-ligaen, Copa da Noruega ou reservas.",
+    "Finlândia: Ykkösliiga/Ykkönen, Copa da Finlândia ou amistosos.",
+    "Irlanda: First Division, FAI Cup, Setanta/amistosos.",
+    "Inglaterra: FA Cup, EFL Cup, League One, League Two, National League e amistosos.",
+    "Espanha: Copa del Rey, Primera RFEF e amistosos.",
+    "Itália: Coppa Italia, Serie C, Primavera e amistosos.",
+    "Alemanha: DFB-Pokal, 3. Liga, Regionalliga e amistosos.",
+    "França: Ligue 2, Coupe de France, National e amistosos.",
+    "Portugal: Liga Portugal 2, Taça de Portugal, Liga 3 e amistosos.",
+    "Holanda: Eerste Divisie, KNVB Cup e amistosos.",
+    "Bélgica: Challenger Pro League, copa, reservas e amistosos.",
+    "Turquia: 1. Lig, copa e amistosos.",
+    "Grécia: Super League 2, copa e amistosos.",
 ]
 
 
@@ -969,8 +1098,8 @@ def render_card(resultado: Dict[str, object], banca: float, time_casa: str, time
 # APP
 # ============================================================
 
-st.title("TEX STATISTICS PRO 15.5")
-st.caption("Motor em blocos: simples para operar, com banca dinâmica e auditoria.")
+st.title("TEX STATISTICS PRO 15.7")
+st.caption("Motor em blocos: simples para operar, com banca dinâmica, auditoria e calendário revisado por liga.")
 
 with st.sidebar:
     st.header("Banca")
@@ -1013,65 +1142,132 @@ aba_analisar, aba_auditoria, aba_calendario = st.tabs(["🎯 Analisar jogo", "�
 
 # O calendário vem antes da análise para nunca depender de jogo selecionado.
 with aba_calendario:
-    st.subheader("Calendário das ligas do app")
-    st.success("Calendário carregado. Se esta aba aparecer vazia em alguma atualização futura, o problema quase sempre é uma parada de execução em outra aba; nesta versão isso foi corrigido.")
+    st.subheader("Calendário e conferência de TODAS as ligas")
+    st.error(
+        "Correção importante: esta aba NÃO é uma lista oficial de jogos. "
+        "Ela serve como mapa de ligas cobertas pelo app. Para saber se há jogo hoje, use a casa de apostas ou o botão de conferência pela API."
+    )
     st.caption(
-        "Use isto como mapa de operação: quando uma liga estiver no começo, espere algumas rodadas para formar amostra. "
-        "Quando estiver no meio da temporada, a leitura do modelo tende a ficar mais confiável."
+        "A regra principal é simples: só analise jogos da mesma liga que está na base do app. "
+        "Se o time não aparece na lista da liga, não force por outro nome."
     )
 
     calendario_df = pd.DataFrame(CALENDARIO_LIGAS)
 
+    st.markdown("### Conferir se existem jogos com cotações agora")
+    st.caption(
+        "Este botão consulta a The Odds API e mostra apenas ligas que retornarem partidas com cotações. "
+        "Use com moderação, porque cada liga consultada pode consumir requisição da sua chave."
+    )
+
+    ligas_para_checar = st.multiselect(
+        "Ligas para consultar agora",
+        list(LIGAS_API.keys()),
+        default=[liga_sel] if liga_sel in LIGAS_API else [],
+    )
+
+    if st.button("VERIFICAR JOGOS DISPONÍVEIS AGORA"):
+        if not chave_api:
+            st.warning("Informe a chave da API na barra lateral para conferir jogos disponíveis.")
+        elif not ligas_para_checar:
+            st.warning("Escolha pelo menos uma liga para consultar.")
+        else:
+            encontrados = []
+            sem_jogos = []
+            agora_utc = pd.Timestamp.now(tz="UTC")
+
+            for liga_nome in ligas_para_checar:
+                dados_api = buscar_odds_api(chave_api, LIGAS_API[liga_nome])
+                jogos_futuros = []
+                for jogo in dados_api or []:
+                    try:
+                        inicio = pd.to_datetime(jogo.get("commence_time"), utc=True)
+                        if inicio > agora_utc:
+                            jogos_futuros.append({
+                                "Liga": liga_nome,
+                                "Jogo": f"{jogo.get('home_team', '')} x {jogo.get('away_team', '')}",
+                                "Data/Hora": inicio.tz_convert("America/Sao_Paulo").strftime("%d/%m %H:%M"),
+                            })
+                    except Exception:
+                        continue
+
+                if jogos_futuros:
+                    encontrados.extend(jogos_futuros[:10])
+                else:
+                    sem_jogos.append(liga_nome)
+
+            if encontrados:
+                st.success(f"Encontrei {len(encontrados)} jogo(s) com cotações nas ligas consultadas.")
+                st.dataframe(pd.DataFrame(encontrados), use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma das ligas consultadas retornou jogo com cotação agora.")
+
+            if sem_jogos:
+                with st.expander("Ligas consultadas sem jogos/cotações agora"):
+                    for liga_nome in sem_jogos:
+                        st.write(f"- {liga_nome}")
+
+    st.markdown("### Mapa mensal, com cuidado")
+    st.warning(
+        "O mapa abaixo foi revisado liga por liga. Mesmo assim, ele é um mapa operacional, não uma lista oficial de partidas. "
+        "Em ano de Copa do Mundo e pausas internacionais, várias ligas param mesmo dentro do mês normal."
+    )
+
     mes_atual = st.selectbox(
-        "Escolha o mês para ver as ligas mais úteis",
+        "Escolha o mês para ver o mapa geral",
         ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"],
         index=datetime.now().month - 1,
     )
 
     ativas = calendario_df[calendario_df[mes_atual].astype(str).str.strip() != ""].copy()
-    st.markdown(f"### Ligas com movimento em {mes_atual}")
+    st.markdown(f"### Mapa geral em {mes_atual}")
     if ativas.empty:
-        st.info("Nenhuma liga marcada para este mês no calendário do app.")
+        st.info("Nenhuma liga marcada para este mês no mapa geral do app.")
     else:
         for _, linha in ativas.iterrows():
             st.markdown(
                 f"""
                 <div class="card-aposta card-leve">
                     <div class="mercado-card">{linha['Liga']}</div>
-                    <div class="linha-info"><b>Status no mês:</b> {linha[mes_atual]}</div>
+                    <div class="linha-info"><b>Mapa do mês:</b> {linha[mes_atual]}</div>
                     <div class="linha-info"><b>Observação:</b> {linha['Observação']}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-    with st.expander("Ver tabela completa do calendário"):
+    st.markdown("### Ligas que parecem parecidas, mas NÃO são cobertas")
+    st.caption("Se aparecer uma dessas na casa, não use a base atual do app para analisar.")
+    for item in LIGAS_NAO_COBERTAS:
+        st.markdown(f"- ❌ {item}")
+
+    with st.expander("Ver tabela completa do mapa"):
         st.dataframe(calendario_df, use_container_width=True, hide_index=True)
 
     st.markdown("### Como usar na prática")
     st.markdown(
         """
-        - **Janeiro a maio:** foco nas ligas europeias em andamento, Argentina, México e Brasil.
-        - **Junho e julho:** mês mais perigoso na Europa; priorize Brasil, Argentina, MLS, México, Suécia e Noruega.
-        - **Agosto a dezembro:** volta forte da Europa + continuação das ligas de ano calendário.
-        - **Evite exagerar nas 3 primeiras rodadas** de qualquer liga, porque elenco, técnico e padrão de gols ainda estão instáveis.
-        - **Depois da 6ª rodada**, a leitura estatística fica mais confiável.
+        - **Primeiro:** confira se a liga da casa é exatamente a liga coberta pelo app.
+        - **Segundo:** se o time não aparece na lista do app, não force análise.
+        - **Terceiro:** use o botão de conferência pela API para ver se há jogo real com cotação.
+        - **Quarto:** nas 3 primeiras rodadas de uma liga, use valor simbólico ou espere formar amostra.
+        - **Quinto:** depois da 6ª rodada, a leitura estatística tende a ficar mais confiável.
         """
     )
 
     csv_cal = calendario_df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
-        "BAIXAR CALENDÁRIO DAS LIGAS EM CSV",
+        "BAIXAR MAPA DAS LIGAS EM CSV",
         data=csv_cal,
-        file_name="calendario_ligas_tex_pro_15.csv",
+        file_name="mapa_ligas_tex_pro_15.csv",
         mime="text/csv",
     )
 
-    excel_cal = gerar_excel_simples({"Calendario": calendario_df})
+    excel_cal = gerar_excel_simples({"Mapa_ligas": calendario_df, "Nao_cobertas": pd.DataFrame({"Liga/competição": LIGAS_NAO_COBERTAS})})
     st.download_button(
-        "BAIXAR CALENDÁRIO DAS LIGAS EM EXCEL",
+        "BAIXAR MAPA DAS LIGAS EM EXCEL",
         data=excel_cal,
-        file_name="calendario_ligas_tex_pro_15.xlsx",
+        file_name="mapa_ligas_tex_pro_15.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
