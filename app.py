@@ -11,12 +11,12 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 15.12 — HÍBRIDO
+# TEX STATISTICS PRO 15.13 — HÍBRIDO
 # Coração da versão 2.14 + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX PRO 15.12 — Blocos", layout="wide")
+st.set_page_config(page_title="TEX PRO 15.13 — Blocos", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -303,6 +303,63 @@ st.markdown(
         border: 1px solid var(--line);
         box-shadow: var(--shadow-soft);
         overflow: hidden;
+    }
+
+    /* Garantir visibilidade de labels e textos da barra lateral
+       tanto no modo claro quanto no modo escuro do celular */
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div,
+    [data-testid="stSidebar"] small,
+    [data-testid="stSidebar"] strong,
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] h4,
+    [data-testid="stSidebar"] [data-testid="stWidgetLabel"],
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+    [data-testid="stSidebar"] .stSelectbox label,
+    [data-testid="stSidebar"] .stNumberInput label,
+    [data-testid="stSidebar"] .stTextInput label,
+    [data-testid="stSidebar"] .stSlider label,
+    [data-testid="stSidebar"] .stRadio label,
+    [data-testid="stSidebar"] .stCheckbox label,
+    [data-testid="stSidebar"] .stDateInput label {
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        opacity: 1 !important;
+    }
+
+    [data-testid="stSidebar"] .stCaption,
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+    [data-testid="stSidebar"] .mini,
+    [data-testid="stSidebar"] .help,
+    [data-testid="stSidebar"] [title] {
+        color: #334155 !important;
+        -webkit-text-fill-color: #334155 !important;
+        opacity: 1 !important;
+    }
+
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] textarea,
+    [data-testid="stSidebar"] [data-baseweb="input"] input,
+    [data-testid="stSidebar"] [data-baseweb="select"] > div,
+    [data-testid="stSidebar"] [data-baseweb="base-input"] {
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        background-color: rgba(255,255,255,0.98) !important;
+    }
+
+    [data-testid="stSidebar"] .stSlider [data-baseweb="slider"] * {
+        color: #0f172a !important;
+    }
+
+    /* Garantir contraste também no corpo principal */
+    .stMarkdown, .stText, .stCaption, [data-testid="stWidgetLabel"], label {
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
     }
 
     @media (max-width: 900px) {
@@ -1396,7 +1453,7 @@ st.markdown(
             <span class="hero-selo">VERSÃO PREMIUM</span>
             <span class="hero-selo">VISUAL OTIMIZADO PARA CELULAR</span>
         </div>
-        <div class="hero-titulo">TEX STATISTICS PRO 15.12</div>
+        <div class="hero-titulo">TEX STATISTICS PRO 15.13</div>
         <div class="hero-sub">Agora com visual premium: aparência mais elegante, mais limpa e com melhor leitura no celular. A ideia é você abrir, bater o olho e entender rápido o que importa — sem sensação de planilha dura.</div>
         <div class="hero-chip-wrap">
             <span class="hero-chip">Blocos de decisão</span>
