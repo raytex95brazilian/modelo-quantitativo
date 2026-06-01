@@ -11,12 +11,12 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 15.9 — HÍBRIDO
+# TEX STATISTICS PRO 15.12 — HÍBRIDO
 # Coração da versão 2.14 + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX PRO 15.9 — Blocos", layout="wide")
+st.set_page_config(page_title="TEX PRO 15.12 — Blocos", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -24,34 +24,302 @@ st.set_page_config(page_title="TEX PRO 15.9 — Blocos", layout="wide")
 st.markdown(
     """
     <style>
-    .block-container {padding-top: 1.1rem; padding-bottom: 2rem; max-width: 1200px;}
-    div[data-testid="stMetricValue"] {font-size: 1.45rem;}
-    .card-aposta {
-        border-radius: 18px;
-        padding: 18px 18px 14px 18px;
-        margin: 12px 0;
-        border: 1px solid rgba(49, 51, 63, 0.15);
-        box-shadow: 0 3px 14px rgba(0,0,0,0.07);
-        background: #ffffff;
+    :root {
+        --bg1: #f4f7fb;
+        --bg2: #eaf1fb;
+        --card: rgba(255,255,255,0.92);
+        --card-2: rgba(255,255,255,0.72);
+        --text: #0f172a;
+        --muted: #475569;
+        --line: rgba(15, 23, 42, 0.09);
+        --verde: #10b981;
+        --amarelo: #f59e0b;
+        --azul: #3b82f6;
+        --vermelho: #ef4444;
+        --shadow: 0 14px 40px rgba(15, 23, 42, 0.10);
+        --shadow-soft: 0 8px 24px rgba(15, 23, 42, 0.06);
     }
-    .card-forte {border-left: 9px solid #0a8f3c;}
-    .card-boa {border-left: 9px solid #e6a400;}
-    .card-leve {border-left: 9px solid #2779bd;}
-    .card-nao {border-left: 9px solid #c62828; opacity: 0.94;}
-    .titulo-card {font-size: 1.18rem; font-weight: 800; margin-bottom: 8px;}
-    .mercado-card {font-size: 1.42rem; font-weight: 900; margin-bottom: 12px;}
-    .linha-info {font-size: 0.98rem; line-height: 1.6;}
-    .mini {font-size: 0.83rem; opacity: 0.80;}
-    .ok {color: #0a8f3c; font-weight: 900;}
-    .warn {color: #bd7b00; font-weight: 900;}
-    .bad {color: #c62828; font-weight: 900;}
-    .blue {color: #2779bd; font-weight: 900;}
+
+    html, body, .stApp, [data-testid="stAppViewContainer"] {
+        background:
+            radial-gradient(circle at top left, rgba(59,130,246,0.10), transparent 28%),
+            radial-gradient(circle at top right, rgba(16,185,129,0.08), transparent 24%),
+            linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%) !important;
+        color: var(--text) !important;
+    }
+    [data-testid="stHeader"] {
+        background: rgba(244, 247, 251, 0.65) !important;
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid rgba(255,255,255,0.18);
+    }
+    [data-testid="stSidebar"], [data-testid="stSidebarContent"] {
+        background: linear-gradient(180deg, rgba(236,242,251,0.98) 0%, rgba(231,238,248,0.98) 100%) !important;
+        color: var(--text) !important;
+        border-right: 1px solid rgba(255,255,255,0.35);
+        box-shadow: inset -1px 0 0 rgba(15,23,42,0.04);
+    }
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 2.2rem;
+        max-width: 1180px;
+        color: var(--text) !important;
+    }
+    .block-container h1, .block-container h2, .block-container h3,
+    .block-container h4, .block-container p, .block-container label,
+    .block-container span, .block-container div {
+        color: inherit;
+    }
+
+    .hero {
+        position: relative;
+        overflow: hidden;
+        background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 55%, #38bdf8 100%);
+        color: #ffffff !important;
+        border-radius: 28px;
+        padding: 24px 22px 18px 22px;
+        box-shadow: 0 18px 44px rgba(15, 23, 42, 0.24);
+        margin-bottom: 16px;
+    }
+    .hero::before {
+        content: "";
+        position: absolute;
+        width: 220px;
+        height: 220px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.10);
+        top: -80px;
+        right: -50px;
+        filter: blur(2px);
+    }
+    .hero::after {
+        content: "";
+        position: absolute;
+        width: 160px;
+        height: 160px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        bottom: -55px;
+        left: -35px;
+    }
+    .hero * { color: #ffffff !important; position: relative; z-index: 1; }
+    .hero-topo {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    .hero-selo {
+        display: inline-block;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.14);
+        border: 1px solid rgba(255,255,255,0.18);
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.3px;
+    }
+    .hero-titulo {
+        font-size: 1.85rem;
+        font-weight: 900;
+        margin: 8px 0 8px 0;
+        letter-spacing: -0.4px;
+    }
+    .hero-sub {
+        font-size: 0.98rem;
+        opacity: 0.96;
+        line-height: 1.55;
+        max-width: 860px;
+    }
+    .hero-chip-wrap { margin-top: 14px; }
+    .hero-chip {
+        display: inline-block;
+        margin: 4px 7px 0 0;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.13);
+        border: 1px solid rgba(255,255,255,0.18);
+        font-size: 0.83rem;
+        font-weight: 800;
+    }
+
+    .painel-resumo {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin: 0 0 14px 0;
+    }
+    .resumo-card {
+        background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,255,0.92) 100%);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 14px 16px;
+        box-shadow: var(--shadow-soft);
+    }
+    .resumo-label { font-size: 0.8rem; color: var(--muted) !important; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px; }
+    .resumo-valor { font-size: 1.05rem; color: var(--text) !important; font-weight: 900; margin-top: 4px; }
+
+    div[data-testid="stMetric"] {
+        background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,250,255,0.95) 100%);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 12px 13px;
+        box-shadow: var(--shadow-soft);
+    }
+    div[data-testid="stMetricValue"] { font-size: 1.42rem; color: var(--text) !important; }
+    div[data-testid="stMetricLabel"] { color: var(--muted) !important; font-weight: 800; }
+    div[data-testid="stMetricDelta"] { color: var(--muted) !important; }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+        background: transparent;
+        padding: 5px 0 12px 0;
+        flex-wrap: wrap;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background: rgba(255,255,255,0.82);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 10px 16px;
+        height: auto;
+        box-shadow: var(--shadow-soft);
+        font-weight: 800;
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%) !important;
+        border-color: rgba(37, 99, 235, 0.22) !important;
+        color: #1d4ed8 !important;
+    }
+
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 16px !important;
+        border: 1px solid rgba(29, 78, 216, 0.12) !important;
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+        color: white !important;
+        font-weight: 900 !important;
+        padding: 0.66rem 1.05rem !important;
+        box-shadow: 0 10px 22px rgba(37, 99, 235, 0.22) !important;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 14px 26px rgba(37, 99, 235, 0.26) !important;
+    }
+    .stButton > button[kind="secondary"], .stDownloadButton > button[kind="secondary"] {
+        background: rgba(255,255,255,0.96) !important;
+        color: var(--text) !important;
+        border: 1px solid var(--line) !important;
+        box-shadow: var(--shadow-soft) !important;
+    }
+
+    input, textarea, [data-baseweb="input"] input {
+        background-color: rgba(255,255,255,0.98) !important;
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+        border-radius: 14px !important;
+    }
+    [data-baseweb="select"] > div, [data-baseweb="base-input"] {
+        background-color: rgba(255,255,255,0.98) !important;
+        border-radius: 14px !important;
+    }
+    .stTextInput > div > div, .stNumberInput > div > div, .stDateInput > div > div {
+        border-radius: 14px !important;
+    }
+
+    .caixa-info {
+        background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(249,251,255,0.93) 100%);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 14px 16px;
+        box-shadow: var(--shadow-soft);
+        margin: 8px 0 16px 0;
+    }
+    .caixa-info strong { color: var(--text) !important; }
+    .caixa-info p, .caixa-info div, .caixa-info span { color: var(--muted) !important; }
+
+    .card-aposta {
+        position: relative;
+        border-radius: 22px;
+        padding: 18px 18px 14px 18px;
+        margin: 14px 0;
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+        background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,250,255,0.95) 100%) !important;
+        color: var(--text) !important;
+        overflow: hidden;
+    }
+    .card-aposta::after {
+        content: "";
+        position: absolute;
+        top: 0; right: 0;
+        width: 110px; height: 110px;
+        background: radial-gradient(circle, rgba(37,99,235,0.08) 0%, transparent 70%);
+    }
+    .card-aposta div, .card-aposta span, .card-aposta p, .card-aposta b, .card-aposta strong {
+        color: var(--text) !important;
+        position: relative;
+        z-index: 1;
+    }
+    .card-forte {border-left: 10px solid var(--verde);}
+    .card-boa {border-left: 10px solid var(--amarelo);}
+    .card-leve {border-left: 10px solid var(--azul);}
+    .card-nao {border-left: 10px solid var(--vermelho);}
+    .titulo-card {font-size: 1.08rem; font-weight: 900; margin-bottom: 8px; letter-spacing: 0.2px;}
+    .mercado-card {font-size: 1.38rem; font-weight: 900; margin-bottom: 12px;}
+    .linha-info {font-size: 0.97rem; line-height: 1.68;}
+    .mini {font-size: 0.84rem; color: var(--muted) !important;}
+    .ok {color: var(--verde) !important; font-weight: 900;}
+    .warn {color: #a16207 !important; font-weight: 900;}
+    .bad {color: var(--vermelho) !important; font-weight: 900;}
+    .blue {color: var(--azul) !important; font-weight: 900;}
+
+    .etiqueta {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(239,246,255,0.98);
+        border: 1px solid rgba(37,99,235,0.12);
+        color: #1d4ed8 !important;
+        font-size: 0.8rem;
+        font-weight: 800;
+        margin-right: 6px;
+        margin-bottom: 6px;
+    }
+
+    [data-testid="stExpander"] {
+        background: rgba(255,255,255,0.94);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: var(--shadow-soft);
+        overflow: hidden;
+    }
+    .stAlert {
+        border-radius: 16px !important;
+        border: 1px solid var(--line) !important;
+        box-shadow: var(--shadow-soft) !important;
+    }
+    [data-testid="stDataFrame"] {
+        background: rgba(255,255,255,0.96);
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow-soft);
+        overflow: hidden;
+    }
+
+    @media (max-width: 900px) {
+        .painel-resumo { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
     @media (max-width: 768px) {
         .block-container {padding-left: 0.85rem; padding-right: 0.85rem;}
-        .titulo-card {font-size: 1.08rem;}
-        .mercado-card {font-size: 1.22rem;}
-        .linha-info {font-size: 0.93rem;}
-        div[data-testid="stMetricValue"] {font-size: 1.20rem;}
+        .hero { border-radius: 24px; padding: 20px 18px 16px 18px; }
+        .hero-titulo {font-size: 1.36rem;}
+        .hero-sub {font-size: 0.92rem;}
+        .painel-resumo { grid-template-columns: 1fr 1fr; gap: 10px; }
+        .resumo-card { padding: 12px; }
+        .resumo-valor { font-size: 0.98rem; }
+        .titulo-card {font-size: 1rem;}
+        .mercado-card {font-size: 1.14rem;}
+        .linha-info {font-size: 0.92rem;}
+        div[data-testid="stMetricValue"] {font-size: 1.12rem;}
     }
     </style>
     """,
@@ -1121,8 +1389,32 @@ def render_card(resultado: Dict[str, object], banca: float, time_casa: str, time
 # APP
 # ============================================================
 
-st.title("TEX STATISTICS PRO 15.9")
-st.caption("Motor em blocos: perfil agressivo corrigido, banca dinâmica, auditoria estável e calendário revisado por liga.")
+st.markdown(
+    """
+    <div class="hero">
+        <div class="hero-topo">
+            <span class="hero-selo">VERSÃO PREMIUM</span>
+            <span class="hero-selo">VISUAL OTIMIZADO PARA CELULAR</span>
+        </div>
+        <div class="hero-titulo">TEX STATISTICS PRO 15.12</div>
+        <div class="hero-sub">Agora com visual premium: aparência mais elegante, mais limpa e com melhor leitura no celular. A ideia é você abrir, bater o olho e entender rápido o que importa — sem sensação de planilha dura.</div>
+        <div class="hero-chip-wrap">
+            <span class="hero-chip">Blocos de decisão</span>
+            <span class="hero-chip">Layout premium</span>
+            <span class="hero-chip">Modo noturno estável</span>
+            <span class="hero-chip">Auditoria</span>
+            <span class="hero-chip">Calendário</span>
+        </div>
+    </div>
+    <div class="painel-resumo">
+        <div class="resumo-card"><div class="resumo-label">Visual</div><div class="resumo-valor">Mais bonito e mais limpo</div></div>
+        <div class="resumo-card"><div class="resumo-label">Leitura</div><div class="resumo-valor">Fácil de enxergar no celular</div></div>
+        <div class="resumo-card"><div class="resumo-label">Decisão</div><div class="resumo-valor">APOSTAR / NÃO APOSTAR em destaque</div></div>
+        <div class="resumo-card"><div class="resumo-label">Base</div><div class="resumo-valor">Mesma lógica do motor</div></div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 with st.sidebar:
     st.header("Banca")
@@ -1172,6 +1464,8 @@ with st.sidebar:
     casa_apostas = st.selectbox("Onde você vai apostar?", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"])
 
 aba_analisar, aba_auditoria, aba_calendario = st.tabs(["🎯 Analisar jogo", "📒 Auditoria", "🗓️ Calendário das ligas"])
+
+st.markdown("<div class='caixa-info'><strong>Leitura rápida:</strong> use a aba <strong>Analisar jogo</strong> para ver as oportunidades em blocos; a aba <strong>Auditoria</strong> para registrar e baixar resultados; e a aba <strong>Calendário das ligas</strong> para saber onde focar no mês.</div>", unsafe_allow_html=True)
 
 # O calendário vem antes da análise para nunca depender de jogo selecionado.
 with aba_calendario:
