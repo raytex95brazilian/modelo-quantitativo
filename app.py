@@ -613,6 +613,127 @@ def calcular_resultado(status: str, entrada_rs: float, odd_entrada: float, valor
         return valor_cashout - entrada_rs
     return 0.0
 
+
+
+def gerar_excel_auditoria(auditoria: pd.DataFrame, banca_inicial: float) -> bytes:
+    """Gera um Excel completo da auditoria, com histórico e resumos."""
+    buffer = io.BytesIO()
+    df = auditoria.copy()
+
+    if df.empty:
+        df = pd.DataFrame([{"Aviso": "Ainda não há entradas registradas na auditoria."}])
+
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Historico")
+
+        if not auditoria.empty:
+            base = auditoria.copy()
+            base["Resultado R$"] = pd.to_numeric(base.get("Resultado R$", 0), errors="coerce").fillna(0.0)
+            base["Entrada R$"] = pd.to_numeric(base.get("Entrada R$", 0), errors="coerce").fillna(0.0)
+            base["Valor esperado %"] = pd.to_numeric(base.get("Valor esperado %", 0), errors="coerce")
+            base["Vantagem no fechamento %"] = pd.to_numeric(base.get("Vantagem no fechamento %", 0), errors="coerce")
+
+            fechadas = base[base["Status"].astype(str).isin(["Green", "Red", "Void", "Cashout"])].copy()
+            pendentes = base[base["Status"].astype(str) == "Pendente"].copy()
+
+            lucro_total = float(base["Resultado R$"].sum())
+            total_entradas = int(len(base))
+            total_fechadas = int(len(fechadas))
+            valor_total_apostado = float(fechadas["Entrada R$"].sum()) if total_fechadas else 0.0
+            retorno_percentual = (lucro_total / valor_total_apostado * 100.0) if valor_total_apostado > 0 else 0.0
+            banca_final = float(banca_inicial + lucro_total)
+            acertos = int((fechadas["Status"].astype(str) == "Green").sum()) if total_fechadas else 0
+            reds = int((fechadas["Status"].astype(str) == "Red").sum()) if total_fechadas else 0
+            anuladas = int((fechadas["Status"].astype(str) == "Void").sum()) if total_fechadas else 0
+            taxa_acerto = (acertos / max(1, acertos + reds) * 100.0) if total_fechadas else 0.0
+            vantagem_media = float(fechadas["Vantagem no fechamento %"].dropna().mean()) if not fechadas.empty else 0.0
+
+            resumo = pd.DataFrame([
+                {"Indicador": "Banca inicial", "Valor": banca_inicial},
+                {"Indicador": "Banca atual pela auditoria", "Valor": banca_final},
+                {"Indicador": "Resultado total R$", "Valor": lucro_total},
+                {"Indicador": "Entradas registradas", "Valor": total_entradas},
+                {"Indicador": "Entradas fechadas", "Valor": total_fechadas},
+                {"Indicador": "Entradas pendentes", "Valor": int(len(pendentes))},
+                {"Indicador": "Greens", "Valor": acertos},
+                {"Indicador": "Reds", "Valor": reds},
+                {"Indicador": "Anuladas", "Valor": anuladas},
+                {"Indicador": "Taxa de acerto %", "Valor": round(taxa_acerto, 2)},
+                {"Indicador": "Total apostado em entradas fechadas", "Valor": round(valor_total_apostado, 2)},
+                {"Indicador": "Retorno sobre valor apostado %", "Valor": round(retorno_percentual, 2)},
+                {"Indicador": "Vantagem média no fechamento %", "Valor": round(vantagem_media, 2)},
+            ])
+            resumo.to_excel(writer, index=False, sheet_name="Resumo")
+
+            for coluna, aba in [
+                ("Mercado", "Por mercado"),
+                ("Liga", "Por liga"),
+                ("Casa de apostas", "Por casa"),
+            ]:
+                if coluna in fechadas.columns and not fechadas.empty:
+                    agrupado = (
+                        fechadas.groupby(coluna, dropna=False)
+                        .agg(
+                            Entradas=("ID", "count"),
+                            Total_apostado=("Entrada R$", "sum"),
+                            Resultado=("Resultado R$", "sum"),
+                            Valor_esperado_medio=("Valor esperado %", "mean"),
+                            Vantagem_fechamento_media=("Vantagem no fechamento %", "mean"),
+                        )
+                        .reset_index()
+                    )
+                    agrupado["Retorno_%"] = np.where(
+                        agrupado["Total_apostado"] > 0,
+                        agrupado["Resultado"] / agrupado["Total_apostado"] * 100.0,
+                        0.0,
+                    )
+                    agrupado = agrupado.round(2)
+                    agrupado.to_excel(writer, index=False, sheet_name=aba)
+
+            if not pendentes.empty:
+                pendentes.to_excel(writer, index=False, sheet_name="Pendentes")
+
+        # Ajuste visual simples: congela cabeçalho e aumenta um pouco as colunas.
+        for sheet in writer.book.worksheets:
+            sheet.freeze_panes = "A2"
+            for col in sheet.columns:
+                max_len = 10
+                col_letter = col[0].column_letter
+                for cell in col[:200]:
+                    try:
+                        max_len = max(max_len, len(str(cell.value)) if cell.value is not None else 0)
+                    except Exception:
+                        pass
+                sheet.column_dimensions[col_letter].width = min(max_len + 2, 38)
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+CALENDARIO_LIGAS = [
+    {"Liga": "Brasileirão Série A", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "ativo", "Jun": "ativo", "Jul": "ativo", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "encerra", "Observação": "Temporada 2026 prevista de jan/fev a dez. Melhor para análises: depois da 6ª rodada."},
+    {"Liga": "Argentina - Primera Division", "Jan": "início", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "ativo", "Jun": "ativo", "Jul": "ativo", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "encerra", "Observação": "Calendário longo em 2026. Boa liga para volume, mas cuidado com formato e mata-mata."},
+    {"Liga": "EUA - MLS", "Jan": "", "Fev": "início", "Mar": "ativo", "Abr": "ativo", "Mai": "pausa", "Jun": "pausa", "Jul": "retoma", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "playoffs", "Dez": "playoffs", "Observação": "Pausa longa pela Copa do Mundo. Boa para volume fora do calendário europeu."},
+    {"Liga": "México - Liga MX", "Jan": "Clausura", "Fev": "Clausura", "Mar": "Clausura", "Abr": "Clausura", "Mai": "mata-mata", "Jun": "pausa", "Jul": "Apertura", "Ago": "Apertura", "Set": "Apertura", "Out": "Apertura", "Nov": "mata-mata", "Dez": "mata-mata", "Observação": "Dois torneios. Boa liga para manter operação quase o ano todo."},
+    {"Liga": "Japão - J1 League", "Jan": "", "Fev": "início", "Mar": "ativo", "Abr": "ativo", "Mai": "ativo", "Jun": "playoff/pausa", "Jul": "pausa", "Ago": "nova temporada", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "2026 é ano de transição: torneio especial no 1º semestre e novo calendário a partir de agosto."},
+    {"Liga": "Suécia - Allsvenskan", "Jan": "", "Fev": "", "Mar": "", "Abr": "início", "Mai": "ativo", "Jun": "ativo", "Jul": "ativo", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "encerra", "Dez": "", "Observação": "Excelente para cobrir o meio do ano europeu."},
+    {"Liga": "Noruega - Eliteserien", "Jan": "", "Fev": "", "Mar": "início", "Abr": "ativo", "Mai": "ativo", "Jun": "ativo", "Jul": "ativo", "Ago": "ativo", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "encerra", "Observação": "Outra ótima liga de calendário anual para cobrir março a dezembro."},
+    {"Liga": "Inglaterra - Premier League", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Temporada 26/27 começa em agosto. Mercado líquido, mas mais difícil de bater."},
+    {"Liga": "Inglaterra - Championship", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra/playoffs", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Muito volume. Cuidado com calendário congestionado e rotação."},
+    {"Liga": "Espanha - La Liga", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Liga forte e mais eficiente. Use como referência, mas exige preço muito bom."},
+    {"Liga": "Espanha - Segunda Divisão", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "ativo", "Jun": "playoffs", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Boa para volume, mas muitos jogos truncados; olhar Under também."},
+    {"Liga": "Itália - Série A", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Temporada 26/27 começa em agosto e termina em maio."},
+    {"Liga": "Itália - Série B", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra/playoffs", "Jun": "playoffs", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Boa para volume, mas com maior variação de elencos e odds menos perfeitas."},
+    {"Liga": "Alemanha - Bundesliga", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Bundesliga 26/27 começa no fim de agosto."},
+    {"Liga": "Alemanha - 2. Bundesliga", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Começa antes da Bundesliga. Boa para retomar operação em agosto."},
+    {"Liga": "França - Ligue 1", "Jan": "retoma", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Tem pausa de fim de ano e volta em janeiro."},
+    {"Liga": "Portugal - Primeira Liga", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Começa no início de agosto; boa janela antes das ligas maiores aquecerem."},
+    {"Liga": "Holanda - Eredivisie", "Jan": "retoma", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo/pausa", "Observação": "Tende a ter bom volume de gols; útil para mercados de gols."},
+    {"Liga": "Bélgica - Pro League", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Calendário europeu; atenção a mudanças de formato."},
+    {"Liga": "Turquia - Super Lig", "Jan": "ativo", "Fev": "ativo", "Mar": "ativo", "Abr": "ativo", "Mai": "encerra", "Jun": "pausa", "Jul": "pausa", "Ago": "início", "Set": "ativo", "Out": "ativo", "Nov": "ativo", "Dez": "ativo", "Observação": "Começa em agosto; atenção a variação de elenco e mando forte."},
+]
+
+
 # ============================================================
 # CARD VISUAL
 # ============================================================
@@ -696,7 +817,7 @@ with st.sidebar:
     st.header("Casa de apostas")
     casa_apostas = st.selectbox("Onde você vai apostar?", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"])
 
-aba_analisar, aba_auditoria = st.tabs(["🎯 Analisar jogo", "📒 Auditoria"])
+aba_analisar, aba_auditoria, aba_calendario = st.tabs(["🎯 Analisar jogo", "📒 Auditoria", "🗓️ Calendário das ligas"])
 
 with aba_analisar:
     with st.spinner("Carregando dados históricos da liga..."):
@@ -964,3 +1085,50 @@ with aba_auditoria:
         st.dataframe(auditoria.tail(300), use_container_width=True, hide_index=True)
         csv = auditoria.to_csv(index=False).encode("utf-8-sig")
         st.download_button("BAIXAR AUDITORIA EM CSV", data=csv, file_name="auditoria_tex_pro_15.csv", mime="text/csv")
+
+        excel_bytes = gerar_excel_auditoria(auditoria, banca_inicial)
+        st.download_button(
+            "BAIXAR AUDITORIA EM EXCEL (.xlsx)",
+            data=excel_bytes,
+            file_name="auditoria_tex_pro_15.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+with aba_calendario:
+    st.subheader("Calendário das ligas do app")
+    st.caption(
+        "Use isto como mapa de operação: quando uma liga estiver no começo, espere algumas rodadas para formar amostra. "
+        "Quando estiver no meio da temporada, a leitura do modelo tende a ficar mais confiável."
+    )
+
+    calendario_df = pd.DataFrame(CALENDARIO_LIGAS)
+    st.dataframe(calendario_df, use_container_width=True, hide_index=True)
+
+    st.markdown("### Como usar na prática")
+    st.markdown(
+        """
+        - **Janeiro a maio:** foco nas ligas europeias em andamento, Argentina, México e Brasil.
+        - **Junho e julho:** mês mais perigoso na Europa; priorize Brasil, Argentina, MLS, México, Suécia e Noruega.
+        - **Agosto a dezembro:** volta forte da Europa + continuação das ligas de ano calendário.
+        - **Evite exagerar nas 3 primeiras rodadas** de qualquer liga, porque elenco, técnico e padrão de gols ainda estão instáveis.
+        - **Depois da 6ª rodada**, a leitura estatística fica mais confiável.
+        """
+    )
+
+    excel_cal = io.BytesIO()
+    with pd.ExcelWriter(excel_cal, engine="openpyxl") as writer:
+        calendario_df.to_excel(writer, index=False, sheet_name="Calendario")
+        for sheet in writer.book.worksheets:
+            sheet.freeze_panes = "A2"
+            for col in sheet.columns:
+                col_letter = col[0].column_letter
+                max_len = max(len(str(cell.value)) if cell.value is not None else 0 for cell in col[:200])
+                sheet.column_dimensions[col_letter].width = min(max_len + 2, 35)
+    excel_cal.seek(0)
+    st.download_button(
+        "BAIXAR CALENDÁRIO DAS LIGAS EM EXCEL",
+        data=excel_cal.getvalue(),
+        file_name="calendario_ligas_tex_pro_15.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
