@@ -16,7 +16,7 @@ from scipy.stats import poisson
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX PRO 15.14 — Blocos", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — Visual Limpo", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -24,303 +24,74 @@ st.set_page_config(page_title="TEX PRO 15.14 — Blocos", layout="wide")
 st.markdown(
     """
     <style>
-    @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@700;800;900&family=Rajdhani:wght@500;600;700&display=swap");
+    @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700&display=swap");
+
     :root {
-        --bg1: #f4f7fb;
-        --bg2: #eaf1fb;
-        --card: rgba(255,255,255,0.92);
-        --card-2: rgba(255,255,255,0.72);
-        --text: #0f172a;
-        --muted: #475569;
-        --line: rgba(15, 23, 42, 0.09);
-        --verde: #10b981;
-        --amarelo: #f59e0b;
-        --azul: #3b82f6;
-        --vermelho: #ef4444;
-        --shadow: 0 14px 40px rgba(15, 23, 42, 0.10);
-        --shadow-soft: 0 8px 24px rgba(15, 23, 42, 0.06);
+        color-scheme: light;
+        --bg: #f6f7fb;
+        --bg-soft: #eef2f7;
+        --card: #ffffff;
+        --card-soft: #f9fafb;
+        --text: #111827;
+        --muted: #64748b;
+        --line: #e5e7eb;
+        --line-strong: #d1d5db;
+        --accent: #0f766e;
+        --accent-soft: #ccfbf1;
+        --accent-line: #99f6e4;
+        --verde: #059669;
+        --amarelo: #d97706;
+        --azul: #2563eb;
+        --vermelho: #dc2626;
+        --shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+        --shadow-soft: 0 8px 22px rgba(15, 23, 42, 0.055);
     }
 
     html, body, .stApp, [data-testid="stAppViewContainer"] {
-        background:
-            radial-gradient(circle at top left, rgba(59,130,246,0.10), transparent 28%),
-            radial-gradient(circle at top right, rgba(16,185,129,0.08), transparent 24%),
-            linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%) !important;
+        background: linear-gradient(180deg, var(--bg) 0%, var(--bg-soft) 100%) !important;
         color: var(--text) !important;
+        font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif !important;
     }
+
     [data-testid="stHeader"] {
-        background: rgba(244, 247, 251, 0.65) !important;
+        background: rgba(246, 247, 251, 0.88) !important;
         backdrop-filter: blur(12px);
-        border-bottom: 1px solid rgba(255,255,255,0.18);
+        border-bottom: 1px solid rgba(229, 231, 235, 0.9);
     }
-    [data-testid="stSidebar"], [data-testid="stSidebarContent"] {
-        background: linear-gradient(180deg, rgba(236,242,251,0.98) 0%, rgba(231,238,248,0.98) 100%) !important;
-        color: var(--text) !important;
-        border-right: 1px solid rgba(255,255,255,0.35);
-        box-shadow: inset -1px 0 0 rgba(15,23,42,0.04);
-    }
+
     .block-container {
         padding-top: 1rem;
         padding-bottom: 2.2rem;
         max-width: 1180px;
-        color: var(--text) !important;
-    }
-    .block-container h1, .block-container h2, .block-container h3,
-    .block-container h4, .block-container p, .block-container label,
-    .block-container span, .block-container div {
-        color: inherit;
     }
 
-    .hero {
-        position: relative;
-        overflow: hidden;
-        background: linear-gradient(145deg, #0b1220 0%, #111827 58%, #18283f 100%);
-        color: #ffffff !important;
-        border-radius: 28px;
-        padding: 24px 22px 18px 22px;
-        box-shadow: 0 20px 46px rgba(15, 23, 42, 0.26);
-        margin-bottom: 16px;
-        border: 1px solid rgba(255,255,255,0.08);
-    }
-    .hero::before {
-        content: "";
-        position: absolute;
-        width: 220px;
-        height: 220px;
-        border-radius: 999px;
-        background: radial-gradient(circle, rgba(56,189,248,0.16) 0%, rgba(56,189,248,0.03) 65%, transparent 75%);
-        top: -80px;
-        right: -50px;
-        filter: blur(1px);
-    }
-    .hero::after {
-        content: "";
-        position: absolute;
-        width: 160px;
-        height: 160px;
-        border-radius: 999px;
-        background: radial-gradient(circle, rgba(16,185,129,0.14) 0%, rgba(16,185,129,0.03) 65%, transparent 75%);
-        bottom: -55px;
-        left: -35px;
-    }
-    .hero * { color: #ffffff !important; position: relative; z-index: 1; }
-    .hero-topo {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-    }
-    .hero-selo {
-        display: inline-block;
-        padding: 7px 12px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.12);
-        font-size: 0.78rem;
-        font-weight: 800;
-        letter-spacing: 0.55px;
-        font-family: "Rajdhani", "Segoe UI", sans-serif;
-        text-transform: uppercase;
-    }
-    .hero-titulo {
-        font-size: 2.05rem;
-        font-weight: 900;
-        margin: 10px 0 6px 0;
-        letter-spacing: 1.2px;
-        font-family: "Orbitron", "Rajdhani", "Segoe UI", sans-serif;
-        text-transform: uppercase;
-        color: #f8fafc !important;
-        text-shadow: 0 2px 10px rgba(15,23,42,0.35);
-    }
-    .hero-sub {
-        font-size: 0.98rem;
-        opacity: 0.95;
-        line-height: 1.58;
-        max-width: 860px;
-        font-family: "Rajdhani", "Segoe UI", sans-serif;
-        color: #dbe7f5 !important;
-    }
-    .hero-chip-wrap { margin-top: 14px; }
-    .hero-chip {
-        display: inline-block;
-        margin: 4px 7px 0 0;
-        padding: 8px 12px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.07);
-        border: 1px solid rgba(255,255,255,0.12);
-        font-size: 0.82rem;
-        font-weight: 800;
-        font-family: "Rajdhani", "Segoe UI", sans-serif;
-        letter-spacing: 0.35px;
-    }
-
-    .painel-resumo {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 12px;
-        margin: 0 0 14px 0;
-    }
-    .resumo-card {
-        background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,255,0.92) 100%);
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        padding: 14px 16px;
-        box-shadow: var(--shadow-soft);
-    }
-    .resumo-label { font-size: 0.8rem; color: var(--muted) !important; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px; }
-    .resumo-valor { font-size: 1.05rem; color: var(--text) !important; font-weight: 900; margin-top: 4px; }
-
-    div[data-testid="stMetric"] {
-        background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,250,255,0.95) 100%);
-        border: 1px solid var(--line);
-        border-radius: 20px;
-        padding: 12px 13px;
-        box-shadow: var(--shadow-soft);
-    }
-    div[data-testid="stMetricValue"] { font-size: 1.42rem; color: var(--text) !important; }
-    div[data-testid="stMetricLabel"] { color: var(--muted) !important; font-weight: 800; }
-    div[data-testid="stMetricDelta"] { color: var(--muted) !important; }
-
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-        background: transparent;
-        padding: 5px 0 12px 0;
-        flex-wrap: wrap;
-    }
-    .stTabs [data-baseweb="tab"] {
-        background: rgba(255,255,255,0.82);
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        padding: 10px 16px;
-        height: auto;
-        box-shadow: var(--shadow-soft);
-        font-weight: 800;
-    }
-    .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%) !important;
-        border-color: rgba(37, 99, 235, 0.22) !important;
-        color: #1d4ed8 !important;
-    }
-
-    .stButton > button, .stDownloadButton > button {
-        border-radius: 16px !important;
-        border: 1px solid rgba(29, 78, 216, 0.12) !important;
-        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
-        color: white !important;
-        font-weight: 900 !important;
-        padding: 0.66rem 1.05rem !important;
-        box-shadow: 0 10px 22px rgba(37, 99, 235, 0.22) !important;
-    }
-    .stButton > button:hover, .stDownloadButton > button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 14px 26px rgba(37, 99, 235, 0.26) !important;
-    }
-    .stButton > button[kind="secondary"], .stDownloadButton > button[kind="secondary"] {
-        background: rgba(255,255,255,0.96) !important;
-        color: var(--text) !important;
-        border: 1px solid var(--line) !important;
-        box-shadow: var(--shadow-soft) !important;
-    }
-
-    input, textarea, [data-baseweb="input"] input {
-        background-color: rgba(255,255,255,0.98) !important;
+    .block-container,
+    .block-container h1,
+    .block-container h2,
+    .block-container h3,
+    .block-container h4,
+    .block-container h5,
+    .block-container h6,
+    .block-container p,
+    .block-container label,
+    .block-container span,
+    .block-container div,
+    [data-testid="stMarkdownContainer"],
+    [data-testid="stWidgetLabel"] {
         color: var(--text) !important;
         -webkit-text-fill-color: var(--text) !important;
-        border-radius: 14px !important;
-    }
-    [data-baseweb="select"] > div, [data-baseweb="base-input"] {
-        background-color: rgba(255,255,255,0.98) !important;
-        border-radius: 14px !important;
-    }
-    .stTextInput > div > div, .stNumberInput > div > div, .stDateInput > div > div {
-        border-radius: 14px !important;
     }
 
-    .caixa-info {
-        background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(249,251,255,0.93) 100%);
-        border: 1px solid var(--line);
-        border-radius: 20px;
-        padding: 14px 16px;
-        box-shadow: var(--shadow-soft);
-        margin: 8px 0 16px 0;
-    }
-    .caixa-info strong { color: var(--text) !important; }
-    .caixa-info p, .caixa-info div, .caixa-info span { color: var(--muted) !important; }
-
-    .card-aposta {
-        position: relative;
-        border-radius: 22px;
-        padding: 18px 18px 14px 18px;
-        margin: 14px 0;
-        border: 1px solid var(--line);
-        box-shadow: var(--shadow);
-        background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,250,255,0.95) 100%) !important;
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarContent"] {
+        background: #ffffff !important;
         color: var(--text) !important;
-        overflow: hidden;
-    }
-    .card-aposta::after {
-        content: "";
-        position: absolute;
-        top: 0; right: 0;
-        width: 110px; height: 110px;
-        background: radial-gradient(circle, rgba(37,99,235,0.08) 0%, transparent 70%);
-    }
-    .card-aposta div, .card-aposta span, .card-aposta p, .card-aposta b, .card-aposta strong {
-        color: var(--text) !important;
-        position: relative;
-        z-index: 1;
-    }
-    .card-forte {border-left: 10px solid var(--verde);}
-    .card-boa {border-left: 10px solid var(--amarelo);}
-    .card-leve {border-left: 10px solid var(--azul);}
-    .card-nao {border-left: 10px solid var(--vermelho);}
-    .titulo-card {font-size: 1.08rem; font-weight: 900; margin-bottom: 8px; letter-spacing: 0.2px;}
-    .mercado-card {font-size: 1.38rem; font-weight: 900; margin-bottom: 12px;}
-    .linha-info {font-size: 0.97rem; line-height: 1.68;}
-    .mini {font-size: 0.84rem; color: var(--muted) !important;}
-    .ok {color: var(--verde) !important; font-weight: 900;}
-    .warn {color: #a16207 !important; font-weight: 900;}
-    .bad {color: var(--vermelho) !important; font-weight: 900;}
-    .blue {color: var(--azul) !important; font-weight: 900;}
-
-    .etiqueta {
-        display: inline-block;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: rgba(239,246,255,0.98);
-        border: 1px solid rgba(37,99,235,0.12);
-        color: #1d4ed8 !important;
-        font-size: 0.8rem;
-        font-weight: 800;
-        margin-right: 6px;
-        margin-bottom: 6px;
+        border-right: 1px solid var(--line);
+        box-shadow: 6px 0 28px rgba(15, 23, 42, 0.035);
     }
 
-    [data-testid="stExpander"] {
-        background: rgba(255,255,255,0.94);
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        box-shadow: var(--shadow-soft);
-        overflow: hidden;
-    }
-    .stAlert {
-        border-radius: 16px !important;
-        border: 1px solid var(--line) !important;
-        box-shadow: var(--shadow-soft) !important;
-    }
-    [data-testid="stDataFrame"] {
-        background: rgba(255,255,255,0.96);
-        border-radius: 18px;
-        border: 1px solid var(--line);
-        box-shadow: var(--shadow-soft);
-        overflow: hidden;
-    }
-
-    /* Garantir visibilidade de labels e textos da barra lateral
-       tanto no modo claro quanto no modo escuro do celular */
+    [data-testid="stSidebar"] *,
     [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] .stMarkdown,
     [data-testid="stSidebar"] p,
     [data-testid="stSidebar"] span,
     [data-testid="stSidebar"] div,
@@ -331,70 +102,495 @@ st.markdown(
     [data-testid="stSidebar"] h3,
     [data-testid="stSidebar"] h4,
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"],
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
-    [data-testid="stSidebar"] .stSelectbox label,
-    [data-testid="stSidebar"] .stNumberInput label,
-    [data-testid="stSidebar"] .stTextInput label,
-    [data-testid="stSidebar"] .stSlider label,
-    [data-testid="stSidebar"] .stRadio label,
-    [data-testid="stSidebar"] .stCheckbox label,
-    [data-testid="stSidebar"] .stDateInput label {
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
         opacity: 1 !important;
     }
 
-    [data-testid="stSidebar"] .stCaption,
-    [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
-    [data-testid="stSidebar"] .mini,
-    [data-testid="stSidebar"] .help,
-    [data-testid="stSidebar"] [title] {
+    [data-testid="stCaptionContainer"],
+    .stCaption,
+    .mini,
+    .help {
+        color: var(--muted) !important;
+        -webkit-text-fill-color: var(--muted) !important;
+    }
+
+    .hero {
+        position: relative;
+        overflow: hidden;
+        background: #ffffff !important;
+        color: var(--text) !important;
+        border-radius: 24px;
+        padding: 24px 22px 20px 22px;
+        box-shadow: var(--shadow);
+        margin-bottom: 16px;
+        border: 1px solid var(--line);
+    }
+
+    .hero::before {
+        content: "";
+        position: absolute;
+        width: 6px;
+        height: 70%;
+        border-radius: 999px;
+        background: var(--accent);
+        top: 15%;
+        left: 0;
+    }
+
+    .hero::after {
+        content: "";
+        position: absolute;
+        width: 220px;
+        height: 220px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(15, 118, 110, 0.09) 0%, transparent 70%);
+        top: -95px;
+        right: -85px;
+    }
+
+    .hero * {
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+        position: relative;
+        z-index: 1;
+    }
+
+    .hero-topo {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+    }
+
+    .hero-selo {
+        display: inline-block;
+        padding: 7px 11px;
+        border-radius: 999px;
+        background: #f8fafc;
+        border: 1px solid var(--line);
         color: #334155 !important;
         -webkit-text-fill-color: #334155 !important;
+        font-size: 0.76rem;
+        font-weight: 800;
+        letter-spacing: 0.25px;
+        text-transform: uppercase;
+    }
+
+    .hero-titulo {
+        font-family: "Space Grotesk", "Inter", "Segoe UI", sans-serif;
+        font-size: 2.18rem;
+        font-weight: 700;
+        margin: 4px 0 6px 0;
+        letter-spacing: -0.8px;
+        line-height: 1.05;
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+    }
+
+    .hero-sub {
+        font-size: 0.98rem;
+        color: var(--muted) !important;
+        -webkit-text-fill-color: var(--muted) !important;
+        line-height: 1.58;
+        max-width: 900px;
+        font-weight: 500;
+    }
+
+    .hero-chip-wrap {
+        margin-top: 14px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .hero-chip {
+        display: inline-block;
+        padding: 8px 11px;
+        border-radius: 999px;
+        background: #ecfdf5;
+        border: 1px solid #bbf7d0;
+        color: #166534 !important;
+        -webkit-text-fill-color: #166534 !important;
+        font-size: 0.8rem;
+        font-weight: 800;
+    }
+
+    .painel-resumo {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin: 0 0 16px 0;
+    }
+
+    .resumo-card,
+    div[data-testid="stMetric"],
+    .caixa-info,
+    .card-aposta,
+    [data-testid="stExpander"],
+    [data-testid="stDataFrame"] {
+        background: #ffffff !important;
+        border: 1px solid var(--line) !important;
+        box-shadow: var(--shadow-soft) !important;
+    }
+
+    .resumo-card {
+        border-radius: 18px;
+        padding: 14px 16px;
+    }
+
+    .resumo-label {
+        font-size: 0.77rem;
+        color: var(--muted) !important;
+        -webkit-text-fill-color: var(--muted) !important;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.25px;
+    }
+
+    .resumo-valor {
+        font-size: 1rem;
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+        font-weight: 850;
+        margin-top: 4px;
+        line-height: 1.25;
+    }
+
+    div[data-testid="stMetric"] {
+        border-radius: 18px;
+        padding: 12px 13px;
+    }
+
+    div[data-testid="stMetricValue"] {
+        font-size: 1.36rem;
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+        font-weight: 850;
+    }
+
+    div[data-testid="stMetricLabel"],
+    div[data-testid="stMetricDelta"] {
+        color: var(--muted) !important;
+        -webkit-text-fill-color: var(--muted) !important;
+        font-weight: 750;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background: transparent;
+        padding: 5px 0 12px 0;
+        flex-wrap: wrap;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        background: #ffffff !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 999px;
+        padding: 9px 15px;
+        height: auto;
+        box-shadow: none;
+        font-weight: 800;
+        color: #334155 !important;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background: var(--accent-soft) !important;
+        border-color: var(--accent-line) !important;
+        color: #115e59 !important;
+    }
+
+    .stTabs [aria-selected="true"] * {
+        color: #115e59 !important;
+        -webkit-text-fill-color: #115e59 !important;
+    }
+
+    .stButton > button,
+    .stDownloadButton > button {
+        border-radius: 14px !important;
+        border: 1px solid #0f172a !important;
+        background: #0f172a !important;
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+        font-weight: 850 !important;
+        padding: 0.62rem 1rem !important;
+        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.14) !important;
+        transition: all 0.15s ease-in-out;
+    }
+
+    .stButton > button:hover,
+    .stDownloadButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 14px 26px rgba(15, 23, 42, 0.18) !important;
+    }
+
+    .stButton > button[kind="secondary"],
+    .stDownloadButton > button[kind="secondary"] {
+        background: #ffffff !important;
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+        border: 1px solid var(--line-strong) !important;
+        box-shadow: none !important;
+    }
+
+    input,
+    textarea,
+    [data-baseweb="input"] input,
+    [data-baseweb="textarea"] textarea,
+    [data-baseweb="base-input"],
+    [data-baseweb="select"] > div {
+        background-color: #ffffff !important;
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+        border-color: var(--line-strong) !important;
+        border-radius: 14px !important;
+        caret-color: var(--text) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: #94a3b8 !important;
+        -webkit-text-fill-color: #94a3b8 !important;
         opacity: 1 !important;
     }
 
-    [data-testid="stSidebar"] input,
-    [data-testid="stSidebar"] textarea,
-    [data-testid="stSidebar"] [data-baseweb="input"] input,
-    [data-testid="stSidebar"] [data-baseweb="select"] > div,
-    [data-testid="stSidebar"] [data-baseweb="base-input"] {
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
-        background-color: rgba(255,255,255,0.98) !important;
+    [data-baseweb="popover"],
+    [data-baseweb="menu"],
+    [role="listbox"] {
+        background: #ffffff !important;
+        color: var(--text) !important;
     }
 
-    [data-testid="stSidebar"] .stSlider [data-baseweb="slider"] * {
-        color: #0f172a !important;
+    [data-baseweb="popover"] *,
+    [data-baseweb="menu"] *,
+    [role="listbox"] * {
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
     }
 
-    /* Garantir contraste também no corpo principal */
-    .stMarkdown, .stText, .stCaption, [data-testid="stWidgetLabel"], label {
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
+    .stTextInput > div > div,
+    .stNumberInput > div > div,
+    .stDateInput > div > div,
+    .stSelectbox > div > div {
+        border-radius: 14px !important;
+    }
+
+    .caixa-info {
+        border-radius: 18px;
+        padding: 14px 16px;
+        margin: 8px 0 16px 0;
+    }
+
+    .caixa-info strong {
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+    }
+
+    .caixa-info p,
+    .caixa-info div,
+    .caixa-info span {
+        color: var(--muted) !important;
+        -webkit-text-fill-color: var(--muted) !important;
+    }
+
+    .card-aposta {
+        position: relative;
+        border-radius: 20px;
+        padding: 18px 18px 14px 18px;
+        margin: 14px 0;
+        color: var(--text) !important;
+        overflow: hidden;
+    }
+
+    .card-aposta::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 96px;
+        height: 96px;
+        background: radial-gradient(circle, rgba(15, 118, 110, 0.07) 0%, transparent 70%);
+    }
+
+    .card-aposta div,
+    .card-aposta span,
+    .card-aposta p,
+    .card-aposta b,
+    .card-aposta strong {
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+        position: relative;
+        z-index: 1;
+    }
+
+    .card-forte { border-left: 8px solid var(--verde) !important; }
+    .card-boa { border-left: 8px solid var(--amarelo) !important; }
+    .card-leve { border-left: 8px solid var(--azul) !important; }
+    .card-nao { border-left: 8px solid var(--vermelho) !important; }
+
+    .titulo-card {
+        font-size: 1.04rem;
+        font-weight: 850;
+        margin-bottom: 8px;
+        letter-spacing: -0.15px;
+    }
+
+    .mercado-card {
+        font-size: 1.28rem;
+        font-weight: 900;
+        margin-bottom: 12px;
+        letter-spacing: -0.25px;
+    }
+
+    .linha-info {
+        font-size: 0.95rem;
+        line-height: 1.68;
+    }
+
+    .mini {
+        font-size: 0.84rem;
+        color: var(--muted) !important;
+        -webkit-text-fill-color: var(--muted) !important;
+    }
+
+    .ok {
+        color: var(--verde) !important;
+        -webkit-text-fill-color: var(--verde) !important;
+        font-weight: 900;
+    }
+
+    .warn {
+        color: var(--amarelo) !important;
+        -webkit-text-fill-color: var(--amarelo) !important;
+        font-weight: 900;
+    }
+
+    .bad {
+        color: var(--vermelho) !important;
+        -webkit-text-fill-color: var(--vermelho) !important;
+        font-weight: 900;
+    }
+
+    .blue {
+        color: var(--azul) !important;
+        -webkit-text-fill-color: var(--azul) !important;
+        font-weight: 900;
+    }
+
+    .etiqueta {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        color: #334155 !important;
+        -webkit-text-fill-color: #334155 !important;
+        font-size: 0.8rem;
+        font-weight: 800;
+        margin-right: 6px;
+        margin-bottom: 6px;
+    }
+
+    [data-testid="stExpander"] {
+        border-radius: 18px;
+        overflow: hidden;
+    }
+
+    .stAlert {
+        border-radius: 16px !important;
+        border: 1px solid var(--line) !important;
+        box-shadow: var(--shadow-soft) !important;
+        background: #ffffff !important;
+        color: var(--text) !important;
+    }
+
+    .stAlert * {
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+    }
+
+    [data-testid="stDataFrame"] {
+        border-radius: 18px;
+        overflow: hidden;
+    }
+
+    hr {
+        border-color: var(--line) !important;
+    }
+
+    a {
+        color: #0f766e !important;
+        -webkit-text-fill-color: #0f766e !important;
+        font-weight: 700;
     }
 
     @media (max-width: 900px) {
-        .painel-resumo { grid-template-columns: repeat(2, minmax(0,1fr)); }
+        .painel-resumo {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
     }
+
     @media (max-width: 768px) {
-        .block-container {padding-left: 0.85rem; padding-right: 0.85rem;}
-        .hero { border-radius: 24px; padding: 20px 18px 16px 18px; }
-        .hero-titulo {font-size: 1.42rem; letter-spacing: 0.9px;}
-        .hero-sub {font-size: 0.92rem;}
-        .painel-resumo { grid-template-columns: 1fr 1fr; gap: 10px; }
-        .resumo-card { padding: 12px; }
-        .resumo-valor { font-size: 0.98rem; }
-        .titulo-card {font-size: 1rem;}
-        .mercado-card {font-size: 1.14rem;}
-        .linha-info {font-size: 0.92rem;}
-        div[data-testid="stMetricValue"] {font-size: 1.12rem;}
+        .block-container {
+            padding-left: 0.85rem;
+            padding-right: 0.85rem;
+        }
+
+        .hero {
+            border-radius: 20px;
+            padding: 20px 17px 16px 17px;
+        }
+
+        .hero-titulo {
+            font-size: 1.54rem;
+            letter-spacing: -0.35px;
+        }
+
+        .hero-sub {
+            font-size: 0.92rem;
+        }
+
+        .hero-chip {
+            font-size: 0.77rem;
+            padding: 7px 10px;
+        }
+
+        .painel-resumo {
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .resumo-card {
+            padding: 12px;
+        }
+
+        .resumo-valor {
+            font-size: 0.94rem;
+        }
+
+        .titulo-card {
+            font-size: 0.98rem;
+        }
+
+        .mercado-card {
+            font-size: 1.12rem;
+        }
+
+        .linha-info {
+            font-size: 0.91rem;
+        }
+
+        div[data-testid="stMetricValue"] {
+            font-size: 1.12rem;
+        }
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
-
 # ============================================================
 # DADOS
 # ============================================================
@@ -1462,22 +1658,22 @@ st.markdown(
     """
     <div class="hero">
         <div class="hero-topo">
-            <span class="hero-selo">VERSÃO PREMIUM</span>
-            <span class="hero-selo">VISUAL OTIMIZADO PARA CELULAR</span>
+            <span class="hero-selo">VISUAL LIMPO</span>
+            <span class="hero-selo">CLARO E LEGÍVEL</span>
         </div>
         <div class="hero-titulo">TEX STATISTICS</div>
-        <div class="hero-sub">Interface refinada com estética mais tecnológica e mais profissional. O nome ganhou presença visual inspirada em engenharia, avanço e performance — menos cara de slide escolar, mais cara de sistema sério.</div>
+        <div class="hero-sub">Sistema com interface clara, limpa e profissional, sem fundo azul escuro ofuscando os textos. A leitura fica estável tanto no computador quanto no celular, mesmo quando o aparelho está em modo escuro.</div>
         <div class="hero-chip-wrap">
-            <span class="hero-chip">Blocos de decisão</span>
-            <span class="hero-chip">Layout premium</span>
-            <span class="hero-chip">Modo noturno estável</span>
-            <span class="hero-chip">Auditoria</span>
-            <span class="hero-chip">Calendário</span>
+            <span class="hero-chip">Motor preservado</span>
+            <span class="hero-chip">Auditoria preservada</span>
+            <span class="hero-chip">Banca preservada</span>
+            <span class="hero-chip">Odds preservadas</span>
+            <span class="hero-chip">Calendário preservado</span>
         </div>
     </div>
     <div class="painel-resumo">
-        <div class="resumo-card"><div class="resumo-label">Identidade</div><div class="resumo-valor">Mais tecnológica e profissional</div></div>
-        <div class="resumo-card"><div class="resumo-label">Leitura</div><div class="resumo-valor">Fácil de enxergar no celular</div></div>
+        <div class="resumo-card"><div class="resumo-label">Visual</div><div class="resumo-valor">Claro, limpo e sem poluição</div></div>
+        <div class="resumo-card"><div class="resumo-label">Leitura</div><div class="resumo-valor">Contraste forte no celular</div></div>
         <div class="resumo-card"><div class="resumo-label">Decisão</div><div class="resumo-valor">APOSTAR / NÃO APOSTAR em destaque</div></div>
         <div class="resumo-card"><div class="resumo-label">Base</div><div class="resumo-valor">Mesma lógica do motor</div></div>
     </div>
