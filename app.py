@@ -76,7 +76,7 @@ LIGAS_API = {
 EXCHANGES_BLOQUEADAS = ['smarkets', 'matchbook', 'betfair_ex_uk', 'betfair_ex_au', 'betfair_ex_eu', 'betdaq', 'betfair']
 
 # ==========================================
-# FUNÇÕES CORE
+# FUNÇÕES CORE CORRIGIDAS
 # ==========================================
 @st.cache_data(ttl=3600)
 def extrair_dados(url):
@@ -84,11 +84,26 @@ def extrair_dados(url):
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=15)
         df = pd.read_csv(io.StringIO(response.text))
-        df = df.rename(columns={'HomeTeam': 'Home', 'AwayTeam': 'Away', 'FTHG': 'HG', 'FTAG': 'AG'})
-        df = df.dropna(subset=['Home', 'Away', 'HG', 'AG']).tail(800).copy()
+        
+        # Mapeamento dinâmico inteligente para aceitar tanto formato europeu quanto formato mundial
+        mapeamento = {}
+        if 'HomeTeam' in df.columns: mapeamento['HomeTeam'] = 'Home'
+        if 'AwayTeam' in df.columns: mapeamento['AwayTeam'] = 'Away'
+        if 'FTHG' in df.columns: mapeamento['FTHG'] = 'HG'
+        if 'FTAG' in df.columns: mapeamento['FTAG'] = 'AG'
+        
+        if mapeamento:
+            df = df.rename(columns=mapeamento)
+            
+        # Garante que as colunas essenciais existem antes de aplicar o dropna
+        colunas_necessarias = ['Home', 'Away', 'HG', 'AG']
+        if not all(col in df.columns for col in colunas_necessarias):
+            return pd.DataFrame()
+            
+        df = df.dropna(subset=colunas_necessarias).tail(800).copy()
         df['Peso'] = np.exp(np.linspace(-2.0, 0, len(df)))
         return df
-    except:
+    except Exception as e:
         return pd.DataFrame()
 
 def extrair_odds_api(api_key, sport_key):
@@ -98,15 +113,13 @@ def extrair_odds_api(api_key, sport_key):
         if response.status_code == 200:
             return response.json()
         else:
-            st.error(f"Erro API: {response.status_code}")
             return []
     except Exception as e:
-        st.error(f"Erro de rede: {e}")
         return []
 
 def encontrar_melhor_match(nome_api, lista_csv):
     nome_api = nome_api.lower().replace("fc", "").replace("rj", "").strip()
-    matches = difflib.get_close_matches(nome_api, [x.lower() for x in lista_csv], n=1, cutoff=0.6)
+    matches = difflib.get_close_matches(nome_api, [x.lower() for x in lista_csv], n=1, cutoff=0.5) # Cutoff reduzido para capturar nomes muito distintos das ligas americanas
     if matches:
         return next(t for t in lista_csv if t.lower() == matches[0])
     return None
@@ -131,8 +144,8 @@ def calcular_power_rating(df, t_casa, t_fora):
     gf_v = gf_v * (1 - peso_reg) + media_gf_f * peso_reg
     gs_v = gs_v * (1 - peso_reg) + media_gf_c * peso_reg
     
-    xg_c = gf_m * (gs_v / media_gf_f)
-    xg_f = gf_v * (gs_m / media_gf_c)
+    xg_c = gf_m * (gs_v / media_gf_f) if media_gf_f > 0 else gf_m
+    xg_f = gf_v * (gs_m / media_gf_c) if media_gf_c > 0 else gf_v
     
     xg_c = max(0.5, min(xg_c, 3.0))
     xg_f = max(0.5, min(xg_f, 3.0))
@@ -155,7 +168,7 @@ modo_operacao = st.sidebar.radio("Selecione o Ambiente de Execução:",
 st.sidebar.markdown("---")
 
 st.title(f"🚀 Motor TEX STATISTICS PRO 2.15")
-st.markdown(f"**Status de Operação:** `{modo_operacao}` | API Conectada Automaticamente")
+st.markdown(f"**Status de Operação:** `{modo_operacao}` | API Conectada")
 
 liga_sel = st.sidebar.selectbox("Liga Operacional", list(LIGAS_CSV.keys()))
 banca_total = st.sidebar.number_input("Banca Total (R$)", value=0.0, step=100.0)
@@ -191,7 +204,7 @@ if not df.empty:
     # LÓGICA MODO AUTOMÁTICO
     # ==========================================
     else:  
-        with st.spinner("Extraindo e Saneando cotações do mercado global..."):
+        with st.spinner("Extraindo e Saneando cotações..."):
             dados_api = extrair_odds_api(API_KEY, LIGAS_API[liga_sel])
         
         if dados_api:
@@ -206,10 +219,10 @@ if not df.empty:
                     jogos_validos[nome_formatado] = j
 
             if not jogos_validos:
-                st.warning("⚠️ Todos os jogos desta liga já estão Ao Vivo ou já terminaram.")
+                st.warning("⚠️ Sem partidas pré-jogo disponíveis nesta liga no momento (Ligas fora de rodada ou em pausa). Teste o 'Modo Manual' para simular.")
                 pronto_para_calcular = False
             else:
-                jogo_sel = st.selectbox("🎯 Selecione a Partida (Radar Mundial Pré-Jogo)", list(jogos_validos.keys()))
+                jogo_sel = st.selectbox("🎯 Selecione a Partida", list(jogos_validos.keys()))
                 jogo_dados = jogos_validos[jogo_sel]
 
                 melhores_odds = {
@@ -219,7 +232,6 @@ if not df.empty:
                     "Mais de 2.5 gols": {"odd": 1.01, "casa": "N/A"}
                 }
 
-                # Rastreio Raw para Debugging do Usuário
                 debug_odds_raw = []
 
                 for bookmaker in jogo_dados.get('bookmakers', []):
@@ -235,14 +247,13 @@ if not df.empty:
                                 price = float(outcome['price'])
                                 debug_odds_raw.append(f"{bk_name} | {name} | @{price}")
                                 
-                                # SANEAMENTO DE ODDS (Bloqueio de anomalias absurdas > 20)
-                                if name == jogo_dados['home_team'] and 1.05 <= price <= 20.0:
+                                if name == j['home_team'] and 1.05 <= price <= 20.0:
                                     if price > melhores_odds["Vitória Casa"]["odd"]:
                                         melhores_odds["Vitória Casa"] = {"odd": price, "casa": bk_name}
                                 elif name == 'Draw' and 1.05 <= price <= 12.0:
                                     if price > melhores_odds["Empate"]["odd"]:
                                         melhores_odds["Empate"] = {"odd": price, "casa": bk_name}
-                                elif name == jogo_dados['away_team'] and 1.05 <= price <= 20.0:
+                                elif name == j['away_team'] and 1.05 <= price <= 20.0:
                                     if price > melhores_odds["Vitória Fora"]["odd"]:
                                         melhores_odds["Vitória Fora"] = {"odd": price, "casa": bk_name}
                         
@@ -251,8 +262,6 @@ if not df.empty:
                                 if outcome.get('name') == 'Over' and float(outcome.get('point', 0)) == 2.5:
                                     price = float(outcome['price'])
                                     debug_odds_raw.append(f"{bk_name} | Over 2.5 | @{price}")
-                                    
-                                    # SANEAMENTO DE ODDS OVER (Bloqueio > 6.00)
                                     if 1.05 <= price <= 6.0:
                                         if price > melhores_odds["Mais de 2.5 gols"]["odd"]:
                                             melhores_odds["Mais de 2.5 gols"] = {"odd": price, "casa": bk_name}
@@ -263,13 +272,12 @@ if not df.empty:
                 d = melhores_odds["Empate"]["odd"]
                 a = melhores_odds["Vitória Fora"]["odd"]
 
-                # CÁLCULO SINTÉTICO (Assegura margem zero nos derivados usando odds já saneadas)
                 odd_1X = 1 / ((1 / h) + (1 / d)) if h > 1.01 and d > 1.01 else 1.01
                 odd_X2 = 1 / ((1 / a) + (1 / d)) if a > 1.01 and d > 1.01 else 1.01
                 odd_DNB_H = h * (1 - (1 / d)) if h > 1.01 and d > 1.01 else 1.01
                 odd_DNB_A = a * (1 - (1 / d)) if a > 1.01 and d > 1.01 else 1.01
 
-                st.info("📡 Line Shopping concluído: Cotações saneadas e validadas.")
+                st.info("📡 Line Shopping concluído com sucesso.")
 
                 st.markdown("### 🔄 Calibrar Nomes do Banco de Dados")
                 c1, c2 = st.columns(2)
@@ -296,6 +304,7 @@ if not df.empty:
                 st.session_state.melhores_odds_info = melhores_odds
                 pronto_para_calcular = st.button("CALCULAR MOTOR AUTOMATIZADO")
         else:
+            st.error("❌ Não foi possível obter dados da API de Odds. Verifique sua cota ou plano.")
             pronto_para_calcular = False
 
     # ==========================================
@@ -304,7 +313,6 @@ if not df.empty:
     if 'pronto_para_calcular' in locals() and pronto_para_calcular:
         xg_c, xg_f, amostra = calcular_power_rating(df, t_casa, t_fora)
         
-        # Confiança baseada na densidade da amostra focada e isolada (mais rigorosa)
         amostra_relevante = len(df[df['Home'] == t_casa]) + len(df[df['Away'] == t_fora])
         confianca = min(100, (amostra_relevante / 40) * 100) 
         confianca = max(30, confianca)
@@ -313,18 +321,11 @@ if not df.empty:
         elif confianca <= 85: st.markdown(f"# 🟡 CONFIANÇA: {confianca:.0f}%")
         else: st.markdown(f"# 🟢 CONFIANÇA: {confianca:.0f}%")
 
-        st.markdown("### 🛠️ Debug Estatístico (Raio-X do Motor)")
+        st.markdown("### 🛠️ Debug Estatístico")
         media_gf_c = np.average(df['HG'], weights=df['Peso'])
         media_gf_f = np.average(df['AG'], weights=df['Peso'])
-        st.write(f"- **Jogos Mapeados (Mando Específico):** {t_casa}: `{len(df[df['Home'] == t_casa])}` | {t_fora}: `{len(df[df['Away'] == t_fora])}`")
-        st.write(f"- **xG Médio da Liga:** Mandante `{media_gf_c:.2f}` | Visitante `{media_gf_f:.2f}`")
+        st.write(f"- **Jogos Mapeados:** {t_casa}: `{len(df[df['Home'] == t_casa])}` | {t_fora}: `{len(df[df['Away'] == t_fora])}`")
         st.write(f"⚽ **xG Calculado:** {t_casa} **{xg_c:.2f}** x **{xg_f:.2f}** {t_fora}")
-
-        # Ferramenta de Auditoria Bruta das Odds
-        if modo_operacao == "Modo FULL AUTO (Institucional)":
-            with st.expander("🔍 Inspecionar Odds Brutas Extraídas da API"):
-                for linha in st.session_state.get('debug_raw', []):
-                    st.text(linha)
 
         p_c = [poisson.pmf(i, xg_c) for i in range(11)]
         p_f = [poisson.pmf(i, xg_f) for i in range(11)]
@@ -344,9 +345,6 @@ if not df.empty:
         st.write(f"**Probabilidades:** Casa `{prob['Vitória Casa']*100:.1f}%` | Empate `{prob['Empate']*100:.1f}%` | Fora `{prob['Vitória Fora']*100:.1f}%`")
         st.markdown("---")
 
-        st.subheader(f"📊 Análise Detalhada ({modo_operacao})")
-        
-        # Estrutura para ordenar por EV e filtrar sugestões excludentes
         resultados_processados = []
 
         for merc, p in prob.items():
@@ -369,7 +367,6 @@ if not df.empty:
                 "ev": margem, "status": status, "texto_casa": texto_casa
             })
 
-        # Ordenar blocos do Maior EV para o Menor
         resultados_processados.sort(key=lambda x: x['ev'], reverse=True)
 
         sugestoes_verde = []
@@ -379,18 +376,4 @@ if not df.empty:
             prefixo = "✅ APOSTAR" if item['status'] else "❌ NÃO APOSTAR"
             
             with st.expander(f"{prefixo} | {item['merc']} ({item['prob']*100:.1f}%) | EV: {item['ev']*100:+.1f}%"):
-                st.write(f"Odd justa da Máquina: **{item['odd_justa']:.2f}**")
-                st.write(f"Odd do Mercado: **{item['odd_mercado']:.2f}**{item['texto_casa']}")
-                st.write(f"Valor Esperado (EV): **{item['ev']*100:+.1f}%**")
-
-            stake_txt = f" (4% = R$ {banca_total*0.04:.2f})" if banca_total > 0 else " (4%)"
-            
-            if item['status']:
-                sugestoes_verde.append(f"✅ **{item['merc']}** ({item['prob']*100:.1f}% chance) | EV: {item['ev']*100:+.1f}% {stake_txt}")
-            else:
-                sugestoes_vermelho.append(f"❌ **{item['merc']}** (EV: {item['ev']*100:+.1f}%)")
-
-        st.markdown("---")
-        st.subheader("📋 Resumo Executivo TEX (Ordenado por Valor)")
-        if sugestoes_verde: st.success("SUGESTÕES DE OPERAÇÃO:\n\n" + "\n\n".join(sugestoes_verde))
-        if sugestoes_vermelho: st.error("NÃO OPERAR (Risco elevado ou sem valor):\n\n" + "\n\n".join(sugestoes_vermelho))
+                st.write(f"Odd justa da Máquina: **{item['odd_justa']:.2f}
