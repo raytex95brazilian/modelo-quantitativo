@@ -16,7 +16,7 @@ from scipy.stats import poisson
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — Visual Limpo", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — Claro Total", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -884,6 +884,138 @@ st.markdown(
         background-color: #ffffff !important;
         color: #111827 !important;
         -webkit-text-fill-color: #111827 !important;
+    }
+
+
+    /* =========================================================
+       BOTÕES 100% CLAROS — INCLUSIVE TYPE="PRIMARY"
+       Remove qualquer fundo escuro do botão ANALISAR e de todos
+       os outros botões do Streamlit, em todos os estados.
+       ========================================================= */
+
+    .stButton > button,
+    .stDownloadButton > button,
+    .stFormSubmitButton > button,
+    div[data-testid="stButton"] button,
+    div[data-testid="stDownloadButton"] button,
+    div[data-testid="stFormSubmitButton"] button,
+    button[kind="primary"],
+    button[kind="secondary"],
+    button[kind="tertiary"],
+    button[data-testid="baseButton-primary"],
+    button[data-testid="baseButton-secondary"],
+    [data-testid="stBaseButton-primary"],
+    [data-testid="stBaseButton-secondary"],
+    [data-testid="stBaseButton-tertiary"] {
+        background: #ffffff !important;
+        background-color: #ffffff !important;
+        background-image: none !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 14px !important;
+        box-shadow: none !important;
+        text-shadow: none !important;
+        font-weight: 850 !important;
+        outline: none !important;
+    }
+
+    .stButton > button:hover,
+    .stButton > button:focus,
+    .stButton > button:active,
+    .stDownloadButton > button:hover,
+    .stDownloadButton > button:focus,
+    .stDownloadButton > button:active,
+    .stFormSubmitButton > button:hover,
+    .stFormSubmitButton > button:focus,
+    .stFormSubmitButton > button:active,
+    div[data-testid="stButton"] button:hover,
+    div[data-testid="stButton"] button:focus,
+    div[data-testid="stButton"] button:active,
+    div[data-testid="stDownloadButton"] button:hover,
+    div[data-testid="stDownloadButton"] button:focus,
+    div[data-testid="stDownloadButton"] button:active,
+    div[data-testid="stFormSubmitButton"] button:hover,
+    div[data-testid="stFormSubmitButton"] button:focus,
+    div[data-testid="stFormSubmitButton"] button:active,
+    button[kind="primary"]:hover,
+    button[kind="primary"]:focus,
+    button[kind="primary"]:active,
+    button[kind="secondary"]:hover,
+    button[kind="secondary"]:focus,
+    button[kind="secondary"]:active,
+    button[kind="tertiary"]:hover,
+    button[kind="tertiary"]:focus,
+    button[kind="tertiary"]:active,
+    button[data-testid="baseButton-primary"]:hover,
+    button[data-testid="baseButton-primary"]:focus,
+    button[data-testid="baseButton-primary"]:active,
+    [data-testid="stBaseButton-primary"]:hover,
+    [data-testid="stBaseButton-primary"]:focus,
+    [data-testid="stBaseButton-primary"]:active {
+        background: #f8fafc !important;
+        background-color: #f8fafc !important;
+        background-image: none !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        border: 1px solid #94a3b8 !important;
+        box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.18) !important;
+        transform: none !important;
+        text-shadow: none !important;
+        outline: none !important;
+    }
+
+    .stButton > button *,
+    .stDownloadButton > button *,
+    .stFormSubmitButton > button *,
+    div[data-testid="stButton"] button *,
+    div[data-testid="stDownloadButton"] button *,
+    div[data-testid="stFormSubmitButton"] button *,
+    button[kind="primary"] *,
+    button[kind="secondary"] *,
+    button[kind="tertiary"] *,
+    [data-testid="stBaseButton-primary"] *,
+    [data-testid="stBaseButton-secondary"] *,
+    [data-testid="stBaseButton-tertiary"] * {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+        fill: #111827 !important;
+        stroke: #111827 !important;
+        text-shadow: none !important;
+    }
+
+    .stButton > button:disabled,
+    .stDownloadButton > button:disabled,
+    .stFormSubmitButton > button:disabled,
+    button:disabled,
+    button[disabled] {
+        background: #f1f5f9 !important;
+        background-color: #f1f5f9 !important;
+        background-image: none !important;
+        color: #64748b !important;
+        -webkit-text-fill-color: #64748b !important;
+        border-color: #e2e8f0 !important;
+        opacity: 1 !important;
+        box-shadow: none !important;
+    }
+
+    .stButton > button:disabled *,
+    .stDownloadButton > button:disabled *,
+    .stFormSubmitButton > button:disabled *,
+    button:disabled *,
+    button[disabled] * {
+        color: #64748b !important;
+        -webkit-text-fill-color: #64748b !important;
+        fill: #64748b !important;
+        stroke: #64748b !important;
+    }
+
+    /* Botões pequenos internos de widgets também ficam claros */
+    button,
+    button:hover,
+    button:focus,
+    button:active {
+        color-scheme: light !important;
     }
 
     </style>
