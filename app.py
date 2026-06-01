@@ -376,4 +376,19 @@ if not df.empty:
             prefixo = "✅ APOSTAR" if item['status'] else "❌ NÃO APOSTAR"
             
             with st.expander(f"{prefixo} | {item['merc']} ({item['prob']*100:.1f}%) | EV: {item['ev']*100:+.1f}%"):
-                st.write(f"Odd justa da Máquina: **{item['odd_justa']:.2f}
+                st.write(f"Odd justa da Máquina: **{item['odd_justa']:.2f}**")
+                st.write(f"Odd do Mercado: **{item['odd_mercado']:.2f}**{item['texto_casa']}")
+
+            stake_txt = f" (4% = R$ {banca_total*0.04:.2f})" if banca_total > 0 else " (4%)"
+            
+            if item['status']:
+                sugestoes_verde.append(f"✅ **{item['merc']}** ({item['prob']*100:.1f}% chance) | EV: {item['ev']*100:+.1f}% {stake_txt}")
+            else:
+                sugestoes_vermelho.append(f"❌ **{item['merc']}** (EV: {item['ev']*100:+.1f}%)")
+
+        st.markdown("---")
+        st.subheader("📋 Resumo Executivo TEX")
+        if sugestoes_verde: st.success("SUGESTÕES DE OPERAÇÃO:\n\n" + "\n\n".join(sugestoes_verde))
+        if sugestoes_vermelho: st.error("NÃO OPERAR:\n\n" + "\n\n".join(sugestoes_vermelho))
+else:
+    st.error("❌ Banco de dados da liga selecionada está vazio ou indisponível. Verifique a URL do arquivo CSV.")
