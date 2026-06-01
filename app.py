@@ -89,7 +89,8 @@ def extrair_dados(url):
 
 def extrair_odds_api(api_key, sport_key):
     try:
-        url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}&regions=eu,uk,us&markets=h2h,totals,btts&oddsFormat=decimal"
+        # CORREÇÃO CRÍTICA AQUI: Removido o 'btts' da requisição. O mercado inválido causava o bloqueio.
+        url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}&regions=eu,uk,us&markets=h2h,totals&oddsFormat=decimal"
         response = requests.get(url, timeout=15)
         if response.status_code == 200: 
             return response.json()
@@ -100,7 +101,7 @@ def extrair_odds_api(api_key, sport_key):
             st.error("❌ ERRO 429: Esgotou o seu limite mensal de requisições da API.")
             return []
         elif response.status_code == 422:
-            st.warning(f"⚠️ A liga '{sport_key}' não possui jogos com odds abertas no mundo neste exato momento.")
+            st.error(f"❌ ERRO 422 da API: A requisição tem parâmetros não suportados. Detalhes: {response.text}")
             return []
         else:
             st.error(f"❌ Falha na comunicação com os servidores globais. Código: {response.status_code}")
@@ -138,7 +139,7 @@ modo_operacao = st.sidebar.radio("Selecione o Ambiente de Execução:", ["Modo M
 st.sidebar.markdown("---")
 
 st.title(f"🚀 Motor TEX STATISTICS PRO 2.15")
-st.markdown(f"**Status de Operação:** `{modo_operacao}`")
+st.markdown(f"**Status de Operação:** `{modo_operacao}` | API Conectada Automaticamente")
 
 liga_sel = st.sidebar.selectbox("Liga Operacional", list(LIGAS_CSV.keys()))
 banca_total = st.sidebar.number_input("Banca Total (R$)", value=0.0, step=100.0)
@@ -194,10 +195,8 @@ if not df.empty:
                     elif market['key'] == 'totals':
                         for outcome in market['outcomes']:
                             if outcome['name'] == 'Over' and outcome.get('point') == 2.5: odd_O25 = max(odd_O25, outcome['price'])
-                    elif market['key'] == 'btts':
-                        for outcome in market['outcomes']:
-                            if outcome['name'] == 'Yes': odd_BTTS = max(odd_BTTS, outcome['price'])
-
+                            
+            # Matemática Oculta
             odd_1X = 1 / ((1 / odd_H) + (1 / odd_D)) if odd_H > 1.01 and odd_D > 1.01 else 1.01
             odd_X2 = 1 / ((1 / odd_A) + (1 / odd_D)) if odd_A > 1.01 and odd_D > 1.01 else 1.01
             odd_DNB_H = odd_H * (1 - (1 / odd_D)) if odd_H > 1.01 and odd_D > 1.01 else 1.01
@@ -221,7 +220,7 @@ if not df.empty:
                 "Empate Anula Casa": odd_DNB_H,
                 "Empate Anula Fora": odd_DNB_A,
                 "Mais de 2.5 gols": odd_O25,
-                "Ambos marcam": odd_BTTS
+                "Ambos marcam": odd_BTTS # Ficará em branco/1.01 no modo Auto pois a API limitou
             }
 
             pronto_para_calcular = st.button("CALCULAR MOTOR AUTOMATIZADO")
