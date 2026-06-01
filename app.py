@@ -11,6 +11,11 @@ import io
 st.set_page_config(page_title="Motor TEX STATISTICS PRO 2.15", layout="wide")
 
 # ==========================================
+# CHAVE API HARDCODED (A PEDIDO DO DIRETOR)
+# ==========================================
+API_KEY = "d9c21f8217e059554c94a263642fc0eb"
+
+# ==========================================
 # BANCOS DE DADOS E API
 # ==========================================
 LIGAS_CSV = {
@@ -82,14 +87,28 @@ def extrair_dados(url):
         return df
     except: return pd.DataFrame()
 
-@st.cache_data(ttl=10800)
+# REMOVIDO O CACHE PARA FORÇAR A LEITURA REAL DA API
 def extrair_odds_api(api_key, sport_key):
     try:
         url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}&regions=eu,uk,us&markets=h2h,totals,btts&oddsFormat=decimal"
         response = requests.get(url, timeout=15)
-        if response.status_code == 200: return response.json()
+        if response.status_code == 200: 
+            return response.json()
+        elif response.status_code == 401:
+            st.error("❌ ERRO 401: A chave da API é inválida ou não tem permissão.")
+            return []
+        elif response.status_code == 429:
+            st.error("❌ ERRO 429: Esgotou o seu limite mensal de requisições da API.")
+            return []
+        elif response.status_code == 422:
+            st.warning(f"⚠️ A liga '{sport_key}' não possui jogos com odds abertas no mundo neste exato momento.")
+            return []
+        else:
+            st.error(f"❌ Falha na comunicação com os servidores globais. Código: {response.status_code}")
+            return []
+    except Exception as e: 
+        st.error(f"❌ Erro crítico de rede: {e}")
         return []
-    except: return []
 
 def calcular_power_rating(df, t_casa, t_fora):
     media_gf_c = np.average(df['HG'], weights=df['Peso'])
@@ -120,7 +139,7 @@ modo_operacao = st.sidebar.radio("Selecione o Ambiente de Execução:", ["Modo M
 st.sidebar.markdown("---")
 
 st.title(f"🚀 Motor TEX STATISTICS PRO 2.15")
-st.markdown(f"**Status de Operação:** `{modo_operacao}`")
+st.markdown(f"**Status de Operação:** `{modo_operacao}` | API Conectada Automaticamente")
 
 liga_sel = st.sidebar.selectbox("Liga Operacional", list(LIGAS_CSV.keys()))
 banca_total = st.sidebar.number_input("Banca Total (R$)", value=0.0, step=100.0)
@@ -143,131 +162,4 @@ if not df.empty:
             "Vitória Casa": ler_odd("Vitória Casa"),
             "Empate": ler_odd("Empate"),
             "Vitória Fora": ler_odd("Vitória Fora"),
-            "Casa ou Empate": ler_odd("Casa ou Empate"),
-            "Fora ou Empate": ler_odd("Fora ou Empate"),
-            "Empate Anula Casa": ler_odd("Empate Anula Casa"),
-            "Empate Anula Fora": ler_odd("Empate Anula Fora"),
-            "Mais de 2.5 gols": ler_odd("Mais de 2.5 gols"),
-            "Ambos marcam": ler_odd("Ambos marcam")
-        }
-
-        pronto_para_calcular = st.button("CALCULAR MOTOR MANUAL")
-
-    # ==========================================
-    # LÓGICA MODO AUTOMÁTICO
-    # ==========================================
-    else:
-        st.sidebar.subheader("Conexão Global API")
-        api_key = st.sidebar.text_input("Chave The-Odds-API", type="password")
-        
-        if not api_key:
-            st.warning("👈 Insira a sua chave da The-Odds-API no menu lateral para ativar a varredura global.")
-            st.stop()
-            
-        dados_api = extrair_odds_api(api_key, LIGAS_API[liga_sel])
-        
-        if dados_api:
-            jogos_disponiveis = {f"{j['home_team']} vs {j['away_team']}": j for j in dados_api}
-            jogo_sel = st.selectbox("🎯 Selecione a Partida (Radar Mundial)", list(jogos_disponiveis.keys()))
-            jogo_dados = jogos_disponiveis[jogo_sel]
-
-            odd_H, odd_D, odd_A, odd_O25, odd_BTTS = 1.01, 1.01, 1.01, 1.01, 1.01
-            for bookmaker in jogo_dados.get('bookmakers', []):
-                for market in bookmaker.get('markets', []):
-                    if market['key'] == 'h2h':
-                        for outcome in market['outcomes']:
-                            if outcome['name'] == jogo_dados['home_team']: odd_H = max(odd_H, outcome['price'])
-                            elif outcome['name'] == 'Draw': odd_D = max(odd_D, outcome['price'])
-                            elif outcome['name'] == jogo_dados['away_team']: odd_A = max(odd_A, outcome['price'])
-                    elif market['key'] == 'totals':
-                        for outcome in market['outcomes']:
-                            if outcome['name'] == 'Over' and outcome.get('point') == 2.5: odd_O25 = max(odd_O25, outcome['price'])
-                    elif market['key'] == 'btts':
-                        for outcome in market['outcomes']:
-                            if outcome['name'] == 'Yes': odd_BTTS = max(odd_BTTS, outcome['price'])
-
-            odd_1X = 1 / ((1 / odd_H) + (1 / odd_D)) if odd_H > 1.01 and odd_D > 1.01 else 1.01
-            odd_X2 = 1 / ((1 / odd_A) + (1 / odd_D)) if odd_A > 1.01 and odd_D > 1.01 else 1.01
-            odd_DNB_H = odd_H * (1 - (1 / odd_D)) if odd_H > 1.01 and odd_D > 1.01 else 1.01
-            odd_DNB_A = odd_A * (1 - (1 / odd_D)) if odd_A > 1.01 and odd_D > 1.01 else 1.01
-
-            st.info("📡 Line Shopping concluído: Cotações maximizadas em memória.")
-
-            st.markdown("### 🔄 Calibrar Nomes do Banco de Dados")
-            c1, c2 = st.columns(2)
-            guess_h = next((t for t in times_csv if str(jogo_dados['home_team'])[:4] in t), times_csv[0])
-            guess_a = next((t for t in times_csv if str(jogo_dados['away_team'])[:4] in t), times_csv[1])
-            t_casa = c1.selectbox("🏠 Mandante (CSV)", times_csv, index=times_csv.index(guess_h) if guess_h in times_csv else 0, key="sel_casa_auto")
-            t_fora = c2.selectbox("✈️ Visitante (CSV)", times_csv, index=times_csv.index(guess_a) if guess_a in times_csv else 1, key="sel_fora_auto")
-
-            odds = {
-                "Vitória Casa": odd_H,
-                "Empate": odd_D,
-                "Vitória Fora": odd_A,
-                "Casa ou Empate": odd_1X,
-                "Fora ou Empate": odd_X2,
-                "Empate Anula Casa": odd_DNB_H,
-                "Empate Anula Fora": odd_DNB_A,
-                "Mais de 2.5 gols": odd_O25,
-                "Ambos marcam": odd_BTTS
-            }
-
-            pronto_para_calcular = st.button("CALCULAR MOTOR AUTOMATIZADO")
-        else:
-            st.warning("Nenhuma partida encontrada na API para esta liga neste exato momento.")
-            pronto_para_calcular = False
-
-    # ==========================================
-    # MOTOR DE CÁLCULO E RENDERIZAÇÃO (COMUM AOS DOIS)
-    # ==========================================
-    if pronto_para_calcular:
-        xg_c, xg_f, amostra = calcular_power_rating(df, t_casa, t_fora)
-        confianca = min(100, (amostra / 38) * 100)
-        
-        if confianca <= 50: st.markdown(f"# 🔴 CONFIANÇA: {confianca:.0f}%")
-        elif confianca <= 85: st.markdown(f"# 🟡 CONFIANÇA: {confianca:.0f}%")
-        else: st.markdown(f"# 🟢 CONFIANÇA: {confianca:.0f}%")
-
-        p_c = [poisson.pmf(i, xg_c) for i in range(11)]
-        p_f = [poisson.pmf(i, xg_f) for i in range(11)]
-        
-        prob = {
-            "Vitória Casa": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i > j),
-            "Empate": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i == j),
-            "Vitória Fora": sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i < j)
-        }
-        prob["Casa ou Empate"] = prob["Vitória Casa"] + prob["Empate"]
-        prob["Fora ou Empate"] = prob["Vitória Fora"] + prob["Empate"]
-        prob["Empate Anula Casa"] = prob["Vitória Casa"] / (prob["Vitória Casa"] + prob["Vitória Fora"]) if (prob["Vitória Casa"] + prob["Vitória Fora"]) > 0 else 0
-        prob["Empate Anula Fora"] = prob["Vitória Fora"] / (prob["Vitória Casa"] + prob["Vitória Fora"]) if (prob["Vitória Casa"] + prob["Vitória Fora"]) > 0 else 0
-        prob["Mais de 2.5 gols"] = sum(p_c[i] * p_f[j] for i in range(11) for j in range(11) if i + j > 2.5)
-        prob["Ambos marcam"] = (1 - p_c[0]) * (1 - p_f[0])
-
-        st.subheader(f"📊 Análise Detalhada ({modo_operacao})")
-        sugestoes_verde = []
-        sugestoes_vermelho = []
-
-        for merc, p in prob.items():
-            odd_b = odds.get(merc, 1.00)
-            if odd_b <= 1.01 and modo_operacao == "Modo FULL AUTO (Institucional)": continue 
-            
-            margem = (p * odd_b) - 1
-            status = margem >= 0.10 and confianca > 50
-            
-            prefixo = "✅ APOSTAR" if status else "❌ NÃO APOSTAR"
-            
-            with st.expander(f"{prefixo} | {merc} ({p*100:.1f}%)"):
-                st.write(f"Odd justa da Máquina: **{1/p:.2f}** | Odd do Mercado: **{odd_b:.2f}**")
-                st.write(f"Valor Esperado (EV): **{margem*100:+.1f}%**")
-            
-            stake_txt = f" (4% = R$ {banca_total*0.04:.2f})" if banca_total > 0 else " (4%)"
-            
-            if status:
-                sugestoes_verde.append(f"✅ **{merc}** ({p*100:.1f}% chance){stake_txt}")
-            else:
-                sugestoes_vermelho.append(f"❌ **{merc}** (EV: {margem*100:+.1f}%)")
-
-        st.markdown("---")
-        st.subheader("📋 Resumo Executivo TEX")
-        if sugestoes_verde: st.success("SUGESTÕES DE OPERAÇÃO:\n\n" + "\n\n".join(sugestoes_verde))
-        if sugestoes_vermelho: st.error("NÃO OPERAR (Risco elevado ou sem valor): \n\n" + "\n\n".join(sugestoes_vermelho))
+            "Casa
