@@ -11,7 +11,7 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 15.2 — HÍBRIDO
+# TEX STATISTICS PRO 15.4 — HÍBRIDO
 # Coração da versão 2.14 + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
@@ -904,7 +904,7 @@ def render_card(resultado: Dict[str, object], banca: float, time_casa: str, time
 # APP
 # ============================================================
 
-st.title("TEX STATISTICS PRO 15.2")
+st.title("TEX STATISTICS PRO 15.4")
 st.caption("Motor em blocos: simples para operar, com banca dinâmica e auditoria.")
 
 with st.sidebar:
@@ -937,6 +937,73 @@ with st.sidebar:
     casa_apostas = st.selectbox("Onde você vai apostar?", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"])
 
 aba_analisar, aba_auditoria, aba_calendario = st.tabs(["🎯 Analisar jogo", "📒 Auditoria", "🗓️ Calendário das ligas"])
+
+# O calendário vem antes da análise para nunca depender de jogo selecionado.
+with aba_calendario:
+    st.subheader("Calendário das ligas do app")
+    st.success("Calendário carregado. Se esta aba aparecer vazia em alguma atualização futura, o problema quase sempre é uma parada de execução em outra aba; nesta versão isso foi corrigido.")
+    st.caption(
+        "Use isto como mapa de operação: quando uma liga estiver no começo, espere algumas rodadas para formar amostra. "
+        "Quando estiver no meio da temporada, a leitura do modelo tende a ficar mais confiável."
+    )
+
+    calendario_df = pd.DataFrame(CALENDARIO_LIGAS)
+
+    mes_atual = st.selectbox(
+        "Escolha o mês para ver as ligas mais úteis",
+        ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"],
+        index=datetime.now().month - 1,
+    )
+
+    ativas = calendario_df[calendario_df[mes_atual].astype(str).str.strip() != ""].copy()
+    st.markdown(f"### Ligas com movimento em {mes_atual}")
+    if ativas.empty:
+        st.info("Nenhuma liga marcada para este mês no calendário do app.")
+    else:
+        for _, linha in ativas.iterrows():
+            st.markdown(
+                f"""
+                <div class="card-aposta card-leve">
+                    <div class="mercado-card">{linha['Liga']}</div>
+                    <div class="linha-info"><b>Status no mês:</b> {linha[mes_atual]}</div>
+                    <div class="linha-info"><b>Observação:</b> {linha['Observação']}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    with st.expander("Ver tabela completa do calendário"):
+        st.dataframe(calendario_df, use_container_width=True, hide_index=True)
+
+    st.markdown("### Como usar na prática")
+    st.markdown(
+        """
+        - **Janeiro a maio:** foco nas ligas europeias em andamento, Argentina, México e Brasil.
+        - **Junho e julho:** mês mais perigoso na Europa; priorize Brasil, Argentina, MLS, México, Suécia e Noruega.
+        - **Agosto a dezembro:** volta forte da Europa + continuação das ligas de ano calendário.
+        - **Evite exagerar nas 3 primeiras rodadas** de qualquer liga, porque elenco, técnico e padrão de gols ainda estão instáveis.
+        - **Depois da 6ª rodada**, a leitura estatística fica mais confiável.
+        """
+    )
+
+    csv_cal = calendario_df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "BAIXAR CALENDÁRIO DAS LIGAS EM CSV",
+        data=csv_cal,
+        file_name="calendario_ligas_tex_pro_15.csv",
+        mime="text/csv",
+    )
+
+    excel_cal = gerar_excel_simples({"Calendario": calendario_df})
+    st.download_button(
+        "BAIXAR CALENDÁRIO DAS LIGAS EM EXCEL",
+        data=excel_cal,
+        file_name="calendario_ligas_tex_pro_15.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+
 
 with aba_analisar:
     with st.spinner("Carregando dados históricos da liga..."):
@@ -971,12 +1038,12 @@ with aba_analisar:
             time_fora = st.selectbox("Visitante", times, key="time_fora_manual")
 
         if time_casa == time_fora:
-            st.warning("Mandante e visitante não podem ser o mesmo time.")
-            st.stop()
-
-        jogo_nome = f"{time_casa} x {time_fora}"
-        odds = coletar_odds_manuais("manual")
-        botao_analisar = st.button("ANALISAR JOGO MANUAL", type="primary")
+            st.warning("Mandante e visitante não podem ser o mesmo time. Altere um dos times para analisar. As outras abas continuam funcionando normalmente.")
+            botao_analisar = False
+        else:
+            jogo_nome = f"{time_casa} x {time_fora}"
+            odds = coletar_odds_manuais("manual")
+            botao_analisar = st.button("ANALISAR JOGO MANUAL", type="primary")
 
     else:
         if not chave_api:
@@ -1026,11 +1093,10 @@ with aba_analisar:
                     st.info(f"Cotações reais encontradas: {len(odds)} mercado(s). Mercados de proteção só entram no automático se a API entregar esse tipo de cotação.")
                     botao_analisar = st.button("ANALISAR JOGO AUTOMÁTICO", type="primary")
 
-    if botao_analisar:
-        if not odds:
-            st.error("Nenhuma cotação válida foi informada ou encontrada.")
-            st.stop()
+    if botao_analisar and not odds:
+        st.error("Nenhuma cotação válida foi informada ou encontrada.")
 
+    if botao_analisar and odds:
         gols_casa, gols_fora, probabilidades, confianca, amostras = calcular_forcas_e_probabilidades(df, time_casa, time_fora)
         resultados = montar_resultados(probabilidades, odds, confianca, banca_usada, perfil)
         aprovadas = [r for r in resultados if r["apostar"]]
@@ -1212,58 +1278,3 @@ with aba_auditoria:
             file_name="auditoria_tex_pro_15.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-with aba_calendario:
-    st.subheader("Calendário das ligas do app")
-    st.caption(
-        "Use isto como mapa de operação: quando uma liga estiver no começo, espere algumas rodadas para formar amostra. "
-        "Quando estiver no meio da temporada, a leitura do modelo tende a ficar mais confiável."
-    )
-
-    calendario_df = pd.DataFrame(CALENDARIO_LIGAS)
-
-    mes_atual = st.selectbox(
-        "Escolha o mês para ver as ligas mais úteis",
-        ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"],
-        index=datetime.now().month - 1,
-    )
-
-    ativas = calendario_df[calendario_df[mes_atual].astype(str).str.strip() != ""].copy()
-    st.markdown(f"### Ligas com movimento em {mes_atual}")
-    if ativas.empty:
-        st.info("Nenhuma liga marcada para este mês no calendário do app.")
-    else:
-        for _, linha in ativas.iterrows():
-            st.markdown(
-                f"""
-                <div class="card-aposta card-leve">
-                    <div class="mercado-card">{linha['Liga']}</div>
-                    <div class="linha-info"><b>Status no mês:</b> {linha[mes_atual]}</div>
-                    <div class="linha-info"><b>Observação:</b> {linha['Observação']}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    with st.expander("Ver tabela completa do calendário"):
-        st.dataframe(calendario_df, use_container_width=True, hide_index=True)
-
-    st.markdown("### Como usar na prática")
-    st.markdown(
-        """
-        - **Janeiro a maio:** foco nas ligas europeias em andamento, Argentina, México e Brasil.
-        - **Junho e julho:** mês mais perigoso na Europa; priorize Brasil, Argentina, MLS, México, Suécia e Noruega.
-        - **Agosto a dezembro:** volta forte da Europa + continuação das ligas de ano calendário.
-        - **Evite exagerar nas 3 primeiras rodadas** de qualquer liga, porque elenco, técnico e padrão de gols ainda estão instáveis.
-        - **Depois da 6ª rodada**, a leitura estatística fica mais confiável.
-        """
-    )
-
-    excel_cal = gerar_excel_simples({"Calendario": calendario_df})
-    st.download_button(
-        "BAIXAR CALENDÁRIO DAS LIGAS EM EXCEL",
-        data=excel_cal,
-        file_name="calendario_ligas_tex_pro_15.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
