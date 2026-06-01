@@ -11,12 +11,12 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 15.4 — HÍBRIDO
+# TEX STATISTICS PRO 15.5 — HÍBRIDO
 # Coração da versão 2.14 + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX PRO 15.2 — Blocos", layout="wide")
+st.set_page_config(page_title="TEX PRO 15.5 — Blocos", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -210,19 +210,31 @@ def media_ponderada(serie: pd.Series, pesos: pd.Series, padrao: float) -> float:
 # MOTOR — base antiga melhorada
 # ============================================================
 
-def calcular_forcas_e_probabilidades(df: pd.DataFrame, time_casa: str, time_fora: str) -> Tuple[float, float, Dict[str, float], float, Dict[str, int]]:
+def media_ponderada_estabilizada(serie: pd.Series, pesos: pd.Series, media_liga: float, k: float = 10.0) -> float:
     """
-    Mantém o coração da versão 2.14:
-    - mandante em casa
-    - visitante fora
-    - Poisson direto
-    - decisão por valor esperado
+    Média do time puxada para a média da liga quando a amostra é pequena.
 
-    Melhorias:
-    - grade maior de placar
-    - normalização da matriz
-    - Menos de 2.5 e Ambos Não
-    - proteção contra amostra vazia
+    Exemplo: se o visitante tem só 1 jogo fora, o app não pode concluir que ele
+    é péssimo ou excelente. Com poucos jogos, a média da liga pesa mais.
+    """
+    try:
+        n = len(serie)
+        if n == 0:
+            return float(media_liga)
+        media_time = float(np.average(serie, weights=pesos))
+        return float(((n * media_time) + (k * media_liga)) / (n + k))
+    except Exception:
+        return float(media_liga)
+
+
+def calcular_forcas_e_probabilidades(df: pd.DataFrame, time_casa: str, time_fora: str) -> Tuple[float, float, Dict[str, float], float, Dict[str, object]]:
+    """
+    Motor híbrido 15.5:
+    - mantém a lógica simples da versão 2.14;
+    - usa Poisson direto;
+    - corrige o erro de amostra pequena;
+    - puxa dados pobres para a média da liga;
+    - reduz confiança quando um dos lados tem poucos jogos no mando certo.
     """
     media_gols_casa_liga = max(0.20, float(np.average(df["HG"], weights=df["Peso"])))
     media_gols_fora_liga = max(0.20, float(np.average(df["AG"], weights=df["Peso"])))
@@ -230,12 +242,21 @@ def calcular_forcas_e_probabilidades(df: pd.DataFrame, time_casa: str, time_fora
     jogos_casa = df[df["Home"] == time_casa]
     jogos_fora = df[df["Away"] == time_fora]
 
-    gols_feitos_casa = media_ponderada(jogos_casa["HG"], jogos_casa["Peso"], media_gols_casa_liga)
-    gols_sofridos_casa = media_ponderada(jogos_casa["AG"], jogos_casa["Peso"], media_gols_fora_liga)
-    gols_feitos_fora = media_ponderada(jogos_fora["AG"], jogos_fora["Peso"], media_gols_fora_liga)
-    gols_sofridos_fora = media_ponderada(jogos_fora["HG"], jogos_fora["Peso"], media_gols_casa_liga)
+    amostra_casa = len(jogos_casa)
+    amostra_fora = len(jogos_fora)
+    amostra_minima = min(amostra_casa, amostra_fora)
+    amostra_total = amostra_casa + amostra_fora
 
-    # Fórmula simples da versão que funcionou, com travas contra exageros
+    # Quanto menor a amostra, mais a média da liga entra no cálculo.
+    # Isso evita absurdos como visitante com 1 jogo fora virar ataque 0,20.
+    k_casa = 10.0
+    k_fora = 12.0
+
+    gols_feitos_casa = media_ponderada_estabilizada(jogos_casa["HG"], jogos_casa["Peso"], media_gols_casa_liga, k=k_casa)
+    gols_sofridos_casa = media_ponderada_estabilizada(jogos_casa["AG"], jogos_casa["Peso"], media_gols_fora_liga, k=k_casa)
+    gols_feitos_fora = media_ponderada_estabilizada(jogos_fora["AG"], jogos_fora["Peso"], media_gols_fora_liga, k=k_fora)
+    gols_sofridos_fora = media_ponderada_estabilizada(jogos_fora["HG"], jogos_fora["Peso"], media_gols_casa_liga, k=k_fora)
+
     forca_ataque_casa = gols_feitos_casa / media_gols_casa_liga if media_gols_casa_liga > 0 else 1.0
     fragilidade_defesa_fora = gols_sofridos_fora / media_gols_casa_liga if media_gols_casa_liga > 0 else 1.0
     forca_ataque_fora = gols_feitos_fora / media_gols_fora_liga if media_gols_fora_liga > 0 else 1.0
@@ -244,8 +265,8 @@ def calcular_forcas_e_probabilidades(df: pd.DataFrame, time_casa: str, time_fora
     gols_esperados_casa = media_gols_casa_liga * forca_ataque_casa * fragilidade_defesa_fora
     gols_esperados_fora = media_gols_fora_liga * forca_ataque_fora * fragilidade_defesa_casa
 
-    gols_esperados_casa = float(np.clip(gols_esperados_casa, 0.20, 4.20))
-    gols_esperados_fora = float(np.clip(gols_esperados_fora, 0.20, 4.20))
+    gols_esperados_casa = float(np.clip(gols_esperados_casa, 0.25, 4.00))
+    gols_esperados_fora = float(np.clip(gols_esperados_fora, 0.25, 4.00))
 
     tamanho = 15
     matriz = np.zeros((tamanho, tamanho), dtype=float)
@@ -279,16 +300,36 @@ def calcular_forcas_e_probabilidades(df: pd.DataFrame, time_casa: str, time_fora
     probabilidades["Empate Anula Casa"] = prob_casa / total_sem_empate if total_sem_empate > 0 else 0.0
     probabilidades["Empate Anula Fora"] = prob_fora / total_sem_empate if total_sem_empate > 0 else 0.0
 
-    # Confiança parecida com a versão antiga: quantidade manda.
-    # Pequeno bônus quando a amostra está equilibrada.
-    amostra_casa = len(jogos_casa)
-    amostra_fora = len(jogos_fora)
-    amostra_total = amostra_casa + amostra_fora
-    confianca_base = min(100.0, (amostra_total / 38.0) * 100.0)
-    equilibrio = min(amostra_casa, amostra_fora) / max(1, max(amostra_casa, amostra_fora))
-    confianca = min(100.0, (confianca_base * 0.90) + (equilibrio * 10.0))
+    # Confiança nova: quem manda é o lado com MENOS amostra.
+    # Se visitante tem 1 jogo fora, confiança fica baixa, mesmo que o mandante tenha 90 jogos.
+    confianca_minima_mando = min(100.0, (amostra_minima / 12.0) * 100.0)
+    confianca_total = min(100.0, (amostra_total / 70.0) * 100.0)
+    equilibrio = amostra_minima / max(1, max(amostra_casa, amostra_fora))
 
-    amostras = {"casa": amostra_casa, "fora": amostra_fora, "total": amostra_total}
+    confianca = (confianca_minima_mando * 0.70) + (confianca_total * 0.20) + (equilibrio * 10.0)
+
+    if amostra_minima < 4:
+        confianca = min(confianca, 35.0)
+    elif amostra_minima < 8:
+        confianca = min(confianca, 49.0)
+
+    confianca = float(np.clip(confianca, 0.0, 100.0))
+
+    if amostra_minima < 4:
+        alerta = "Amostra muito baixa: não operar com dinheiro real."
+    elif amostra_minima < 8:
+        alerta = "Amostra baixa: observar ou usar valor simbólico."
+    else:
+        alerta = "Amostra suficiente para análise."
+
+    amostras = {
+        "casa": amostra_casa,
+        "fora": amostra_fora,
+        "total": amostra_total,
+        "minima": amostra_minima,
+        "alerta": alerta,
+        "amostra_fraca": amostra_minima < 8,
+    }
     return gols_esperados_casa, gols_esperados_fora, probabilidades, confianca, amostras
 
 # ============================================================
@@ -504,7 +545,7 @@ def classificar_entrada(prob: float, odd: float, confianca: float, perfil: str) 
     }
 
 
-def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], confianca: float, banca: float, perfil: str) -> List[Dict[str, object]]:
+def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], confianca: float, banca: float, perfil: str, limite_total_jogo: float) -> List[Dict[str, object]]:
     resultados = []
     for mercado in MERCADOS:
         if mercado not in probabilidades or mercado not in odds:
@@ -512,8 +553,7 @@ def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], 
         prob = float(probabilidades[mercado])
         odd = float(odds[mercado])
         decisao = classificar_entrada(prob, odd, confianca, perfil)
-        percentual = min(float(decisao["percentual"]), 0.03)  # trava máxima: 3% da banca atual
-        entrada_rs = banca * percentual if banca > 0 and decisao["apostar"] else 0.0
+        percentual_original = min(float(decisao["percentual"]), 0.03)  # trava máxima: 3% por entrada
         resultados.append({
             "mercado": mercado,
             "probabilidade": prob,
@@ -522,12 +562,37 @@ def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], 
             "valor": float(decisao["valor"]),
             "apostar": bool(decisao["apostar"]),
             "nivel": str(decisao["nivel"]),
-            "percentual": percentual if decisao["apostar"] else 0.0,
-            "entrada_rs": entrada_rs,
+            "percentual": percentual_original if decisao["apostar"] else 0.0,
+            "percentual_original": percentual_original if decisao["apostar"] else 0.0,
+            "entrada_rs": banca * percentual_original if banca > 0 and decisao["apostar"] else 0.0,
             "motivo": str(decisao["motivo"]),
         })
 
     ordem = {"forte": 0, "boa": 1, "leve": 2, "nao": 3}
+    resultados.sort(key=lambda r: (ordem.get(r["nivel"], 9), -r["valor"]))
+
+    # Limite real de exposição no mesmo jogo.
+    # Em vez de permitir 6 entradas de 3%, o app distribui o teto do jogo entre as entradas aprovadas.
+    aprovadas = [r for r in resultados if r["apostar"] and float(r["percentual"]) > 0]
+    limite_total_jogo = float(np.clip(limite_total_jogo, 0.01, 0.09))
+    soma_original = sum(float(r["percentual"]) for r in aprovadas)
+
+    if aprovadas and soma_original > limite_total_jogo:
+        fator = limite_total_jogo / soma_original
+        for r in aprovadas:
+            novo_percentual = float(r["percentual"]) * fator
+            # Abaixo de 0,30% fica pequeno demais para execução prática. Mantém como observação.
+            if novo_percentual < 0.003:
+                r["apostar"] = False
+                r["nivel"] = "nao"
+                r["percentual"] = 0.0
+                r["entrada_rs"] = 0.0
+                r["motivo"] = "valor existe, mas ficou pequeno após limite do jogo"
+            else:
+                r["percentual"] = novo_percentual
+                r["entrada_rs"] = banca * novo_percentual if banca > 0 else 0.0
+                r["motivo"] = "valor encontrado; entrada ajustada pelo limite do jogo"
+
     resultados.sort(key=lambda r: (ordem.get(r["nivel"], 9), -r["valor"]))
     return resultados
 
@@ -904,7 +969,7 @@ def render_card(resultado: Dict[str, object], banca: float, time_casa: str, time
 # APP
 # ============================================================
 
-st.title("TEX STATISTICS PRO 15.4")
+st.title("TEX STATISTICS PRO 15.5")
 st.caption("Motor em blocos: simples para operar, com banca dinâmica e auditoria.")
 
 with st.sidebar:
@@ -916,7 +981,7 @@ with st.sidebar:
     banca_manual = st.number_input("Banca manual", min_value=0.0, value=1000.0, step=50.0)
     banca_usada = banca_auditada if usar_banca_auditada else banca_manual
     st.metric("Banca usada pelo sistema", dinheiro(banca_usada))
-    st.caption("A entrada máxima nunca passa de 3% da banca atual.")
+    st.caption("A entrada máxima por aposta nunca passa de 3% da banca atual; o total no mesmo jogo também é limitado.")
 
     st.divider()
     st.header("Perfil")
@@ -926,6 +991,14 @@ with st.sidebar:
         index=0,
         help="Volume controlado é o equilíbrio entre a versão antiga e a auditoria nova.",
     )
+    limite_total_jogo_pct = st.slider(
+        "Máximo total no mesmo jogo",
+        min_value=1.0,
+        max_value=9.0,
+        value=3.0,
+        step=0.5,
+        help="Proteção contra várias entradas dependentes do mesmo placar. O recomendado é 3%.",
+    ) / 100.0
 
     st.divider()
     st.header("Dados")
@@ -1098,7 +1171,7 @@ with aba_analisar:
 
     if botao_analisar and odds:
         gols_casa, gols_fora, probabilidades, confianca, amostras = calcular_forcas_e_probabilidades(df, time_casa, time_fora)
-        resultados = montar_resultados(probabilidades, odds, confianca, banca_usada, perfil)
+        resultados = montar_resultados(probabilidades, odds, confianca, banca_usada, perfil, limite_total_jogo_pct)
         aprovadas = [r for r in resultados if r["apostar"]]
 
         st.markdown("---")
@@ -1108,15 +1181,19 @@ with aba_analisar:
         m2.metric("Força de gols fora", numero(gols_fora, 2))
         m3.metric("Confiança", f"{confianca:.1f}%".replace(".", ","))
         m4.metric("Entradas", len(aprovadas))
-        m5.metric("Máximo por aposta", dinheiro(banca_usada * 0.03))
+        m5.metric("Máximo no jogo", dinheiro(banca_usada * limite_total_jogo_pct))
 
         st.caption(f"Amostra: {time_casa} em casa {amostras['casa']} jogos | {time_fora} fora {amostras['fora']} jogos.")
+        if amostras.get("amostra_fraca"):
+            st.error(f"⚠️ {amostras.get('alerta')} O lado com menor amostra tem apenas {amostras.get('minima')} jogo(s). O app bloqueia entradas reais nesse cenário.")
+        else:
+            st.success(str(amostras.get("alerta", "Amostra suficiente para análise.")))
 
         if aprovadas:
             total_sugerido = sum(float(r["entrada_rs"]) for r in aprovadas)
             st.success(f"Foram encontradas {len(aprovadas)} entrada(s). Total sugerido se fizer todas: {dinheiro(total_sugerido)}.")
-            if total_sugerido > banca_usada * 0.09:
-                st.warning("Atenção: há muitas entradas no mesmo jogo. Mesmo quando várias parecem boas, elas dependem do mesmo placar. Evite exagerar.")
+            if total_sugerido >= banca_usada * limite_total_jogo_pct * 0.99 and len(aprovadas) > 1:
+                st.warning("As entradas aprovadas foram ajustadas para respeitar o limite total do mesmo jogo. Isso evita concentrar dinheiro demais em mercados que dependem do mesmo placar.")
         else:
             st.info("Nenhuma entrada passou. Se você quiser mais volume, use o perfil 'Agressivo com controle', mas registre tudo na auditoria.")
 
