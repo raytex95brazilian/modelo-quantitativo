@@ -11,12 +11,12 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 15.7 — HÍBRIDO
+# TEX STATISTICS PRO 15.9 — HÍBRIDO
 # Coração da versão 2.14 + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX PRO 15.6 — Blocos", layout="wide")
+st.set_page_config(page_title="TEX PRO 15.9 — Blocos", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -501,10 +501,14 @@ def classificar_entrada(prob: float, odd: float, confianca: float, perfil: str) 
             (0.06, 52, 0.010, "leve"),
         ]
     else:  # Agressivo com controle
+        # Mais volume sem passar de 3% por entrada.
+        # A diferença real do modo agressivo aparece em duas partes:
+        # 1) aceita valor menor;
+        # 2) na barra lateral, o limite total padrão do jogo sobe.
         regras = [
-            (0.12, 65, 0.030, "forte"),
-            (0.08, 55, 0.020, "boa"),
-            (0.04, 50, 0.0075, "leve"),
+            (0.10, 60, 0.030, "forte"),
+            (0.06, 52, 0.020, "boa"),
+            (0.03, 45, 0.0075, "leve"),
         ]
 
     if not odd_valida(odd):
@@ -517,7 +521,8 @@ def classificar_entrada(prob: float, odd: float, confianca: float, perfil: str) 
             "odd_justa": odd_justa,
         }
 
-    if confianca < 50:
+    confianca_minima_absoluta = 45 if perfil == "Agressivo com controle" else 50
+    if confianca < confianca_minima_absoluta:
         return {
             "apostar": False,
             "nivel": "nao",
@@ -1116,8 +1121,8 @@ def render_card(resultado: Dict[str, object], banca: float, time_casa: str, time
 # APP
 # ============================================================
 
-st.title("TEX STATISTICS PRO 15.8")
-st.caption("Motor em blocos: seleção corrigida, banca dinâmica, auditoria estável e calendário revisado por liga.")
+st.title("TEX STATISTICS PRO 15.9")
+st.caption("Motor em blocos: perfil agressivo corrigido, banca dinâmica, auditoria estável e calendário revisado por liga.")
 
 with st.sidebar:
     st.header("Banca")
@@ -1138,13 +1143,23 @@ with st.sidebar:
         index=0,
         help="Volume controlado é o equilíbrio entre a versão antiga e a auditoria nova.",
     )
+    limite_padrao_por_perfil = {
+        "Conservador": 3.0,
+        "Volume controlado": 4.5,
+        "Agressivo com controle": 6.0,
+    }
+    st.caption(
+        "O perfil muda os cortes de entrada e o limite total padrão do jogo. "
+        "Conservador busca menos entradas; agressivo busca mais, sem passar de 3% por aposta."
+    )
     limite_total_jogo_pct = st.slider(
         "Máximo total no mesmo jogo",
         min_value=1.0,
         max_value=9.0,
-        value=3.0,
+        value=limite_padrao_por_perfil.get(perfil, 4.5),
         step=0.5,
-        help="Proteção contra várias entradas dependentes do mesmo placar. O recomendado é 3%.",
+        key=f"limite_total_jogo_{perfil}",
+        help="Proteção contra várias entradas dependentes do mesmo placar. No agressivo, o padrão sobe para permitir mais entradas no mesmo jogo.",
     ) / 100.0
 
     st.divider()
@@ -1394,6 +1409,7 @@ with aba_analisar:
             "time_fora": time_fora,
             "origem": origem,
             "casa_apostas": casa_apostas,
+            "perfil": perfil,
             "banca_usada": float(banca_usada),
             "limite_total_jogo_pct": float(limite_total_jogo_pct),
             "gols_casa": float(gols_casa),
@@ -1412,6 +1428,7 @@ with aba_analisar:
         time_fora_analise = analise_atual["time_fora"]
         origem_analise = analise_atual["origem"]
         casa_apostas_analise = analise_atual["casa_apostas"]
+        perfil_analise = analise_atual.get("perfil", "não registrado")
         banca_analise = float(analise_atual["banca_usada"])
         limite_analise = float(analise_atual["limite_total_jogo_pct"])
         gols_casa = float(analise_atual["gols_casa"])
@@ -1423,7 +1440,12 @@ with aba_analisar:
 
         st.markdown("---")
         st.subheader(f"Análise — {jogo_nome_analise}")
-        st.caption("Resultado da última análise calculada. Você pode marcar/desmarcar entradas abaixo sem a tela fechar.")
+        st.caption(f"Resultado da última análise calculada no perfil: {perfil_analise}. Você pode marcar/desmarcar entradas abaixo sem a tela fechar.")
+        if perfil_analise != perfil or abs(limite_analise - limite_total_jogo_pct) > 0.00001:
+            st.warning(
+                "Você mudou o perfil ou o limite total depois da última análise. "
+                "Clique em ANALISAR JOGO novamente para o resultado mudar de verdade."
+            )
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Força de gols casa", numero(gols_casa, 2))
         m2.metric("Força de gols fora", numero(gols_fora, 2))
