@@ -1,33 +1,140 @@
 import os
 import io
 import uuid
-from pathlib import Path
-from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
-import difflib
 import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
 from scipy.stats import poisson
+import difflib
 
-# =========================================================
-# TEX STATISTICS PRO 14.2 — APP.PY EM PORTUGUÊS
-# Cole este arquivo inteiro em app.py no GitHub/Streamlit.
-# Foco: muitas entradas possíveis, sem cotações fictícias,
-# banca dinâmica e auditoria real da vantagem sobre o fechamento.
-# =========================================================
+# ============================================================
+# TEX STATISTICS PRO 14.3
+# Versão simples, em português brasileiro e com blocos por mercado
+# ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS PRO 14.2", layout="wide")
+st.set_page_config(
+    page_title="TEX STATISTICS PRO 14.3",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# =========================================================
+# ============================================================
+# VISUAL — FOCO EM CELULAR
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+    .main-title {
+        font-size: 2.0rem;
+        font-weight: 800;
+        margin-bottom: 0.2rem;
+    }
+    .sub-title {
+        color: #555;
+        font-size: 1.0rem;
+        margin-bottom: 1.2rem;
+    }
+    .card-apostar, .card-nao, .card-neutro {
+        border-radius: 18px;
+        padding: 18px 18px 14px 18px;
+        margin: 14px 0 18px 0;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.07);
+        border: 1px solid rgba(0,0,0,0.08);
+    }
+    .card-apostar {
+        background: #f0fdf4;
+        border-left: 8px solid #16a34a;
+    }
+    .card-nao {
+        background: #fff7f7;
+        border-left: 8px solid #dc2626;
+    }
+    .card-neutro {
+        background: #f8fafc;
+        border-left: 8px solid #64748b;
+    }
+    .status-apostar {
+        color: #166534;
+        font-size: 1.22rem;
+        font-weight: 900;
+        margin-bottom: 4px;
+    }
+    .status-nao {
+        color: #991b1b;
+        font-size: 1.22rem;
+        font-weight: 900;
+        margin-bottom: 4px;
+    }
+    .mercado-titulo {
+        font-size: 1.40rem;
+        font-weight: 900;
+        color: #111827;
+        margin-bottom: 12px;
+    }
+    .grade-card {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+        gap: 10px;
+        margin-top: 8px;
+    }
+    .mini-box {
+        background: rgba(255,255,255,0.85);
+        border: 1px solid rgba(0,0,0,0.07);
+        border-radius: 14px;
+        padding: 10px;
+    }
+    .mini-label {
+        font-size: 0.78rem;
+        color: #555;
+        margin-bottom: 2px;
+    }
+    .mini-value {
+        font-size: 1.13rem;
+        color: #111827;
+        font-weight: 800;
+    }
+    .motivo-box {
+        margin-top: 12px;
+        padding: 11px 12px;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.75);
+        color: #374151;
+        font-size: 0.96rem;
+        line-height: 1.36rem;
+    }
+    .aviso-simples {
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        color: #1e3a8a;
+        margin: 12px 0;
+    }
+    @media (max-width: 700px) {
+        .main-title {font-size: 1.55rem;}
+        .mercado-titulo {font-size: 1.18rem;}
+        .status-apostar, .status-nao {font-size: 1.05rem;}
+        .card-apostar, .card-nao, .card-neutro {padding: 14px; margin: 12px 0;}
+        .grade-card {grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;}
+        .mini-value {font-size: 1.02rem;}
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ============================================================
 # LIGAS
-# =========================================================
+# ============================================================
 
 LIGAS_CSV = {
     "Brasileirão Série A": "https://www.football-data.co.uk/new/BRA.csv",
-    "Argentina - Primera Division": "https://www.football-data.co.uk/new/ARG.csv",
+    "Argentina - Primeira Divisão": "https://www.football-data.co.uk/new/ARG.csv",
     "EUA - MLS": "https://www.football-data.co.uk/new/USA.csv",
     "México - Liga MX": "https://www.football-data.co.uk/new/MEX.csv",
     "Japão - J1 League": "https://www.football-data.co.uk/new/JPN.csv",
@@ -54,7 +161,7 @@ LIGAS_CSV = {
 
 LIGAS_API = {
     "Brasileirão Série A": "soccer_brazil_campeonato",
-    "Argentina - Primera Division": "soccer_argentina_primera_division",
+    "Argentina - Primeira Divisão": "soccer_argentina_primera_division",
     "EUA - MLS": "soccer_usa_mls",
     "México - Liga MX": "soccer_mexico_ligamx",
     "Japão - J1 League": "soccer_japan_j_league",
@@ -79,147 +186,171 @@ LIGAS_API = {
     "Grécia - Super League": "soccer_greece_super_league",
 }
 
-EXCHANGES_BLOQUEADAS = {
-    "smarkets", "matchbook", "betfair_ex_uk", "betfair_ex_au",
-    "betfair_ex_eu", "betdaq", "betfair"
+CASAS_BLOQUEADAS = {
+    "smarkets", "matchbook", "betfair_ex_uk", "betfair_ex_au", "betfair_ex_eu",
+    "betdaq", "betfair"
 }
 
-CASAS = ["Pixbet", "Pinnacle", "Bet365", "Betano", "KTO", "Superbet", "Outra"]
-STATUS = ["Pendente", "Ganhou", "Perdeu", "Anulada", "Saída antecipada"]
-
-LOG_DIR = Path("logs")
-LOG_DIR.mkdir(exist_ok=True)
-AUDIT_FILE = LOG_DIR / "auditoria_entradas_tex_v14_2.csv"
-
-AUDIT_COLS = [
-    "id", "data_registro", "data_evento", "liga", "jogo", "mandante", "visitante",
-    "mercado", "casa", "odd_entrada", "odd_fechamento", "clv_pct",
-    "stake_pct", "stake_reais", "banca_antes", "banca_depois",
-    "prob_modelo", "prob_conservadora", "prob_mercado",
-    "ev_bruto", "ev_conservador", "edge", "confianca",
-    "status", "resultado_reais", "observacao"
+ORDEM_MERCADOS = [
+    "Vitória Casa",
+    "Empate",
+    "Vitória Fora",
+    "Mais de 2.5 gols",
+    "Menos de 2.5 gols",
+    "Ambos marcam - Sim",
+    "Ambos marcam - Não",
+    "Casa ou Empate",
+    "Fora ou Empate",
+    "Empate anula - Casa",
+    "Empate anula - Fora",
 ]
 
-# =========================================================
-# ESTRUTURAS
-# =========================================================
+COLUNAS_AUDITORIA = [
+    "ID", "Data registro", "Data jogo", "Liga", "Jogo", "Casa", "Mercado",
+    "Cotação entrada", "Cotação fechamento", "Vantagem fechamento %",
+    "Entrada %", "Entrada R$", "Banca antes", "Banca depois",
+    "Probabilidade modelo %", "Probabilidade mercado %", "Cotação justa",
+    "Valor esperado %", "Confiança %", "Status", "Resultado R$", "Observações"
+]
 
-@dataclass
-class LinhaMercado:
-    mercado: str
-    odd: float
-    prob_mercado: float
-    origem: str
-    bookmakers: int = 0
+CAMINHO_AUDITORIA = "logs/auditoria_tex_statistics.csv"
 
-@dataclass
-class ResultadoSinal:
-    mercado: str
-    prob_modelo: float
-    prob_conservadora: float
-    prob_mercado: float
-    odd_justa: float
-    odd_mercado: float
-    ev_bruto: float
-    ev_conservador: float
-    edge: float
-    divergencia: float
-    confianca: float
-    stake_frac: float
-    stake_valor: float
-    operavel: bool
-    motivo: str
-    origem_odd: str
+# ============================================================
+# FUNÇÕES BÁSICAS
+# ============================================================
 
-# =========================================================
-# UTILITÁRIOS
-# =========================================================
+def dinheiro(valor: float) -> str:
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def get_secret_or_env(nome: str, default: str = "") -> str:
+
+def pct(valor: float, casas: int = 1) -> str:
+    return f"{valor * 100:.{casas}f}%".replace(".", ",")
+
+
+def numero_texto(valor: float, casas: int = 2) -> str:
+    return f"{valor:.{casas}f}".replace(".", ",")
+
+
+def texto_para_float(txt: str) -> Optional[float]:
+    if txt is None:
+        return None
+    txt = str(txt).strip().replace("R$", "").replace(" ", "")
+    if not txt:
+        return None
     try:
-        return st.secrets.get(nome, os.getenv(nome, default))
-    except Exception:
-        return os.getenv(nome, default)
-
-def safe_float(x) -> Optional[float]:
-    try:
-        if pd.isna(x):
+        # Aceita 1,83 e também 1.83
+        if "," in txt and "." in txt:
+            txt = txt.replace(".", "").replace(",", ".")
+        else:
+            txt = txt.replace(",", ".")
+        valor = float(txt)
+        if not np.isfinite(valor):
             return None
-        v = float(str(x).replace(",", "."))
-        if not np.isfinite(v) or v <= 1.01:
-            return None
-        return v
+        return valor
     except Exception:
         return None
 
-def odd_input(label: str, key: str, coluna=None) -> Optional[float]:
-    """Campo de cotação mostrado na tela principal. Aceita vírgula ou ponto."""
-    ui = coluna if coluna is not None else st
-    txt = ui.text_input(label, value="", key=f"cotacao_{key}")
-    if not str(txt).strip():
+
+def ler_cotacao(label: str, chave: str) -> Optional[float]:
+    valor = st.text_input(label, value="", key=chave, placeholder="Ex.: 1,85")
+    cotacao = texto_para_float(valor)
+    if cotacao is None:
         return None
-    return safe_float(txt)
-
-def normalizar_overround(odds: Dict[str, float], mercados: List[str], exigir_completo: bool = True) -> Dict[str, float]:
-    if exigir_completo and not all(m in odds and odds[m] > 1.01 for m in mercados):
-        return {}
-    inv = {m: 1.0 / odds[m] for m in mercados if m in odds and odds[m] > 1.01}
-    total = sum(inv.values())
-    if total <= 0:
-        return {}
-    return {m: inv[m] / total for m in inv}
-
-def prob_implicita_conservadora(odd: float) -> float:
-    return 1.0 / odd if odd and odd > 1.01 else 0.0
-
-def encontrar_match(nome_api: str, times_csv: List[str]) -> Optional[str]:
-    base = (
-        str(nome_api).lower().replace("fc", "").replace("ec", "")
-        .replace("ac", "").replace("sp", "").replace("rj", "").strip()
-    )
-    candidatos = [t.lower() for t in times_csv]
-    matches = difflib.get_close_matches(base, candidatos, n=1, cutoff=0.70)
-    if not matches:
+    if cotacao <= 1.01:
         return None
-    return next(t for t in times_csv if t.lower() == matches[0])
+    return cotacao
 
-def fmt_pct(x: float) -> str:
-    return f"{x * 100:.1f}%"
 
-def fmt_money(x: float) -> str:
-    return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def cotacao_valida(valor) -> Optional[float]:
+    try:
+        v = float(valor)
+        if np.isfinite(v) and v > 1.01:
+            return v
+    except Exception:
+        pass
+    return None
 
-# =========================================================
-# HISTÓRICO
-# =========================================================
+# ============================================================
+# DADOS HISTÓRICOS E API
+# ============================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def carregar_historico(url: str) -> pd.DataFrame:
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-        r.raise_for_status()
-        df = pd.read_csv(io.StringIO(r.text))
-        df = df.rename(columns={"HomeTeam": "Home", "AwayTeam": "Away", "FTHG": "HG", "FTAG": "AG"})
-        if not all(c in df.columns for c in ["Home", "Away", "HG", "AG"]):
+        resposta = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        resposta.raise_for_status()
+        df = pd.read_csv(io.StringIO(resposta.text))
+        df = df.rename(columns={
+            "HomeTeam": "Home",
+            "AwayTeam": "Away",
+            "FTHG": "HG",
+            "FTAG": "AG",
+        })
+        colunas = ["Home", "Away", "HG", "AG"]
+        if not all(c in df.columns for c in colunas):
             return pd.DataFrame()
-        df = df.dropna(subset=["Home", "Away", "HG", "AG"]).copy()
+
+        df = df.dropna(subset=colunas).copy()
         df["HG"] = pd.to_numeric(df["HG"], errors="coerce")
         df["AG"] = pd.to_numeric(df["AG"], errors="coerce")
         df = df.dropna(subset=["HG", "AG"])
+
         if "Date" in df.columns:
-            df["DataParse"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
-            df = df.sort_values("DataParse", kind="mergesort")
+            df["Data"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+            df = df.sort_values("Data", kind="mergesort")
+        else:
+            df = df.sort_index()
+
         df = df.tail(1000).reset_index(drop=True)
         df["Peso"] = np.exp(np.linspace(-2.2, 0.0, len(df)))
         return df
     except Exception:
         return pd.DataFrame()
 
-# =========================================================
-# MODELO POISSON + SHRINKAGE
-# =========================================================
 
-def correcao_empirica(df: pd.DataFrame) -> float:
+@st.cache_data(ttl=300, show_spinner=False)
+def buscar_api(chave_api: str, codigo_liga: str) -> Optional[List[dict]]:
+    if not chave_api.strip():
+        return None
+    try:
+        url = f"https://api.the-odds-api.com/v4/sports/{codigo_liga}/odds/"
+        parametros = {
+            "apiKey": chave_api.strip(),
+            "regions": "eu,uk,us",
+            "markets": "h2h,totals,btts",
+            "oddsFormat": "decimal",
+            "dateFormat": "iso",
+        }
+        resposta = requests.get(url, params=parametros, timeout=20)
+        if resposta.status_code != 200:
+            return None
+        dados = resposta.json()
+        if not isinstance(dados, list):
+            return None
+        return dados
+    except Exception:
+        return None
+
+
+def achar_time(nome_api: str, times: List[str]) -> Optional[str]:
+    if not nome_api:
+        return None
+    nome = nome_api.lower()
+    remover = [" fc", " ec", " ac", " rj", " sp", " futebol clube", " clube"]
+    for r in remover:
+        nome = nome.replace(r, "")
+    nome = nome.strip()
+    opcoes = [t.lower() for t in times]
+    encontrados = difflib.get_close_matches(nome, opcoes, n=1, cutoff=0.68)
+    if encontrados:
+        return next(t for t in times if t.lower() == encontrados[0])
+    return None
+
+# ============================================================
+# MODELO DE PROBABILIDADES
+# ============================================================
+
+def ajuste_empates_baixos(df: pd.DataFrame) -> float:
     try:
         total = max(1, len(df))
         p00 = len(df[(df["HG"] == 0) & (df["AG"] == 0)]) / total
@@ -228,773 +359,875 @@ def correcao_empirica(df: pd.DataFrame) -> float:
     except Exception:
         return 0.0
 
-def ajuste_dc(i: int, j: int, rho: float) -> float:
-    if i == 0 and j == 0:
-        return 1.0 - rho
-    if i == 1 and j == 0:
-        return 1.0 + rho * 0.5
-    if i == 0 and j == 1:
-        return 1.0 + rho * 0.5
-    if i == 1 and j == 1:
-        return 1.0 - rho * 0.25
+
+def fator_placar_baixo(gols_casa: int, gols_fora: int, correcao: float) -> float:
+    if gols_casa == 0 and gols_fora == 0:
+        return 1.0 - correcao
+    if gols_casa == 1 and gols_fora == 0:
+        return 1.0 + (correcao * 0.5)
+    if gols_casa == 0 and gols_fora == 1:
+        return 1.0 + (correcao * 0.5)
+    if gols_casa == 1 and gols_fora == 1:
+        return 1.0 - (correcao * 0.25)
     return 1.0
 
-def precificar(df: pd.DataFrame, casa: str, fora: str) -> Tuple[float, float, Dict[str, float], float, Dict[str, int]]:
-    media_h = max(float(np.average(df["HG"], weights=df["Peso"])), 0.20)
-    media_a = max(float(np.average(df["AG"], weights=df["Peso"])), 0.20)
 
-    ch = df[df["Home"] == casa]
-    ca = df[df["Away"] == casa]
-    fh = df[df["Home"] == fora]
-    fa = df[df["Away"] == fora]
+def precificar_jogo(df: pd.DataFrame, time_casa: str, time_fora: str) -> Tuple[float, float, Dict[str, float], float, Dict[str, int]]:
+    media_casa = float(np.average(df["HG"], weights=df["Peso"]))
+    media_fora = float(np.average(df["AG"], weights=df["Peso"]))
+    media_casa = max(media_casa, 0.20)
+    media_fora = max(media_fora, 0.20)
 
-    n_ch = len(ch)
-    n_fa = len(fa)
-    n_c_total = len(ch) + len(ca)
-    n_f_total = len(fh) + len(fa)
+    casa_em_casa = df[df["Home"] == time_casa]
+    casa_fora = df[df["Away"] == time_casa]
+    fora_em_casa = df[df["Home"] == time_fora]
+    fora_fora = df[df["Away"] == time_fora]
 
-    gf_c = pd.concat([ch["HG"], ca["AG"]])
-    gs_c = pd.concat([ch["AG"], ca["HG"]])
-    pw_c = pd.concat([ch["Peso"], ca["Peso"]])
-    gf_f = pd.concat([fh["HG"], fa["AG"]])
-    gs_f = pd.concat([fh["AG"], fa["HG"]])
-    pw_f = pd.concat([fh["Peso"], fa["Peso"]])
+    n_casa_mando = len(casa_em_casa)
+    n_fora_mando = len(fora_fora)
+    n_casa_total = n_casa_mando + len(casa_fora)
+    n_fora_total = n_fora_mando + len(fora_em_casa)
 
-    att_c_g = np.average(gf_c, weights=pw_c) if len(gf_c) else media_h
-    def_c_g = np.average(gs_c, weights=pw_c) if len(gs_c) else media_a
-    att_f_g = np.average(gf_f, weights=pw_f) if len(gf_f) else media_a
-    def_f_g = np.average(gs_f, weights=pw_f) if len(gs_f) else media_h
+    gols_casa_feitos_geral = pd.concat([casa_em_casa["HG"], casa_fora["AG"]])
+    gols_casa_sofridos_geral = pd.concat([casa_em_casa["AG"], casa_fora["HG"]])
+    pesos_casa_geral = pd.concat([casa_em_casa["Peso"], casa_fora["Peso"]])
 
-    att_c_m = np.average(ch["HG"], weights=ch["Peso"]) if n_ch >= 4 else media_h
-    def_c_m = np.average(ch["AG"], weights=ch["Peso"]) if n_ch >= 4 else media_a
-    att_f_m = np.average(fa["AG"], weights=fa["Peso"]) if n_fa >= 4 else media_a
-    def_f_m = np.average(fa["HG"], weights=fa["Peso"]) if n_fa >= 4 else media_h
+    gols_fora_feitos_geral = pd.concat([fora_em_casa["HG"], fora_fora["AG"]])
+    gols_fora_sofridos_geral = pd.concat([fora_em_casa["AG"], fora_fora["HG"]])
+    pesos_fora_geral = pd.concat([fora_em_casa["Peso"], fora_fora["Peso"]])
 
-    w_c = min(0.75, n_ch / 12.0)
-    w_f = min(0.75, n_fa / 12.0)
+    ataque_casa_geral = np.average(gols_casa_feitos_geral, weights=pesos_casa_geral) if len(gols_casa_feitos_geral) else media_casa
+    defesa_casa_geral = np.average(gols_casa_sofridos_geral, weights=pesos_casa_geral) if len(gols_casa_sofridos_geral) else media_fora
+    ataque_fora_geral = np.average(gols_fora_feitos_geral, weights=pesos_fora_geral) if len(gols_fora_feitos_geral) else media_fora
+    defesa_fora_geral = np.average(gols_fora_sofridos_geral, weights=pesos_fora_geral) if len(gols_fora_sofridos_geral) else media_casa
 
-    att_c = att_c_m * w_c + att_c_g * (1.0 - w_c)
-    def_c = def_c_m * w_c + def_c_g * (1.0 - w_c)
-    att_f = att_f_m * w_f + att_f_g * (1.0 - w_f)
-    def_f = def_f_m * w_f + def_f_g * (1.0 - w_f)
+    ataque_casa_mando = np.average(casa_em_casa["HG"], weights=casa_em_casa["Peso"]) if n_casa_mando >= 4 else media_casa
+    defesa_casa_mando = np.average(casa_em_casa["AG"], weights=casa_em_casa["Peso"]) if n_casa_mando >= 4 else media_fora
+    ataque_fora_mando = np.average(fora_fora["AG"], weights=fora_fora["Peso"]) if n_fora_mando >= 4 else media_fora
+    defesa_fora_mando = np.average(fora_fora["HG"], weights=fora_fora["Peso"]) if n_fora_mando >= 4 else media_casa
 
-    k = 10.0
-    att_c = ((n_ch * att_c) + (k * media_h)) / (n_ch + k)
-    def_c = ((n_ch * def_c) + (k * media_a)) / (n_ch + k)
-    att_f = ((n_fa * att_f) + (k * media_a)) / (n_fa + k)
-    def_f = ((n_fa * def_f) + (k * media_h)) / (n_fa + k)
+    peso_casa = min(0.78, n_casa_mando / 11.0)
+    peso_fora = min(0.78, n_fora_mando / 11.0)
 
-    lambda_h = media_h * (att_c / media_h) * (def_f / media_h)
-    lambda_a = media_a * (att_f / media_a) * (def_c / media_a)
-    lambda_h = float(np.clip(lambda_h, 0.20, 3.80))
-    lambda_a = float(np.clip(lambda_a, 0.20, 3.80))
+    ataque_casa = ataque_casa_mando * peso_casa + ataque_casa_geral * (1 - peso_casa)
+    defesa_casa = defesa_casa_mando * peso_casa + defesa_casa_geral * (1 - peso_casa)
+    ataque_fora = ataque_fora_mando * peso_fora + ataque_fora_geral * (1 - peso_fora)
+    defesa_fora = defesa_fora_mando * peso_fora + defesa_fora_geral * (1 - peso_fora)
 
-    grid = 20
-    rho = correcao_empirica(df)
-    matriz = np.zeros((grid, grid))
-    for i in range(grid):
-        for j in range(grid):
-            matriz[i, j] = poisson.pmf(i, lambda_h) * poisson.pmf(j, lambda_a) * ajuste_dc(i, j, rho)
-    if matriz.sum() > 0:
-        matriz /= matriz.sum()
+    # Puxa para a média da liga quando a amostra é pequena.
+    forca_regularizacao = 8.0
+    ataque_casa = ((n_casa_mando * ataque_casa) + (forca_regularizacao * media_casa)) / (n_casa_mando + forca_regularizacao)
+    defesa_casa = ((n_casa_mando * defesa_casa) + (forca_regularizacao * media_fora)) / (n_casa_mando + forca_regularizacao)
+    ataque_fora = ((n_fora_mando * ataque_fora) + (forca_regularizacao * media_fora)) / (n_fora_mando + forca_regularizacao)
+    defesa_fora = ((n_fora_mando * defesa_fora) + (forca_regularizacao * media_casa)) / (n_fora_mando + forca_regularizacao)
 
-    p_h = float(np.tril(matriz, -1).sum())
-    p_d = float(np.diag(matriz).sum())
-    p_a = float(np.triu(matriz, 1).sum())
-    p_o25 = float(matriz[np.add.outer(np.arange(grid), np.arange(grid)) >= 3].sum())
-    p_btts = float(matriz[1:, 1:].sum())
-    sem_empate = p_h + p_a
+    forca_ataque_casa = ataque_casa / media_casa
+    forca_defesa_casa = defesa_casa / media_fora
+    forca_ataque_fora = ataque_fora / media_fora
+    forca_defesa_fora = defesa_fora / media_casa
+
+    gols_esperados_casa = float(np.clip(media_casa * forca_ataque_casa * forca_defesa_fora, 0.20, 4.20))
+    gols_esperados_fora = float(np.clip(media_fora * forca_ataque_fora * forca_defesa_casa, 0.20, 4.20))
+
+    tamanho = 20
+    matriz = np.zeros((tamanho, tamanho))
+    correcao = ajuste_empates_baixos(df)
+    for i in range(tamanho):
+        for j in range(tamanho):
+            base = poisson.pmf(i, gols_esperados_casa) * poisson.pmf(j, gols_esperados_fora)
+            matriz[i, j] = base * fator_placar_baixo(i, j, correcao)
+
+    soma = matriz.sum()
+    if soma > 0:
+        matriz = matriz / soma
+
+    p_casa = float(np.tril(matriz, -1).sum())
+    p_empate = float(np.diag(matriz).sum())
+    p_fora = float(np.triu(matriz, 1).sum())
+    p_mais_25 = float(matriz[np.add.outer(np.arange(tamanho), np.arange(tamanho)) >= 3].sum())
+    p_ambos = float(matriz[1:, 1:].sum())
 
     probs = {
-        "Vitória Casa": p_h,
-        "Empate": p_d,
-        "Vitória Fora": p_a,
-        "Mais de 2.5 gols": p_o25,
-        "Under 2.5": 1.0 - p_o25,
-        "Ambos marcam": p_btts,
-        "BTTS_No": 1.0 - p_btts,
-        "Casa ou Empate": p_h + p_d,
-        "Fora ou Empate": p_a + p_d,
-        "Empate Anula Casa": p_h / sem_empate if sem_empate > 0 else 0.0,
-        "Empate Anula Fora": p_a / sem_empate if sem_empate > 0 else 0.0,
+        "Vitória Casa": p_casa,
+        "Empate": p_empate,
+        "Vitória Fora": p_fora,
+        "Mais de 2.5 gols": p_mais_25,
+        "Menos de 2.5 gols": 1.0 - p_mais_25,
+        "Ambos marcam - Sim": p_ambos,
+        "Ambos marcam - Não": 1.0 - p_ambos,
+        "Casa ou Empate": p_casa + p_empate,
+        "Fora ou Empate": p_fora + p_empate,
     }
 
-    var_c = float(np.var(gf_c)) if len(gf_c) > 1 else 1.5
-    var_f = float(np.var(gf_f)) if len(gf_f) > 1 else 1.5
-    estabilidade = np.clip(1.0 - (((var_c + var_f) / 2.0) / 5.0), 0.0, 1.0)
-    volume_mando = min(n_ch, n_fa) / 14.0
-    volume_total = min(n_c_total, n_f_total) / 26.0
-    equilibrio = min(n_ch, n_fa) / max(1, max(n_ch, n_fa))
-    conf = 55 * np.clip(volume_mando, 0, 1) + 20 * np.clip(volume_total, 0, 1) + 15 * estabilidade + 10 * equilibrio
-    conf = float(np.clip(conf, 0.0, 100.0))
+    sem_empate = p_casa + p_fora
+    probs["Empate anula - Casa"] = p_casa / sem_empate if sem_empate > 0 else 0.0
+    probs["Empate anula - Fora"] = p_fora / sem_empate if sem_empate > 0 else 0.0
 
-    amostras = {
-        "casa_mando": n_ch, "fora_mando": n_fa,
-        "casa_total": n_c_total, "fora_total": n_f_total
+    variancia_casa = float(np.var(gols_casa_feitos_geral)) if len(gols_casa_feitos_geral) > 1 else 1.5
+    variancia_fora = float(np.var(gols_fora_feitos_geral)) if len(gols_fora_feitos_geral) > 1 else 1.5
+    estabilidade = np.clip(1.0 - (((variancia_casa + variancia_fora) / 2.0) / 5.5), 0.0, 1.0)
+    volume_mando = np.clip(min(n_casa_mando, n_fora_mando) / 12.0, 0.0, 1.0)
+    volume_total = np.clip(min(n_casa_total, n_fora_total) / 24.0, 0.0, 1.0)
+    equilibrio = min(n_casa_mando, n_fora_mando) / max(1, max(n_casa_mando, n_fora_mando))
+
+    confianca = 50 * volume_mando + 20 * volume_total + 20 * estabilidade + 10 * equilibrio
+    confianca = float(np.clip(confianca, 0.0, 100.0))
+
+    amostra = {
+        "casa_mando": n_casa_mando,
+        "fora_mando": n_fora_mando,
+        "casa_total": n_casa_total,
+        "fora_total": n_fora_total,
     }
-    return lambda_h, lambda_a, probs, conf, amostras
+    return gols_esperados_casa, gols_esperados_fora, probs, confianca, amostra
 
-# =========================================================
-# ODDS MANUAL E API
-# =========================================================
+# ============================================================
+# COTAÇÕES E PROBABILIDADE DO MERCADO
+# ============================================================
 
-def linhas_manuais() -> Dict[str, LinhaMercado]:
-    st.markdown("### 3) Preencha as cotações")
-    st.caption(
-        "Preencha apenas cotações reais da casa onde você vai apostar. "
-        "Quando preencher os dois lados de um mercado, o sistema tira a margem. "
-        "Quando preencher só um lado, ele usa uma leitura mais dura para evitar entrada falsa."
-    )
+def retirar_margem(cotacoes: Dict[str, float], grupo: List[str]) -> Dict[str, float]:
+    if not all(m in cotacoes and cotacoes[m] and cotacoes[m] > 1.01 for m in grupo):
+        return {}
+    inversos = {m: 1 / cotacoes[m] for m in grupo}
+    total = sum(inversos.values())
+    if total <= 0:
+        return {}
+    return {m: inversos[m] / total for m in grupo}
 
-    with st.expander("Cotações manuais", expanded=True):
-        st.markdown("**Resultado do jogo**")
+
+def montar_linhas_manuais() -> Dict[str, Dict[str, float]]:
+    st.markdown("### Preencha as cotações reais")
+    st.caption("Pode preencher só os mercados que você quer analisar. Quanto mais completo, melhor.")
+
+    cotacoes = {}
+
+    with st.expander("Resultado do jogo", expanded=True):
         c1, c2, c3 = st.columns(3)
-        odd_casa = odd_input("Vitória casa", "vitoria_casa", c1)
-        odd_empate = odd_input("Empate", "empate", c2)
-        odd_fora = odd_input("Vitória fora", "vitoria_fora", c3)
+        with c1:
+            valor = ler_cotacao("Vitória casa", "cot_vitoria_casa")
+            if valor: cotacoes["Vitória Casa"] = valor
+        with c2:
+            valor = ler_cotacao("Empate", "cot_empate")
+            if valor: cotacoes["Empate"] = valor
+        with c3:
+            valor = ler_cotacao("Vitória fora", "cot_vitoria_fora")
+            if valor: cotacoes["Vitória Fora"] = valor
 
-        st.markdown("**Gols**")
-        c4, c5 = st.columns(2)
-        odd_mais25 = odd_input("Mais de 2.5 gols", "mais_25", c4)
-        odd_menos25 = odd_input("Menos de 2.5 gols", "menos_25", c5)
+    with st.expander("Gols", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            valor = ler_cotacao("Mais de 2.5 gols", "cot_mais25")
+            if valor: cotacoes["Mais de 2.5 gols"] = valor
+        with c2:
+            valor = ler_cotacao("Menos de 2.5 gols", "cot_menos25")
+            if valor: cotacoes["Menos de 2.5 gols"] = valor
 
-        st.markdown("**Ambos marcam**")
-        c6, c7 = st.columns(2)
-        odd_ambos_sim = odd_input("Ambos marcam - Sim", "ambos_sim", c6)
-        odd_ambos_nao = odd_input("Ambos marcam - Não", "ambos_nao", c7)
+    with st.expander("Ambos marcam", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            valor = ler_cotacao("Ambos marcam - Sim", "cot_ambos_sim")
+            if valor: cotacoes["Ambos marcam - Sim"] = valor
+        with c2:
+            valor = ler_cotacao("Ambos marcam - Não", "cot_ambos_nao")
+            if valor: cotacoes["Ambos marcam - Não"] = valor
 
-        st.markdown("**Proteções**")
-        c8, c9 = st.columns(2)
-        odd_casa_empate = odd_input("Casa ou empate", "casa_empate", c8)
-        odd_fora_empate = odd_input("Fora ou empate", "fora_empate", c9)
-        c10, c11 = st.columns(2)
-        odd_anula_casa = odd_input("Empate anula - Casa", "anula_casa", c10)
-        odd_anula_fora = odd_input("Empate anula - Fora", "anula_fora", c11)
+    with st.expander("Proteções", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            valor = ler_cotacao("Casa ou empate", "cot_casa_empate")
+            if valor: cotacoes["Casa ou Empate"] = valor
+        with c2:
+            valor = ler_cotacao("Fora ou empate", "cot_fora_empate")
+            if valor: cotacoes["Fora ou Empate"] = valor
+        c3, c4 = st.columns(2)
+        with c3:
+            valor = ler_cotacao("Empate anula - Casa", "cot_dnb_casa")
+            if valor: cotacoes["Empate anula - Casa"] = valor
+        with c4:
+            valor = ler_cotacao("Empate anula - Fora", "cot_dnb_fora")
+            if valor: cotacoes["Empate anula - Fora"] = valor
 
-    odds_raw = {
-        "Vitória Casa": odd_casa,
-        "Empate": odd_empate,
-        "Vitória Fora": odd_fora,
-        "Mais de 2.5 gols": odd_mais25,
-        "Under 2.5": odd_menos25,
-        "Ambos marcam": odd_ambos_sim,
-        "BTTS_No": odd_ambos_nao,
-        "Casa ou Empate": odd_casa_empate,
-        "Fora ou Empate": odd_fora_empate,
-        "Empate Anula Casa": odd_anula_casa,
-        "Empate Anula Fora": odd_anula_fora,
-    }
-    odds = {m: o for m, o in odds_raw.items() if o is not None}
-    probs: Dict[str, float] = {}
-
+    prob_mercado = {}
     grupos = [
         ["Vitória Casa", "Empate", "Vitória Fora"],
-        ["Mais de 2.5 gols", "Under 2.5"],
-        ["Ambos marcam", "BTTS_No"],
-        ["Empate Anula Casa", "Empate Anula Fora"],
+        ["Mais de 2.5 gols", "Menos de 2.5 gols"],
+        ["Ambos marcam - Sim", "Ambos marcam - Não"],
+        ["Empate anula - Casa", "Empate anula - Fora"],
     ]
     for grupo in grupos:
-        p_grupo = normalizar_overround(odds, grupo, exigir_completo=True)
-        if p_grupo:
-            probs.update(p_grupo)
+        limpo = retirar_margem(cotacoes, grupo)
+        if limpo:
+            prob_mercado.update(limpo)
         else:
             for m in grupo:
-                if m in odds:
-                    probs[m] = prob_implicita_conservadora(odds[m])
+                if m in cotacoes:
+                    prob_mercado[m] = 1 / cotacoes[m]
 
+    # Dupla chance não é par oposto perfeito. Usa 1/cotação para não maquiar.
     for m in ["Casa ou Empate", "Fora ou Empate"]:
-        if m in odds:
-            probs[m] = prob_implicita_conservadora(odds[m])
+        if m in cotacoes:
+            prob_mercado[m] = 1 / cotacoes[m]
 
-    return {m: LinhaMercado(m, odds[m], probs[m], "Manual") for m in odds if probs.get(m, 0) > 0}
+    return {m: {"cotacao": cotacoes[m], "prob_mercado": prob_mercado[m], "origem": "Manual"} for m in cotacoes if m in prob_mercado}
 
-@st.cache_data(ttl=300, show_spinner=False)
-def odds_api(api_key: str, sport_key: str) -> Optional[List[dict]]:
-    if not api_key.strip():
-        return None
-    try:
-        url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
-        params = {
-            "apiKey": api_key,
-            "regions": "eu,uk,us",
-            "markets": "h2h,totals,btts",
-            "oddsFormat": "decimal",
-            "dateFormat": "iso",
-        }
-        r = requests.get(url, params=params, timeout=20)
-        if r.status_code != 200:
-            return None
-        return r.json()
-    except Exception:
-        return None
 
-def mediana(pool: List[float]) -> Optional[float]:
-    vals = [float(x) for x in pool if x and np.isfinite(x) and x > 1.01]
-    return float(np.median(vals)) if vals else None
-
-def linhas_api(jogo: dict) -> Dict[str, LinhaMercado]:
-    pools = {m: [] for m in [
-        "Vitória Casa", "Empate", "Vitória Fora",
-        "Mais de 2.5 gols", "Under 2.5", "Ambos marcam", "BTTS_No"
+def montar_linhas_api(jogo: dict) -> Dict[str, Dict[str, float]]:
+    grupos = {m: [] for m in [
+        "Vitória Casa", "Empate", "Vitória Fora", "Mais de 2.5 gols",
+        "Menos de 2.5 gols", "Ambos marcam - Sim", "Ambos marcam - Não"
     ]}
-    bookies = {m: set() for m in pools}
 
-    for bk in jogo.get("bookmakers", []):
-        bk_key = str(bk.get("key", "")).lower()
-        if bk_key in EXCHANGES_BLOQUEADAS:
+    for casa in jogo.get("bookmakers", []):
+        chave_casa = casa.get("key", "").lower()
+        if chave_casa in CASAS_BLOQUEADAS:
             continue
-        for market in bk.get("markets", []):
-            key = market.get("key")
-            for o in market.get("outcomes", []):
-                odd = safe_float(o.get("price"))
-                if odd is None:
+        for mercado in casa.get("markets", []):
+            chave = mercado.get("key")
+            for item in mercado.get("outcomes", []):
+                cotacao = cotacao_valida(item.get("price"))
+                if cotacao is None:
                     continue
-                nome = o.get("name")
-                if key == "h2h":
+                nome = item.get("name")
+                if chave == "h2h":
                     if nome == jogo.get("home_team"):
-                        pools["Vitória Casa"].append(odd); bookies["Vitória Casa"].add(bk_key)
+                        grupos["Vitória Casa"].append(cotacao)
                     elif nome == "Draw":
-                        pools["Empate"].append(odd); bookies["Empate"].add(bk_key)
+                        grupos["Empate"].append(cotacao)
                     elif nome == jogo.get("away_team"):
-                        pools["Vitória Fora"].append(odd); bookies["Vitória Fora"].add(bk_key)
-                elif key == "totals":
+                        grupos["Vitória Fora"].append(cotacao)
+                elif chave == "totals":
                     try:
-                        if abs(float(o.get("point", 0)) - 2.5) > 1e-9:
+                        if abs(float(item.get("point", 0)) - 2.5) > 1e-9:
                             continue
                     except Exception:
                         continue
                     if nome == "Over":
-                        pools["Mais de 2.5 gols"].append(odd); bookies["Mais de 2.5 gols"].add(bk_key)
+                        grupos["Mais de 2.5 gols"].append(cotacao)
                     elif nome == "Under":
-                        pools["Under 2.5"].append(odd); bookies["Under 2.5"].add(bk_key)
-                elif key == "btts":
+                        grupos["Menos de 2.5 gols"].append(cotacao)
+                elif chave == "btts":
                     if nome == "Yes":
-                        pools["Ambos marcam"].append(odd); bookies["Ambos marcam"].add(bk_key)
+                        grupos["Ambos marcam - Sim"].append(cotacao)
                     elif nome == "No":
-                        pools["BTTS_No"].append(odd); bookies["BTTS_No"].add(bk_key)
+                        grupos["Ambos marcam - Não"].append(cotacao)
 
-    odds = {m: mediana(v) for m, v in pools.items()}
-    odds = {m: o for m, o in odds.items() if o is not None}
-    probs = {}
-    probs.update(normalizar_overround(odds, ["Vitória Casa", "Empate", "Vitória Fora"], True))
-    probs.update(normalizar_overround(odds, ["Mais de 2.5 gols", "Under 2.5"], True))
-    probs.update(normalizar_overround(odds, ["Ambos marcam", "BTTS_No"], True))
+    cotacoes = {}
+    for m, lista in grupos.items():
+        lista = [x for x in lista if x and x > 1.01]
+        if lista:
+            cotacoes[m] = float(np.median(lista))
 
-    linhas = {}
-    for m, odd in odds.items():
-        if probs.get(m, 0) > 0:
-            linhas[m] = LinhaMercado(m, odd, probs[m], "API real", len(bookies[m]))
-    return linhas
+    prob_mercado = {}
+    for grupo in [
+        ["Vitória Casa", "Empate", "Vitória Fora"],
+        ["Mais de 2.5 gols", "Menos de 2.5 gols"],
+        ["Ambos marcam - Sim", "Ambos marcam - Não"],
+    ]:
+        prob_mercado.update(retirar_margem(cotacoes, grupo))
 
-# =========================================================
-# FILTRO, KELLY E SELEÇÃO
-# =========================================================
+    return {m: {"cotacao": cotacoes[m], "prob_mercado": prob_mercado[m], "origem": "API"} for m in cotacoes if m in prob_mercado}
 
-def margem_erro(conf: float, mercado: str, odd: float) -> float:
-    base = 0.012 + ((100.0 - conf) / 100.0) * 0.050
-    if mercado == "Empate" or odd >= 3.0:
-        base += 0.008
-    if odd >= 4.0:
-        base += 0.012
-    return float(np.clip(base, 0.012, 0.080))
+# ============================================================
+# AVALIAÇÃO DAS ENTRADAS
+# ============================================================
 
-def limite_div(odd: float) -> float:
-    if odd <= 1.65:
-        return 0.080
-    if odd <= 2.20:
-        return 0.105
-    if odd <= 3.20:
-        return 0.130
-    if odd <= 5.00:
-        return 0.155
-    return 0.170
+def nome_mercado(mercado: str, time_casa: str, time_fora: str) -> str:
+    mapa = {
+        "Vitória Casa": f"Vitória {time_casa}",
+        "Vitória Fora": f"Vitória {time_fora}",
+        "Empate": "Empate",
+        "Mais de 2.5 gols": "Mais de 2.5 gols",
+        "Menos de 2.5 gols": "Menos de 2.5 gols",
+        "Ambos marcam - Sim": "Ambos marcam - Sim",
+        "Ambos marcam - Não": "Ambos marcam - Não",
+        "Casa ou Empate": f"{time_casa} ou empate",
+        "Fora ou Empate": f"{time_fora} ou empate",
+        "Empate anula - Casa": f"Empate anula — {time_casa}",
+        "Empate anula - Fora": f"Empate anula — {time_fora}",
+    }
+    return mapa.get(mercado, mercado)
 
-def kelly_frac(prob: float, odd: float, fracao: float, teto: float) -> float:
-    b = odd - 1.0
-    if b <= 0:
+
+def desconto_de_segurança(confianca: float, cotacao: float) -> float:
+    desconto = 0.008 + ((100 - confianca) / 100) * 0.028
+    if cotacao >= 3.00:
+        desconto += 0.010
+    if cotacao >= 5.00:
+        desconto += 0.010
+    return float(np.clip(desconto, 0.008, 0.060))
+
+
+def calcular_percentual_entrada(prob_modelo: float, cotacao: float, confianca: float, agressividade: float, maximo: float) -> float:
+    ganho = cotacao - 1.0
+    if ganho <= 0:
         return 0.0
-    k = ((b * prob) - (1.0 - prob)) / b
-    if k <= 0:
+    valor = (prob_modelo * cotacao) - 1.0
+    if valor <= 0:
         return 0.0
-    return float(min(k * fracao, teto))
 
-def avaliar(
-    probs_modelo: Dict[str, float], linhas: Dict[str, LinhaMercado], conf: float, banca: float,
-    conf_min: float, ev_min: float, ev_cons_min: float, edge_min: float,
-    kelly_f: float, stake_max: float
-) -> List[ResultadoSinal]:
-    res = []
-    for mercado, linha in linhas.items():
-        if mercado not in probs_modelo:
+    base = (valor / ganho) * agressividade
+    base *= np.clip(confianca / 85.0, 0.45, 1.15)
+
+    if cotacao >= 3.00:
+        base *= 0.70
+    if cotacao >= 5.00:
+        base *= 0.55
+
+    # Se foi aprovado, evita entrada ridiculamente pequena.
+    if base > 0:
+        base = max(base, 0.004)
+
+    return float(np.clip(base, 0.0, maximo))
+
+
+def avaliar_mercados(
+    linhas: Dict[str, Dict[str, float]],
+    probs_modelo: Dict[str, float],
+    confianca: float,
+    banca_atual: float,
+    minimo_confianca: float,
+    minimo_valor: float,
+    minimo_vantagem: float,
+    agressividade: float,
+    maximo_por_aposta: float,
+    maximo_por_jogo: float,
+    maximo_entradas: int,
+    cotacao_minima: float,
+    cotacao_maxima: float,
+) -> List[dict]:
+    resultados = []
+
+    for mercado in ORDEM_MERCADOS:
+        if mercado not in linhas or mercado not in probs_modelo:
             continue
-        p = float(probs_modelo[mercado])
-        odd = float(linha.odd)
-        p_m = float(linha.prob_mercado)
-        p_cons = max(0.0, p - margem_erro(conf, mercado, odd))
-        ev = p * odd - 1.0
-        evc = p_cons * odd - 1.0
-        edge = p - p_m
-        div = abs(edge)
-        st_frac = kelly_frac(p_cons, odd, kelly_f, stake_max)
+        cotacao = float(linhas[mercado]["cotacao"])
+        prob_modelo = float(probs_modelo[mercado])
+        prob_mercado = float(linhas[mercado]["prob_mercado"])
+        cotacao_justa = np.inf if prob_modelo <= 0 else 1 / prob_modelo
+        valor_esperado = (prob_modelo * cotacao) - 1
+        vantagem = prob_modelo - prob_mercado
+        desc = desconto_de_segurança(confianca, cotacao)
+        prob_segura = max(0.0, prob_modelo - desc)
+        valor_seguro = (prob_segura * cotacao) - 1
 
         motivos = []
-        if conf < conf_min:
-            motivos.append(f"confiança baixa {conf:.1f}%")
-        if ev < ev_min:
-            motivos.append(f"valor esperado baixo {ev*100:.1f}%")
-        if evc < ev_cons_min:
-            motivos.append(f"valor seguro baixo {evc*100:.1f}%")
-        if edge < edge_min:
-            motivos.append(f"vantagem insuficiente {edge*100:.1f}%")
-        if div > limite_div(odd):
-            motivos.append(f"divergência excessiva {div*100:.1f}%")
-        if st_frac <= 0:
-            motivos.append("cálculo da banca zerado")
+        aprovado = True
 
-        ok = len(motivos) == 0
-        res.append(ResultadoSinal(
-            mercado=mercado,
-            prob_modelo=p,
-            prob_conservadora=p_cons,
-            prob_mercado=p_m,
-            odd_justa=(1.0 / p if p > 0 else np.inf),
-            odd_mercado=odd,
-            ev_bruto=ev,
-            ev_conservador=evc,
-            edge=edge,
-            divergencia=div,
-            confianca=conf,
-            stake_frac=st_frac if ok else 0.0,
-            stake_valor=banca * st_frac if ok else 0.0,
-            operavel=ok,
-            motivo="OK" if ok else "; ".join(motivos),
-            origem_odd=linha.origem,
-        ))
-    return sorted(res, key=lambda x: (x.operavel, x.ev_conservador, x.edge), reverse=True)
+        if cotacao < cotacao_minima or cotacao > cotacao_maxima:
+            aprovado = False
+            motivos.append("cotação fora da faixa escolhida")
+        if confianca < minimo_confianca:
+            aprovado = False
+            motivos.append("poucos dados confiáveis para este jogo")
+        if valor_esperado < minimo_valor:
+            aprovado = False
+            motivos.append("valor esperado insuficiente")
+        if vantagem < minimo_vantagem:
+            aprovado = False
+            motivos.append("vantagem pequena contra o mercado")
 
-def selecionar(resultados: List[ResultadoSinal], max_por_jogo: int, exposicao_max: float, banca: float) -> List[ResultadoSinal]:
-    ops = [r for r in resultados if r.operavel]
-    ops = sorted(ops, key=lambda r: (r.ev_conservador, r.edge, r.confianca), reverse=True)
+        # Não trava por divergência alta. Divergência alta pode ser justamente oportunidade.
+        # Apenas reduz o tamanho da entrada quando a margem de segurança ficar ruim.
+        if cotacao >= 3.00 and valor_seguro < -0.06:
+            aprovado = False
+            motivos.append("cotação alta com margem de segurança ruim")
+        elif valor_seguro < -0.10:
+            aprovado = False
+            motivos.append("margem de segurança muito ruim")
+
+        percentual = 0.0
+        if aprovado:
+            percentual = calcular_percentual_entrada(
+                prob_modelo=prob_modelo,
+                cotacao=cotacao,
+                confianca=confianca,
+                agressividade=agressividade,
+                maximo=maximo_por_aposta,
+            )
+            if percentual <= 0:
+                aprovado = False
+                motivos.append("valor positivo, mas pequeno demais para entrada")
+
+        resultados.append({
+            "mercado": mercado,
+            "cotacao": cotacao,
+            "prob_modelo": prob_modelo,
+            "prob_mercado": prob_mercado,
+            "prob_segura": prob_segura,
+            "cotacao_justa": cotacao_justa,
+            "valor_esperado": valor_esperado,
+            "valor_seguro": valor_seguro,
+            "vantagem": vantagem,
+            "confianca": confianca,
+            "apostar": aprovado,
+            "percentual": percentual if aprovado else 0.0,
+            "entrada_reais": banca_atual * percentual if aprovado else 0.0,
+            "motivo": "Boa oportunidade dentro dos filtros atuais." if aprovado else "; ".join(motivos),
+            "origem": linhas[mercado]["origem"],
+        })
+
+    # Organiza os aprovados primeiro e limita pelo total máximo por jogo.
+    aprovados = [r for r in resultados if r["apostar"]]
+    aprovados = sorted(aprovados, key=lambda r: (r["valor_seguro"], r["valor_esperado"], r["vantagem"]), reverse=True)
+
     escolhidos = []
-    exp = 0.0
-    for r in ops:
-        if len(escolhidos) >= max_por_jogo:
-            break
-        if exp + r.stake_frac > exposicao_max:
+    soma = 0.0
+    for r in aprovados:
+        if len(escolhidos) >= maximo_entradas:
+            r["apostar"] = False
+            r["percentual"] = 0.0
+            r["entrada_reais"] = 0.0
+            r["motivo"] = "ficou fora do limite de entradas por jogo"
             continue
-        r.stake_valor = banca * r.stake_frac
+        if soma + r["percentual"] > maximo_por_jogo:
+            # Tenta reduzir para caber, se ainda ficar uma entrada útil.
+            restante = maximo_por_jogo - soma
+            if restante >= 0.004:
+                r["percentual"] = restante
+                r["entrada_reais"] = banca_atual * restante
+                escolhidos.append(r)
+                soma += restante
+            else:
+                r["apostar"] = False
+                r["percentual"] = 0.0
+                r["entrada_reais"] = 0.0
+                r["motivo"] = "ficou fora do limite total de exposição no jogo"
+            continue
         escolhidos.append(r)
-        exp += r.stake_frac
-    return escolhidos
+        soma += r["percentual"]
 
-# =========================================================
+    escolhidos_ids = {id(r) for r in escolhidos}
+    for r in resultados:
+        if r["apostar"] and id(r) not in escolhidos_ids:
+            r["apostar"] = False
+            r["percentual"] = 0.0
+            r["entrada_reais"] = 0.0
+            if "limite" not in r["motivo"]:
+                r["motivo"] = "ficou fora dos limites de risco do jogo"
+
+    return sorted(resultados, key=lambda r: (r["apostar"], r["valor_esperado"]), reverse=True)
+
+# ============================================================
 # AUDITORIA
-# =========================================================
+# ============================================================
 
-def load_audit() -> pd.DataFrame:
-    if not AUDIT_FILE.exists():
-        return pd.DataFrame(columns=AUDIT_COLS)
+def garantir_auditoria() -> None:
+    os.makedirs("logs", exist_ok=True)
+    if not os.path.exists(CAMINHO_AUDITORIA):
+        pd.DataFrame(columns=COLUNAS_AUDITORIA).to_csv(CAMINHO_AUDITORIA, index=False)
+
+
+def carregar_auditoria() -> pd.DataFrame:
+    garantir_auditoria()
     try:
-        df = pd.read_csv(AUDIT_FILE)
-        for c in AUDIT_COLS:
+        df = pd.read_csv(CAMINHO_AUDITORIA)
+        for c in COLUNAS_AUDITORIA:
             if c not in df.columns:
                 df[c] = np.nan
-        return df[AUDIT_COLS]
+        return df[COLUNAS_AUDITORIA]
     except Exception:
-        return pd.DataFrame(columns=AUDIT_COLS)
+        return pd.DataFrame(columns=COLUNAS_AUDITORIA)
 
-def save_audit(df: pd.DataFrame) -> None:
-    for c in AUDIT_COLS:
-        if c not in df.columns:
-            df[c] = np.nan
-    df[AUDIT_COLS].to_csv(AUDIT_FILE, index=False)
 
-def calcular_resultado(status: str, stake: float, odd: float, cashout: float = 0.0) -> float:
-    if status in ["Ganhou", "Green"]:
-        return stake * (odd - 1.0)
-    if status in ["Perdeu", "Red"]:
-        return -stake
-    if status in ["Anulada", "Void", "Pendente"]:
-        return 0.0
-    if status in ["Saída antecipada", "Cashout"]:
-        return cashout - stake
-    return 0.0
+def salvar_auditoria(df: pd.DataFrame) -> None:
+    garantir_auditoria()
+    df[COLUNAS_AUDITORIA].to_csv(CAMINHO_AUDITORIA, index=False)
 
-def banca_atual(df_audit: pd.DataFrame, banca_inicial: float) -> float:
-    if df_audit.empty:
+
+def banca_pela_auditoria(banca_inicial: float, auditoria: pd.DataFrame) -> float:
+    if auditoria.empty:
         return banca_inicial
-    fechadas = df_audit[df_audit["status"].isin(["Ganhou", "Perdeu", "Anulada", "Saída antecipada", "Green", "Red", "Void", "Cashout"])]
-    total = pd.to_numeric(fechadas["resultado_reais"], errors="coerce").fillna(0).sum()
-    return float(banca_inicial + total)
+    resultados = pd.to_numeric(auditoria["Resultado R$"], errors="coerce").fillna(0.0)
+    return float(banca_inicial + resultados.sum())
 
-def metricas_auditoria(df_audit: pd.DataFrame, banca_inicial: float) -> Dict[str, float]:
-    if df_audit.empty:
-        return {"entradas": 0, "fechadas": 0, "lucro": 0.0, "roi": 0.0, "clv": 0.0, "banca": banca_inicial}
-    fechadas = df_audit[df_audit["status"].isin(["Ganhou", "Perdeu", "Anulada", "Saída antecipada", "Green", "Red", "Void", "Cashout"])]
-    lucro = pd.to_numeric(fechadas["resultado_reais"], errors="coerce").fillna(0).sum()
-    clv = pd.to_numeric(df_audit["clv_pct"], errors="coerce").dropna()
-    return {
-        "entradas": len(df_audit),
-        "fechadas": len(fechadas),
-        "lucro": float(lucro),
-        "roi": float((lucro / banca_inicial) * 100.0) if banca_inicial > 0 else 0.0,
-        "clv": float(clv.mean()) if len(clv) else 0.0,
-        "banca": banca_inicial + float(lucro),
+
+def registrar_entrada(liga: str, data_jogo: date, jogo: str, casa: str, item: dict, banca_atual: float, observacao: str = "") -> None:
+    auditoria = carregar_auditoria()
+    novo = {
+        "ID": str(uuid.uuid4())[:8],
+        "Data registro": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "Data jogo": data_jogo.strftime("%d/%m/%Y") if isinstance(data_jogo, date) else str(data_jogo),
+        "Liga": liga,
+        "Jogo": jogo,
+        "Casa": casa,
+        "Mercado": item["nome_exibicao"],
+        "Cotação entrada": round(item["cotacao"], 3),
+        "Cotação fechamento": np.nan,
+        "Vantagem fechamento %": np.nan,
+        "Entrada %": round(item["percentual"] * 100, 3),
+        "Entrada R$": round(item["entrada_reais"], 2),
+        "Banca antes": round(banca_atual, 2),
+        "Banca depois": np.nan,
+        "Probabilidade modelo %": round(item["prob_modelo"] * 100, 2),
+        "Probabilidade mercado %": round(item["prob_mercado"] * 100, 2),
+        "Cotação justa": round(item["cotacao_justa"], 3) if np.isfinite(item["cotacao_justa"]) else np.nan,
+        "Valor esperado %": round(item["valor_esperado"] * 100, 2),
+        "Confiança %": round(item["confianca"], 2),
+        "Status": "Pendente",
+        "Resultado R$": 0.0,
+        "Observações": observacao,
     }
+    auditoria = pd.concat([auditoria, pd.DataFrame([novo])], ignore_index=True)
+    salvar_auditoria(auditoria)
 
-def auditoria_para_tela(df: pd.DataFrame) -> pd.DataFrame:
-    """Mostra a auditoria com nomes simples, em português brasileiro."""
-    if df.empty:
-        return df.copy()
-    cols = [
-        "id", "data_registro", "data_evento", "liga", "jogo", "mercado", "casa",
-        "odd_entrada", "odd_fechamento", "clv_pct", "stake_pct", "stake_reais",
-        "banca_antes", "banca_depois", "prob_modelo", "prob_conservadora",
-        "prob_mercado", "ev_bruto", "ev_conservador", "edge", "confianca",
-        "status", "resultado_reais", "observacao"
-    ]
-    cols = [c for c in cols if c in df.columns]
-    saida = df[cols].copy()
-    nomes = {
-        "id": "ID",
-        "data_registro": "Registrada em",
-        "data_evento": "Data do jogo",
-        "liga": "Liga",
-        "jogo": "Jogo",
-        "mercado": "Mercado",
-        "casa": "Casa",
-        "odd_entrada": "Cotação de entrada",
-        "odd_fechamento": "Cotação de fechamento",
-        "clv_pct": "Vantagem no fechamento %",
-        "stake_pct": "Entrada %",
-        "stake_reais": "Entrada R$",
-        "banca_antes": "Banca antes",
-        "banca_depois": "Banca depois",
-        "prob_modelo": "Probabilidade do sistema",
-        "prob_conservadora": "Probabilidade segura",
-        "prob_mercado": "Probabilidade do mercado",
-        "ev_bruto": "Valor esperado",
-        "ev_conservador": "Valor esperado seguro",
-        "edge": "Vantagem contra mercado",
-        "confianca": "Confiança",
-        "status": "Status",
-        "resultado_reais": "Resultado R$",
-        "observacao": "Observação",
-    }
-    return saida.rename(columns=nomes)
 
-def nova_linha_auditoria(
-    liga: str, jogo: str, casa: str, fora: str, sinal: ResultadoSinal,
-    casa_apostas: str, banca_usada: float, data_evento, observacao: str = ""
-) -> Dict[str, object]:
-    return {
-        "id": str(uuid.uuid4())[:8],
-        "data_registro": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "data_evento": str(data_evento),
-        "liga": liga,
-        "jogo": jogo,
-        "mandante": casa,
-        "visitante": fora,
-        "mercado": sinal.mercado,
-        "casa": casa_apostas,
-        "odd_entrada": sinal.odd_mercado,
-        "odd_fechamento": np.nan,
-        "clv_pct": np.nan,
-        "stake_pct": sinal.stake_frac * 100.0,
-        "stake_reais": sinal.stake_valor,
-        "banca_antes": banca_usada,
-        "banca_depois": np.nan,
-        "prob_modelo": sinal.prob_modelo,
-        "prob_conservadora": sinal.prob_conservadora,
-        "prob_mercado": sinal.prob_mercado,
-        "ev_bruto": sinal.ev_bruto,
-        "ev_conservador": sinal.ev_conservador,
-        "edge": sinal.edge,
-        "confianca": sinal.confianca,
-        "status": "Pendente",
-        "resultado_reais": 0.0,
-        "observacao": observacao,
-    }
+def fechar_entrada(id_entrada: str, status: str, cotacao_fechamento: Optional[float], cashout: Optional[float], observacao: str) -> None:
+    auditoria = carregar_auditoria()
+    idx_lista = auditoria.index[auditoria["ID"].astype(str) == str(id_entrada)].tolist()
+    if not idx_lista:
+        return
+    idx = idx_lista[0]
+    entrada = float(pd.to_numeric(auditoria.loc[idx, "Entrada R$"], errors="coerce") or 0)
+    cotacao_entrada = float(pd.to_numeric(auditoria.loc[idx, "Cotação entrada"], errors="coerce") or 0)
+    banca_antes = float(pd.to_numeric(auditoria.loc[idx, "Banca antes"], errors="coerce") or 0)
 
-# =========================================================
-# UI PRINCIPAL
-# =========================================================
+    if status == "Ganhou":
+        resultado = entrada * (cotacao_entrada - 1)
+    elif status == "Perdeu":
+        resultado = -entrada
+    elif status == "Anulada":
+        resultado = 0.0
+    elif status == "Encerrada antes":
+        resultado = (cashout or 0.0) - entrada
+    else:
+        resultado = 0.0
 
-st.title("TEX STATISTICS PRO 14.2")
-st.caption("Motor quantitativo com banca dinâmica, limite de 3% da banca atual e auditoria real da vantagem sobre o fechamento.")
+    vantagem_fechamento = np.nan
+    if cotacao_fechamento and cotacao_fechamento > 1.01 and cotacao_entrada > 1.01:
+        vantagem_fechamento = ((cotacao_entrada / cotacao_fechamento) - 1) * 100
 
-# Carrega auditoria cedo para calcular banca dinâmica
-banca_inicial_default = 1000.0
-df_audit = load_audit()
+    auditoria.loc[idx, "Status"] = status
+    auditoria.loc[idx, "Cotação fechamento"] = cotacao_fechamento if cotacao_fechamento else np.nan
+    auditoria.loc[idx, "Vantagem fechamento %"] = vantagem_fechamento
+    auditoria.loc[idx, "Resultado R$"] = round(resultado, 2)
+    auditoria.loc[idx, "Banca depois"] = round(banca_antes + resultado, 2)
+    auditoria.loc[idx, "Observações"] = observacao
+    salvar_auditoria(auditoria)
+
+# ============================================================
+# CARD DE RESULTADO
+# ============================================================
+
+def montar_card(item: dict) -> str:
+    apostar = item["apostar"]
+    classe = "card-apostar" if apostar else "card-nao"
+    status_classe = "status-apostar" if apostar else "status-nao"
+    status = f"✅ APOSTAR {item['percentual'] * 100:.2f}% DA BANCA" if apostar else "❌ NÃO APOSTAR"
+    status = status.replace(".", ",")
+    cot_justa = "--" if not np.isfinite(item["cotacao_justa"]) else numero_texto(item["cotacao_justa"], 2)
+
+    html = f"""
+    <div class="{classe}">
+        <div class="{status_classe}">{status}</div>
+        <div class="mercado-titulo">{item['nome_exibicao']}</div>
+        <div class="grade-card">
+            <div class="mini-box"><div class="mini-label">Cotação da casa</div><div class="mini-value">{numero_texto(item['cotacao'], 2)}</div></div>
+            <div class="mini-box"><div class="mini-label">Cotação justa</div><div class="mini-value">{cot_justa}</div></div>
+            <div class="mini-box"><div class="mini-label">Chance pelo sistema</div><div class="mini-value">{pct(item['prob_modelo'])}</div></div>
+            <div class="mini-box"><div class="mini-label">Chance do mercado</div><div class="mini-value">{pct(item['prob_mercado'])}</div></div>
+            <div class="mini-box"><div class="mini-label">Valor esperado</div><div class="mini-value">{pct(item['valor_esperado'])}</div></div>
+            <div class="mini-box"><div class="mini-label">Entrada sugerida</div><div class="mini-value">{dinheiro(item['entrada_reais']) if apostar else '-'}</div></div>
+        </div>
+        <div class="motivo-box"><b>Leitura:</b> {item['motivo']}</div>
+    </div>
+    """
+    return html
+
+# ============================================================
+# INTERFACE PRINCIPAL
+# ============================================================
+
+st.markdown('<div class="main-title">TEX STATISTICS PRO 14.3</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">Análise clara por blocos, banca dinâmica e auditoria das entradas.</div>', unsafe_allow_html=True)
+
+aba_analise, aba_auditoria = st.tabs(["🎯 Analisar jogo", "📒 Auditoria"])
+
+auditoria_df = carregar_auditoria()
 
 with st.sidebar:
-    st.header("Banca e controle")
-    banca_inicial = st.number_input("Banca inicial da auditoria (R$)", min_value=1.0, value=banca_inicial_default, step=100.0)
-    usar_auditada = st.checkbox("Usar banca auditada nas entradas", value=True)
-    banca_manual = st.number_input("Banca manual atual (R$)", min_value=1.0, value=banca_inicial, step=100.0)
-    banca_calc = banca_atual(df_audit, banca_inicial)
-    banca_usada = banca_calc if usar_auditada else banca_manual
-    st.metric("Banca usada pelo sistema", fmt_money(banca_usada))
+    st.header("Banca")
+    banca_inicial = st.number_input("Banca inicial", min_value=0.0, value=1000.0, step=50.0)
+    banca_calculada = banca_pela_auditoria(banca_inicial, auditoria_df)
+    usar_banca_calculada = st.checkbox("Usar banca pela auditoria", value=True)
+    banca_manual = st.number_input("Banca atual manual", min_value=0.0, value=1000.0, step=50.0)
+    banca_atual = banca_calculada if usar_banca_calculada else banca_manual
+    st.metric("Banca usada", dinheiro(banca_atual))
 
     st.divider()
     st.header("Filtro de entradas")
-    conf_min = st.slider("Confiança mínima", 0.0, 100.0, 62.0, 1.0)
-    ev_min = st.slider("Valor esperado mínimo", 0.0, 0.30, 0.045, 0.005)
-    ev_cons_min = st.slider("Valor esperado seguro mínimo", 0.0, 0.20, 0.005, 0.005)
-    edge_min = st.slider("Vantagem mínima contra o mercado", 0.0, 0.15, 0.018, 0.001)
+    perfil = st.selectbox("Perfil", ["Mais entradas", "Equilibrado", "Mais seguro"], index=0)
+    if perfil == "Mais entradas":
+        pad_conf, pad_valor, pad_vantagem, pad_agress = 50.0, 0.015, 0.005, 0.15
+    elif perfil == "Equilibrado":
+        pad_conf, pad_valor, pad_vantagem, pad_agress = 60.0, 0.025, 0.012, 0.12
+    else:
+        pad_conf, pad_valor, pad_vantagem, pad_agress = 70.0, 0.040, 0.020, 0.10
+
+    minimo_confianca = st.slider("Confiança mínima", 0.0, 100.0, pad_conf, 1.0)
+    minimo_valor = st.slider("Valor esperado mínimo", -0.05, 0.20, pad_valor, 0.005)
+    minimo_vantagem = st.slider("Vantagem mínima contra o mercado", -0.05, 0.15, pad_vantagem, 0.005)
 
     st.divider()
-    kelly_f = st.slider("Agressividade da banca", 0.01, 0.25, 0.10, 0.01)
-    stake_max = st.slider("Entrada máxima por aposta", 0.001, 0.03, 0.03, 0.001)
-    max_por_jogo = st.slider("Máximo de entradas por jogo", 1, 3, 3, 1)
-    exposicao_max = st.slider("Total máximo no mesmo jogo", 0.005, 0.03, 0.03, 0.001)
+    st.header("Limites da banca")
+    agressividade = st.slider("Agressividade da entrada", 0.03, 0.30, pad_agress, 0.01)
+    maximo_por_aposta = st.slider("Máximo por aposta", 0.005, 0.03, 0.03, 0.001)
+    maximo_entradas = st.slider("Máximo de entradas no jogo", 1, 8, 5, 1)
+    maximo_por_jogo = st.slider("Total máximo no mesmo jogo", 0.01, 0.15, 0.09, 0.005)
+    cotacao_minima = st.slider("Cotação mínima", 1.05, 3.00, 1.15, 0.05)
+    cotacao_maxima = st.slider("Cotação máxima", 1.50, 15.00, 7.00, 0.50)
 
     st.divider()
     st.header("Dados")
-    liga_sel = st.selectbox("Liga", list(LIGAS_CSV.keys()))
-    # O tipo de análise é escolhido na tela principal, para ficar mais claro.
-    api_default = get_secret_or_env("ODDS_API_KEY", "")
-    api_key = st.text_input("Chave da API de cotações", value=api_default, type="password")
+    liga = st.selectbox("Liga", list(LIGAS_CSV.keys()))
+    chave_api = st.text_input("Chave da API de cotações", type="password")
 
-with st.spinner("Carregando base histórica..."):
-    df_hist = carregar_historico(LIGAS_CSV[liga_sel])
+with st.spinner("Carregando jogos históricos..."):
+    historico = carregar_historico(LIGAS_CSV[liga])
 
-if df_hist.empty:
-    st.error("Não consegui carregar a base histórica desta liga.")
+if historico.empty:
+    st.error("Não consegui carregar os dados históricos desta liga.")
     st.stop()
 
-times = sorted(df_hist["Home"].dropna().unique().tolist())
+times = sorted(historico["Home"].dropna().unique().tolist())
 
-aba_motor, aba_auditoria = st.tabs(["🎯 Analisar jogo", "📒 Minha auditoria"])
+with aba_analise:
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Jogos históricos", len(historico))
+    c2.metric("Times", len(times))
+    c3.metric("Gols casa", numero_texto(float(np.average(historico["HG"], weights=historico["Peso"])), 2))
+    c4.metric("Gols fora", numero_texto(float(np.average(historico["AG"], weights=historico["Peso"])), 2))
 
-with aba_motor:
-    colm1, colm2, colm3, colm4 = st.columns(4)
-    colm1.metric("Jogos históricos", len(df_hist))
-    colm2.metric("Times", len(times))
-    colm3.metric("Gols casa", f"{np.average(df_hist['HG'], weights=df_hist['Peso']):.2f}")
-    colm4.metric("Gols fora", f"{np.average(df_hist['AG'], weights=df_hist['Peso']):.2f}")
-
-    st.markdown("### 1) Escolha o tipo de análise")
+    st.markdown("---")
     modo = st.radio(
-        "Tipo de análise",
+        "Como você quer analisar?",
         ["Manual", "Automática pela API"],
         horizontal=True,
-        label_visibility="collapsed",
-        help="Manual: você escolhe o jogo e digita as cotações. Automática: o app tenta buscar jogos e cotações pela API."
+        index=0,
     )
-    if modo == "Manual":
-        st.info("Modo manual selecionado: escolha os times e digite as cotações da Pixbet, Pinnacle ou outra casa.")
-    else:
-        st.info("Modo automático selecionado: o app depende da API ter jogos e cotações disponíveis para a liga escolhida. Se não aparecer jogo, use o modo manual.")
 
-    linhas: Dict[str, LinhaMercado] = {}
-    casa = fora = None
-    jogo_label = ""
-    data_evento = pd.Timestamp.today().date()
+    time_casa = None
+    time_fora = None
+    data_jogo = date.today()
+    linhas = {}
+    jogo_nome = ""
 
     if modo == "Manual":
-        c1, c2, c3 = st.columns([1, 1, 1])
-        casa = c1.selectbox("Mandante", times, key="manual_casa")
-        fora = c2.selectbox("Visitante", times, key="manual_fora")
-        data_evento = c3.date_input("Data do evento", value=pd.Timestamp.today().date())
-        linhas = linhas_manuais()
-        jogo_label = f"{casa} x {fora}"
-        calcular = st.button("ANALISAR JOGO MANUAL", type="primary")
-    else:
-        if not api_key.strip():
-            st.warning("Informe a chave da API de cotações na barra lateral ou use a análise manual.")
-            calcular = False
+        st.markdown("### Escolha o jogo")
+        c1, c2, c3 = st.columns([1, 1, 0.8])
+        with c1:
+            time_casa = st.selectbox("Time da casa", times, key="time_casa_manual")
+        with c2:
+            time_fora = st.selectbox("Time de fora", times, key="time_fora_manual")
+        with c3:
+            data_jogo = st.date_input("Data do jogo", value=date.today())
+
+        if time_casa == time_fora:
+            st.warning("Escolha times diferentes.")
         else:
-            dados = odds_api(api_key, LIGAS_API[liga_sel])
-            if not dados:
-                st.warning("A API não encontrou jogos ou cotações para esta liga neste momento. Isso não é erro do código: pode não haver jogo aberto agora, a liga pode não estar disponível na API ou sua chave pode não cobrir esse mercado. Use a análise manual para inserir as cotações da Pixbet/Pinnacle.")
-                calcular = False
+            linhas = montar_linhas_manuais()
+            analisar = st.button("ANALISAR JOGO MANUAL", type="primary", use_container_width=True)
+            jogo_nome = f"{time_casa} x {time_fora}"
+
+    else:
+        st.markdown("### Automática pela API")
+        st.markdown(
+            '<div class="aviso-simples">Se a API não mostrar jogos, use o modo Manual. Isso não quer dizer, necessariamente, que sua chave está errada. Pode ser que a liga esteja sem jogo aberto ou sem cotação disponível agora.</div>',
+            unsafe_allow_html=True,
+        )
+        analisar = False
+        if not chave_api.strip():
+            st.warning("Digite a chave da API na barra lateral ou escolha o modo Manual.")
+        else:
+            dados_api = buscar_api(chave_api, LIGAS_API[liga])
+            if not dados_api:
+                st.warning("API sem dados disponíveis para esta liga agora. Use o modo Manual para analisar com as cotações da Pixbet/Pinnacle.")
             else:
                 agora = pd.Timestamp.now(tz="UTC")
-                jogos = {}
-                for j in dados:
+                jogos_validos = {}
+                for jogo in dados_api:
                     try:
-                        ini = pd.to_datetime(j.get("commence_time"), utc=True)
-                        if ini <= agora:
+                        inicio = pd.to_datetime(jogo.get("commence_time"), utc=True)
+                        if inicio <= agora:
                             continue
-                        label = f"{j.get('home_team')} vs {j.get('away_team')} ({ini.tz_convert('America/Sao_Paulo').strftime('%d/%m %H:%M')})"
-                        jogos[label] = j
+                        horario = inicio.tz_convert("America/Sao_Paulo").strftime("%d/%m %H:%M")
+                        label = f"{jogo.get('home_team')} x {jogo.get('away_team')} — {horario}"
+                        jogos_validos[label] = jogo
                     except Exception:
                         continue
-                if not jogos:
-                    st.info("Nenhuma partida pré-jogo disponível.")
-                    calcular = False
+
+                if not jogos_validos:
+                    st.warning("A API respondeu, mas não há partidas pré-jogo disponíveis agora.")
                 else:
-                    escolha = st.selectbox("Partida", list(jogos.keys()))
-                    jogo_api = jogos[escolha]
-                    linhas = linhas_api(jogo_api)
-                    m_casa = encontrar_match(jogo_api.get("home_team", ""), times) or times[0]
-                    m_fora = encontrar_match(jogo_api.get("away_team", ""), times) or times[min(1, len(times)-1)]
+                    escolha = st.selectbox("Jogo encontrado", list(jogos_validos.keys()))
+                    jogo = jogos_validos[escolha]
+                    casa_sugerida = achar_time(jogo.get("home_team", ""), times) or times[0]
+                    fora_sugerida = achar_time(jogo.get("away_team", ""), times) or times[min(1, len(times) - 1)]
                     c1, c2 = st.columns(2)
-                    casa = c1.selectbox("Mandante na base", times, index=times.index(m_casa), key="auto_casa")
-                    fora = c2.selectbox("Visitante na base", times, index=times.index(m_fora), key="auto_fora")
-                    jogo_label = escolha
-                    data_evento = pd.Timestamp.today().date()
-                    st.info(f"Linhas reais encontradas: {len(linhas)}")
-                    calcular = st.button("ANALISAR JOGO AUTOMÁTICO", type="primary")
+                    with c1:
+                        time_casa = st.selectbox("Time da casa na base", times, index=times.index(casa_sugerida), key="time_casa_api")
+                    with c2:
+                        time_fora = st.selectbox("Time de fora na base", times, index=times.index(fora_sugerida), key="time_fora_api")
+                    linhas = montar_linhas_api(jogo)
+                    jogo_nome = f"{time_casa} x {time_fora}"
+                    data_jogo = date.today()
+                    st.info(f"Foram encontradas {len(linhas)} cotações reais pela API para este jogo.")
+                    analisar = st.button("ANALISAR JOGO AUTOMÁTICO", type="primary", use_container_width=True)
 
-    if casa == fora and casa is not None:
-        st.error("Mandante e visitante não podem ser o mesmo time.")
-        st.stop()
-
-    if calcular:
-        if not linhas:
-            st.error("Nenhuma cotação real foi informada/coletada. O sistema não trabalha com cotação inventada.")
-            st.stop()
-
-        lamb_h, lamb_a, probs, conf, amostras = precificar(df_hist, casa, fora)
-        resultados = avaliar(probs, linhas, conf, banca_usada, conf_min, ev_min, ev_cons_min, edge_min, kelly_f, stake_max)
-        escolhidos = selecionar(resultados, max_por_jogo, exposicao_max, banca_usada)
-
-        st.markdown("---")
-        st.subheader(f"Análise — {jogo_label}")
-        k1, k2, k3, k4, k5 = st.columns(5)
-        k1.metric("Força de gols casa", f"{lamb_h:.2f}")
-        k2.metric("Força de gols fora", f"{lamb_a:.2f}")
-        k3.metric("Confiança", f"{conf:.1f}%")
-        k4.metric("Entradas aprovadas", len(escolhidos))
-        k5.metric("Máximo no jogo", fmt_money(banca_usada * exposicao_max))
-        st.write(
-            f"Amostra: {casa} em casa `{amostras['casa_mando']}` jogos | "
-            f"{fora} fora `{amostras['fora_mando']}` jogos."
-        )
-
-        tabela = pd.DataFrame([{
-            "Status": "✅ OPERÁVEL" if r in escolhidos else ("🟡 Passou, fora do limite" if r.operavel else "❌ Rejeitado"),
-            "Mercado": r.mercado,
-            "Cotação": round(r.odd_mercado, 2),
-            "Prob. Modelo": fmt_pct(r.prob_modelo),
-            "Prob. segura": fmt_pct(r.prob_conservadora),
-            "Prob. Mercado": fmt_pct(r.prob_mercado),
-            "Valor esperado": f"{r.ev_bruto*100:+.1f}%",
-            "Valor esperado seguro": f"{r.ev_conservador*100:+.1f}%",
-            "Entrada %": f"{r.stake_frac*100:.2f}%" if r in escolhidos else "0.00%",
-            "Entrada R$": fmt_money(r.stake_valor) if r in escolhidos else "-",
-            "Motivo": r.motivo,
-            "Origem": r.origem_odd,
-        } for r in resultados])
-        st.dataframe(tabela, use_container_width=True, hide_index=True)
-
-        st.subheader("Resumo executivo")
-        if escolhidos:
-            for r in escolhidos:
-                st.success(
-                    f"✅ {r.mercado} @ {r.odd_mercado:.2f} | Modelo {fmt_pct(r.prob_modelo)} | "
-                    f"Segura {fmt_pct(r.prob_conservadora)} | Valor seguro {r.ev_conservador*100:+.1f}% | "
-                    f"Entrada {r.stake_frac*100:.2f}% = {fmt_money(r.stake_valor)}"
-                )
-
-            with st.expander("Registrar entradas aprovadas na auditoria", expanded=True):
-                casa_apostas = st.selectbox("Casa de apostas", CASAS, index=CASAS.index("Pixbet"))
-                obs = st.text_area("Observação", value="")
-                mercados_disp = [f"{r.mercado} @ {r.odd_mercado:.2f}" for r in escolhidos]
-                selecionados_txt = st.multiselect("Entradas para registrar", mercados_disp, default=mercados_disp)
-                if st.button("SALVAR ENTRADAS NA AUDITORIA"):
-                    audit = load_audit()
-                    novas = []
-                    for txt, sinal in zip(mercados_disp, escolhidos):
-                        if txt in selecionados_txt:
-                            novas.append(nova_linha_auditoria(liga_sel, jogo_label, casa, fora, sinal, casa_apostas, banca_usada, data_evento, obs))
-                    if novas:
-                        audit = pd.concat([audit, pd.DataFrame(novas)], ignore_index=True)
-                        save_audit(audit)
-                        st.success(f"{len(novas)} entrada(s) registrada(s). Recarregue a página para atualizar a banca auditada.")
-                    else:
-                        st.warning("Nenhuma entrada selecionada.")
+    if 'analisar' in locals() and analisar:
+        if not time_casa or not time_fora or time_casa == time_fora:
+            st.error("Escolha corretamente os dois times.")
+        elif not linhas:
+            st.error("Nenhuma cotação válida foi preenchida ou encontrada.")
         else:
-            st.info("Nenhuma entrada passou. Isso protege a banca quando o mercado está eficiente.")
+            gols_casa, gols_fora, probs_modelo, confianca, amostra = precificar_jogo(historico, time_casa, time_fora)
+            resultados = avaliar_mercados(
+                linhas=linhas,
+                probs_modelo=probs_modelo,
+                confianca=confianca,
+                banca_atual=banca_atual,
+                minimo_confianca=minimo_confianca,
+                minimo_valor=minimo_valor,
+                minimo_vantagem=minimo_vantagem,
+                agressividade=agressividade,
+                maximo_por_aposta=maximo_por_aposta,
+                maximo_por_jogo=maximo_por_jogo,
+                maximo_entradas=maximo_entradas,
+                cotacao_minima=cotacao_minima,
+                cotacao_maxima=cotacao_maxima,
+            )
+
+            for r in resultados:
+                r["nome_exibicao"] = nome_mercado(r["mercado"], time_casa, time_fora)
+
+            aprovadas = [r for r in resultados if r["apostar"]]
+
+            st.markdown("---")
+            st.markdown(f"## Análise — {jogo_nome}")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Força de gols casa", numero_texto(gols_casa, 2))
+            c2.metric("Força de gols fora", numero_texto(gols_fora, 2))
+            c3.metric("Confiança", pct(confianca / 100.0))
+            c4.metric("Entradas aprovadas", len(aprovadas))
+            st.caption(f"Amostra: {time_casa} em casa {amostra['casa_mando']} jogos | {time_fora} fora {amostra['fora_mando']} jogos.")
+
+            if aprovadas:
+                st.success(f"Foram encontradas {len(aprovadas)} entradas dentro dos filtros atuais.")
+            else:
+                st.warning("Nenhuma entrada passou. Para buscar mais entradas, use o perfil 'Mais entradas' ou reduza os filtros na barra lateral.")
+
+            st.markdown("### Blocos por mercado")
+            for item in resultados:
+                st.markdown(montar_card(item), unsafe_allow_html=True)
+                if item["apostar"]:
+                    col_b1, col_b2 = st.columns([1, 1])
+                    with col_b1:
+                        casa_aposta = st.selectbox(
+                            "Casa para registrar",
+                            ["Pixbet", "Pinnacle", "Bet365", "Betano", "KTO", "Superbet", "Outra"],
+                            key=f"casa_{item['mercado']}",
+                        )
+                    with col_b2:
+                        obs = st.text_input("Observação", key=f"obs_{item['mercado']}", placeholder="Opcional")
+                    if st.button(f"Registrar entrada: {item['nome_exibicao']}", key=f"reg_{item['mercado']}", use_container_width=True):
+                        registrar_entrada(liga, data_jogo, jogo_nome, casa_aposta, item, banca_atual, obs)
+                        st.success("Entrada registrada na auditoria.")
 
 with aba_auditoria:
-    st.subheader("Minha auditoria")
-    df_audit = load_audit()
-    mets = metricas_auditoria(df_audit, banca_inicial)
-    a1, a2, a3, a4, a5 = st.columns(5)
-    a1.metric("Entradas", int(mets["entradas"]))
-    a2.metric("Fechadas", int(mets["fechadas"]))
-    a3.metric("Lucro", fmt_money(mets["lucro"]))
-    a4.metric("Banca auditada", fmt_money(mets["banca"]))
-    a5.metric("Vantagem média no fechamento", f"{mets['clv']:+.2f}%")
+    st.markdown("## Auditoria das entradas")
+    auditoria_df = carregar_auditoria()
+    banca_atualizada = banca_pela_auditoria(banca_inicial, auditoria_df)
 
-    st.markdown("### Lançar entrada manual na auditoria")
-    with st.form("manual_audit"):
-        c1, c2, c3 = st.columns(3)
-        data_ev = c1.date_input("Data evento", value=pd.Timestamp.today().date(), key="audit_data")
-        liga_a = c2.selectbox("Liga", list(LIGAS_CSV.keys()), index=list(LIGAS_CSV.keys()).index(liga_sel), key="audit_liga")
-        casa_bet = c3.selectbox("Casa", CASAS, key="audit_casa")
-        c4, c5 = st.columns(2)
-        jogo_a = c4.text_input("Jogo", value="")
-        mercado_a = c5.text_input("Mercado", value="")
-        c6, c7, c8 = st.columns(3)
-        odd_ent = c6.number_input("Cotação de entrada", min_value=1.01, value=2.00, step=0.01)
-        stake_rs = c7.number_input("Valor apostado R$", min_value=0.0, value=30.0, step=1.0)
-        banca_ant = c8.number_input("Banca antes", min_value=1.0, value=float(banca_usada), step=10.0)
-        obs_a = st.text_area("Observação manual", value="")
-        salvar_manual = st.form_submit_button("SALVAR ENTRADA MANUAL")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Banca pela auditoria", dinheiro(banca_atualizada))
+    c2.metric("Entradas registradas", len(auditoria_df))
+    resultado_total = pd.to_numeric(auditoria_df["Resultado R$"], errors="coerce").fillna(0).sum() if not auditoria_df.empty else 0
+    c3.metric("Resultado total", dinheiro(float(resultado_total)))
+    pendentes = len(auditoria_df[auditoria_df["Status"].astype(str) == "Pendente"]) if not auditoria_df.empty else 0
+    c4.metric("Pendentes", pendentes)
+
+    st.markdown("---")
+    st.markdown("### Registrar entrada manual na auditoria")
+    with st.expander("Adicionar entrada feita fora do motor", expanded=False):
+        with st.form("form_manual_auditoria"):
+            c1, c2 = st.columns(2)
+            with c1:
+                data_manual = st.date_input("Data do jogo", value=date.today(), key="aud_data")
+                jogo_manual = st.text_input("Jogo", placeholder="Ex.: Botafogo x Santos")
+                mercado_manual = st.text_input("Mercado", placeholder="Ex.: Ambos marcam - Sim")
+                casa_manual = st.selectbox("Casa", ["Pixbet", "Pinnacle", "Bet365", "Betano", "KTO", "Superbet", "Outra"], key="aud_casa")
+            with c2:
+                cot_manual = st.text_input("Cotação de entrada", placeholder="Ex.: 1,85")
+                entrada_percentual = st.number_input("Entrada % da banca", min_value=0.0, max_value=3.0, value=1.0, step=0.1)
+                banca_antes_manual = st.number_input("Banca antes", min_value=0.0, value=float(banca_atualizada), step=50.0)
+                obs_manual = st.text_input("Observação", placeholder="Opcional")
+            salvar_manual = st.form_submit_button("Salvar entrada manual")
+
         if salvar_manual:
-            stake_pct = (stake_rs / banca_ant) * 100.0 if banca_ant > 0 else 0.0
-            linha = {c: np.nan for c in AUDIT_COLS}
-            linha.update({
-                "id": str(uuid.uuid4())[:8],
-                "data_registro": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "data_evento": str(data_ev),
-                "liga": liga_a,
-                "jogo": jogo_a,
-                "mandante": "",
-                "visitante": "",
-                "mercado": mercado_a,
-                "casa": casa_bet,
-                "odd_entrada": odd_ent,
-                "stake_pct": stake_pct,
-                "stake_reais": stake_rs,
-                "banca_antes": banca_ant,
-                "status": "Pendente",
-                "resultado_reais": 0.0,
-                "observacao": obs_a,
-            })
-            df_audit = pd.concat([df_audit, pd.DataFrame([linha])], ignore_index=True)
-            save_audit(df_audit)
-            st.success("Entrada manual salva.")
+            cot = texto_para_float(cot_manual)
+            if not jogo_manual or not mercado_manual or not cot or cot <= 1.01:
+                st.error("Preencha jogo, mercado e cotação válida.")
+            else:
+                auditoria = carregar_auditoria()
+                valor_reais = banca_antes_manual * (entrada_percentual / 100)
+                novo = {
+                    "ID": str(uuid.uuid4())[:8],
+                    "Data registro": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                    "Data jogo": data_manual.strftime("%d/%m/%Y"),
+                    "Liga": liga,
+                    "Jogo": jogo_manual,
+                    "Casa": casa_manual,
+                    "Mercado": mercado_manual,
+                    "Cotação entrada": round(cot, 3),
+                    "Cotação fechamento": np.nan,
+                    "Vantagem fechamento %": np.nan,
+                    "Entrada %": round(entrada_percentual, 3),
+                    "Entrada R$": round(valor_reais, 2),
+                    "Banca antes": round(banca_antes_manual, 2),
+                    "Banca depois": np.nan,
+                    "Probabilidade modelo %": np.nan,
+                    "Probabilidade mercado %": np.nan,
+                    "Cotação justa": np.nan,
+                    "Valor esperado %": np.nan,
+                    "Confiança %": np.nan,
+                    "Status": "Pendente",
+                    "Resultado R$": 0.0,
+                    "Observações": obs_manual,
+                }
+                auditoria = pd.concat([auditoria, pd.DataFrame([novo])], ignore_index=True)
+                salvar_auditoria(auditoria)
+                st.success("Entrada manual salva.")
 
-    st.markdown("### Fechar/atualizar entrada")
-    df_audit = load_audit()
-    if df_audit.empty:
-        st.info("Ainda não há entradas registradas.")
+    st.markdown("### Fechar resultado")
+    auditoria_df = carregar_auditoria()
+    pendentes_df = auditoria_df[auditoria_df["Status"].astype(str) == "Pendente"].copy() if not auditoria_df.empty else pd.DataFrame()
+    if pendentes_df.empty:
+        st.info("Não há entradas pendentes.")
     else:
-        df_show = auditoria_para_tela(df_audit.sort_values("data_registro", ascending=False))
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
-        opcoes = [f"{row['id']} | {row['status']} | {row['jogo']} | {row['mercado']} @ {row['odd_entrada']}" for _, row in df_audit.iterrows()]
-        escolha = st.selectbox("Selecionar entrada", opcoes)
-        id_sel = escolha.split(" | ")[0]
-        idx = df_audit.index[df_audit["id"].astype(str) == str(id_sel)][0]
-        row = df_audit.loc[idx]
+        opcoes = [f"{row['ID']} — {row['Jogo']} — {row['Mercado']} — {dinheiro(float(row['Entrada R$']))}" for _, row in pendentes_df.iterrows()]
+        escolha = st.selectbox("Entrada para fechar", opcoes)
+        id_escolhido = escolha.split(" — ")[0]
+        with st.form("form_fechar"):
+            status = st.selectbox("Resultado", ["Ganhou", "Perdeu", "Anulada", "Encerrada antes"])
+            cot_fech = st.text_input("Cotação de fechamento", placeholder="Opcional. Ex.: 1,72")
+            cashout = st.number_input("Valor recebido se encerrou antes", min_value=0.0, value=0.0, step=1.0)
+            obs = st.text_input("Observação final", placeholder="Opcional")
+            fechar = st.form_submit_button("Salvar resultado")
+        if fechar:
+            cotacao_fechamento = texto_para_float(cot_fech)
+            fechar_entrada(id_escolhido, status, cotacao_fechamento, cashout, obs)
+            st.success("Resultado salvo.")
 
-        with st.form("fechar_entrada"):
-            c1, c2, c3 = st.columns(3)
-            odd_fech = c1.number_input("Cotação de fechamento", min_value=0.0, value=float(row["odd_fechamento"]) if pd.notna(row["odd_fechamento"]) else 0.0, step=0.01)
-            status_new = c2.selectbox("Status", STATUS, index=STATUS.index(row["status"]) if row["status"] in STATUS else 0)
-            cashout = c3.number_input("Valor recebido na saída antecipada", min_value=0.0, value=0.0, step=1.0)
-            obs_new = st.text_area("Observação", value=str(row["observacao"]) if pd.notna(row["observacao"]) else "")
-            salvar_fech = st.form_submit_button("ATUALIZAR ENTRADA")
-            if salvar_fech:
-                stake = float(row["stake_reais"]) if pd.notna(row["stake_reais"]) else 0.0
-                odd_ent = float(row["odd_entrada"]) if pd.notna(row["odd_entrada"]) else 0.0
-                resultado = calcular_resultado(status_new, stake, odd_ent, cashout)
-                clv = ((odd_ent / odd_fech) - 1.0) * 100.0 if odd_fech and odd_fech > 1.01 and odd_ent > 1.01 else np.nan
-                banca_depois = float(row["banca_antes"]) + resultado if pd.notna(row["banca_antes"]) else np.nan
-
-                df_audit.loc[idx, "odd_fechamento"] = odd_fech if odd_fech > 1.01 else np.nan
-                df_audit.loc[idx, "clv_pct"] = clv
-                df_audit.loc[idx, "status"] = status_new
-                df_audit.loc[idx, "resultado_reais"] = resultado
-                df_audit.loc[idx, "banca_depois"] = banca_depois
-                df_audit.loc[idx, "observacao"] = obs_new
-                save_audit(df_audit)
-                st.success("Entrada atualizada.")
-
-        csv = df_audit.to_csv(index=False).encode("utf-8")
-        st.download_button("Baixar auditoria CSV", data=csv, file_name="auditoria_entradas_tex_v14_2.csv", mime="text/csv")
+    st.markdown("### Histórico")
+    auditoria_df = carregar_auditoria()
+    if auditoria_df.empty:
+        st.info("Nenhuma entrada registrada ainda.")
+    else:
+        st.dataframe(auditoria_df.sort_values("Data registro", ascending=False), use_container_width=True, hide_index=True)
+        csv = auditoria_df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "Baixar auditoria em CSV",
+            data=csv,
+            file_name="auditoria_tex_statistics.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
