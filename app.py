@@ -578,26 +578,44 @@ def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], 
     resultados.sort(key=lambda r: (ordem.get(r["nivel"], 9), -r["valor"]))
 
     # Limite real de exposição no mesmo jogo.
-    # Em vez de permitir 6 entradas de 3%, o app distribui o teto do jogo entre as entradas aprovadas.
-    aprovadas = [r for r in resultados if r["apostar"] and float(r["percentual"]) > 0]
+    # Correção 15.8: em vez de reduzir TODAS as entradas até ficarem minúsculas
+    # e depois reprovar tudo, o app escolhe as melhores entradas até preencher o teto.
+    # Isso evita o bug em que uma simulação com odds 10 em tudo gerava 0 entradas.
     limite_total_jogo = float(np.clip(limite_total_jogo, 0.01, 0.09))
-    soma_original = sum(float(r["percentual"]) for r in aprovadas)
+    minimo_executavel = 0.003  # 0,30% da banca
+    usado = 0.0
+    aprovadas_ordenadas = [r for r in resultados if r["apostar"] and float(r["percentual_original"]) > 0]
 
-    if aprovadas and soma_original > limite_total_jogo:
-        fator = limite_total_jogo / soma_original
-        for r in aprovadas:
-            novo_percentual = float(r["percentual"]) * fator
-            # Abaixo de 0,30% fica pequeno demais para execução prática. Mantém como observação.
-            if novo_percentual < 0.003:
-                r["apostar"] = False
-                r["nivel"] = "nao"
-                r["percentual"] = 0.0
-                r["entrada_rs"] = 0.0
-                r["motivo"] = "valor existe, mas ficou pequeno após limite do jogo"
-            else:
-                r["percentual"] = novo_percentual
-                r["entrada_rs"] = banca * novo_percentual if banca > 0 else 0.0
-                r["motivo"] = "valor encontrado; entrada ajustada pelo limite do jogo"
+    for r in aprovadas_ordenadas:
+        percentual_desejado = float(r["percentual_original"])
+        restante = max(0.0, limite_total_jogo - usado)
+
+        if restante < minimo_executavel:
+            r["apostar"] = False
+            r["nivel"] = "nao"
+            r["percentual"] = 0.0
+            r["entrada_rs"] = 0.0
+            r["motivo"] = "valor existe, mas o limite total do jogo já foi preenchido"
+            continue
+
+        if percentual_desejado <= restante:
+            percentual_final = percentual_desejado
+            if usado > 0:
+                r["motivo"] = "valor encontrado; respeitando limite total do jogo"
+        else:
+            percentual_final = restante
+            r["motivo"] = "valor encontrado; entrada reduzida pelo limite total do jogo"
+
+        if percentual_final < minimo_executavel:
+            r["apostar"] = False
+            r["nivel"] = "nao"
+            r["percentual"] = 0.0
+            r["entrada_rs"] = 0.0
+            r["motivo"] = "valor existe, mas ficou abaixo do mínimo executável após o limite do jogo"
+        else:
+            r["percentual"] = percentual_final
+            r["entrada_rs"] = banca * percentual_final if banca > 0 else 0.0
+            usado += percentual_final
 
     resultados.sort(key=lambda r: (ordem.get(r["nivel"], 9), -r["valor"]))
     return resultados
@@ -1098,8 +1116,8 @@ def render_card(resultado: Dict[str, object], banca: float, time_casa: str, time
 # APP
 # ============================================================
 
-st.title("TEX STATISTICS PRO 15.7")
-st.caption("Motor em blocos: simples para operar, com banca dinâmica, auditoria e calendário revisado por liga.")
+st.title("TEX STATISTICS PRO 15.8")
+st.caption("Motor em blocos: seleção corrigida, banca dinâmica, auditoria estável e calendário revisado por liga.")
 
 with st.sidebar:
     st.header("Banca")
@@ -1368,18 +1386,52 @@ with aba_analisar:
     if botao_analisar and odds:
         gols_casa, gols_fora, probabilidades, confianca, amostras = calcular_forcas_e_probabilidades(df, time_casa, time_fora)
         resultados = montar_resultados(probabilidades, odds, confianca, banca_usada, perfil, limite_total_jogo_pct)
+        st.session_state["ultima_analise"] = {
+            "id": str(pd.Timestamp.now().value),
+            "liga": liga_sel,
+            "jogo_nome": jogo_nome,
+            "time_casa": time_casa,
+            "time_fora": time_fora,
+            "origem": origem,
+            "casa_apostas": casa_apostas,
+            "banca_usada": float(banca_usada),
+            "limite_total_jogo_pct": float(limite_total_jogo_pct),
+            "gols_casa": float(gols_casa),
+            "gols_fora": float(gols_fora),
+            "confianca": float(confianca),
+            "amostras": amostras,
+            "resultados": resultados,
+        }
+
+    analise_atual = st.session_state.get("ultima_analise")
+
+    if analise_atual:
+        liga_analise = analise_atual["liga"]
+        jogo_nome_analise = analise_atual["jogo_nome"]
+        time_casa_analise = analise_atual["time_casa"]
+        time_fora_analise = analise_atual["time_fora"]
+        origem_analise = analise_atual["origem"]
+        casa_apostas_analise = analise_atual["casa_apostas"]
+        banca_analise = float(analise_atual["banca_usada"])
+        limite_analise = float(analise_atual["limite_total_jogo_pct"])
+        gols_casa = float(analise_atual["gols_casa"])
+        gols_fora = float(analise_atual["gols_fora"])
+        confianca = float(analise_atual["confianca"])
+        amostras = analise_atual["amostras"]
+        resultados = analise_atual["resultados"]
         aprovadas = [r for r in resultados if r["apostar"]]
 
         st.markdown("---")
-        st.subheader(f"Análise — {jogo_nome}")
+        st.subheader(f"Análise — {jogo_nome_analise}")
+        st.caption("Resultado da última análise calculada. Você pode marcar/desmarcar entradas abaixo sem a tela fechar.")
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Força de gols casa", numero(gols_casa, 2))
         m2.metric("Força de gols fora", numero(gols_fora, 2))
         m3.metric("Confiança", f"{confianca:.1f}%".replace(".", ","))
         m4.metric("Entradas", len(aprovadas))
-        m5.metric("Máximo no jogo", dinheiro(banca_usada * limite_total_jogo_pct))
+        m5.metric("Máximo no jogo", dinheiro(banca_analise * limite_analise))
 
-        st.caption(f"Amostra: {time_casa} em casa {amostras['casa']} jogos | {time_fora} fora {amostras['fora']} jogos.")
+        st.caption(f"Amostra: {time_casa_analise} em casa {amostras['casa']} jogos | {time_fora_analise} fora {amostras['fora']} jogos.")
         if amostras.get("amostra_fraca"):
             st.error(f"⚠️ {amostras.get('alerta')} O lado com menor amostra tem apenas {amostras.get('minima')} jogo(s). O app bloqueia entradas reais nesse cenário.")
         else:
@@ -1388,48 +1440,66 @@ with aba_analisar:
         if aprovadas:
             total_sugerido = sum(float(r["entrada_rs"]) for r in aprovadas)
             st.success(f"Foram encontradas {len(aprovadas)} entrada(s). Total sugerido se fizer todas: {dinheiro(total_sugerido)}.")
-            if total_sugerido >= banca_usada * limite_total_jogo_pct * 0.99 and len(aprovadas) > 1:
+            if total_sugerido >= banca_analise * limite_analise * 0.99 and len(aprovadas) > 1:
                 st.warning("As entradas aprovadas foram ajustadas para respeitar o limite total do mesmo jogo. Isso evita concentrar dinheiro demais em mercados que dependem do mesmo placar.")
         else:
             st.info("Nenhuma entrada passou. Se você quiser mais volume, use o perfil 'Agressivo com controle', mas registre tudo na auditoria.")
 
         st.markdown("### Blocos de decisão")
         for r in resultados:
-            render_card(r, banca_usada, time_casa, time_fora)
+            render_card(r, banca_analise, time_casa_analise, time_fora_analise)
 
         if aprovadas:
             st.markdown("---")
             st.markdown("### Registrar entradas aprovadas")
-            st.caption("Marque as entradas que você realmente vai fazer. Elas irão para a auditoria.")
+            st.caption("Marque somente as entradas que você realmente fez. Elas irão para a auditoria.")
             auditoria = carregar_auditoria()
             escolhidas = []
-            for i, r in enumerate(aprovadas):
-                nome = r["mercado"].replace("Vitória Casa", f"Vitória {time_casa}").replace("Vitória Fora", f"Vitória {time_fora}")
-                label = f"Registrar {nome} — {numero(r['odd'], 2)} — {dinheiro(r['entrada_rs'])}"
-                if st.checkbox(label, value=True, key=f"reg_{i}_{nome}"):
-                    escolhidas.append(r)
+            analise_id = analise_atual.get("id", "ultima")
 
-            observacao = st.text_area("Observação para a auditoria", value="", placeholder="Ex: Pixbet, cotação conferida antes de apostar, escalação ok...")
-            if st.button("SALVAR ENTRADAS MARCADAS NA AUDITORIA", type="primary"):
-                for r in escolhidas:
-                    auditoria = registrar_entrada(
-                        auditoria=auditoria,
-                        liga=liga_sel,
-                        jogo=jogo_nome,
-                        casa_apostas=casa_apostas,
-                        mercado=str(r["mercado"]),
-                        odd=float(r["odd"]),
-                        prob=float(r["probabilidade"]),
-                        odd_justa=float(r["odd_justa"]),
-                        valor=float(r["valor"]),
-                        percentual=float(r["percentual"]),
-                        entrada_rs=float(r["entrada_rs"]),
-                        banca_antes=float(banca_usada),
-                        origem=origem,
-                        observacao=observacao,
-                    )
-                salvar_auditoria(auditoria)
-                st.success("Entradas salvas na auditoria.")
+            with st.form(key=f"form_registrar_{analise_id}"):
+                for i, r in enumerate(aprovadas):
+                    nome = r["mercado"].replace("Vitória Casa", f"Vitória {time_casa_analise}").replace("Vitória Fora", f"Vitória {time_fora_analise}")
+                    label = f"Registrar {nome} — {numero(r['odd'], 2)} — {dinheiro(r['entrada_rs'])}"
+                    marcado = st.checkbox(label, value=True, key=f"reg_{analise_id}_{i}")
+                    if marcado:
+                        escolhidas.append(r)
+
+                observacao = st.text_area(
+                    "Observação para a auditoria",
+                    value="",
+                    placeholder="Ex: Pixbet, cotação conferida antes de apostar, escalação ok...",
+                    key=f"obs_{analise_id}",
+                )
+                salvar_form = st.form_submit_button("SALVAR ENTRADAS MARCADAS NA AUDITORIA", type="primary")
+
+            if salvar_form:
+                if not escolhidas:
+                    st.warning("Nenhuma entrada foi marcada para salvar.")
+                else:
+                    for r in escolhidas:
+                        auditoria = registrar_entrada(
+                            auditoria=auditoria,
+                            liga=liga_analise,
+                            jogo=jogo_nome_analise,
+                            casa_apostas=casa_apostas_analise,
+                            mercado=str(r["mercado"]),
+                            odd=float(r["odd"]),
+                            prob=float(r["probabilidade"]),
+                            odd_justa=float(r["odd_justa"]),
+                            valor=float(r["valor"]),
+                            percentual=float(r["percentual"]),
+                            entrada_rs=float(r["entrada_rs"]),
+                            banca_antes=float(banca_analise),
+                            origem=origem_analise,
+                            observacao=observacao,
+                        )
+                    salvar_auditoria(auditoria)
+                    st.success("Entradas salvas na auditoria.")
+
+        if st.button("LIMPAR ÚLTIMA ANÁLISE"):
+            st.session_state.pop("ultima_analise", None)
+            st.rerun()
 
 with aba_auditoria:
     st.subheader("Auditoria operacional")
