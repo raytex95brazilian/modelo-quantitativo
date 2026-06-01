@@ -11,12 +11,12 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 15.13 — HÍBRIDO
+# TEX STATISTICS PRO 15.14 — HÍBRIDO
 # Coração da versão 2.14 + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX PRO 15.13 — Blocos", layout="wide")
+st.set_page_config(page_title="TEX PRO 15.14 — Blocos", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -24,6 +24,7 @@ st.set_page_config(page_title="TEX PRO 15.13 — Blocos", layout="wide")
 st.markdown(
     """
     <style>
+    @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@700;800;900&family=Rajdhani:wght@500;600;700&display=swap");
     :root {
         --bg1: #f4f7fb;
         --bg2: #eaf1fb;
@@ -73,12 +74,13 @@ st.markdown(
     .hero {
         position: relative;
         overflow: hidden;
-        background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 55%, #38bdf8 100%);
+        background: linear-gradient(145deg, #0b1220 0%, #111827 58%, #18283f 100%);
         color: #ffffff !important;
         border-radius: 28px;
         padding: 24px 22px 18px 22px;
-        box-shadow: 0 18px 44px rgba(15, 23, 42, 0.24);
+        box-shadow: 0 20px 46px rgba(15, 23, 42, 0.26);
         margin-bottom: 16px;
+        border: 1px solid rgba(255,255,255,0.08);
     }
     .hero::before {
         content: "";
@@ -86,10 +88,10 @@ st.markdown(
         width: 220px;
         height: 220px;
         border-radius: 999px;
-        background: rgba(255,255,255,0.10);
+        background: radial-gradient(circle, rgba(56,189,248,0.16) 0%, rgba(56,189,248,0.03) 65%, transparent 75%);
         top: -80px;
         right: -50px;
-        filter: blur(2px);
+        filter: blur(1px);
     }
     .hero::after {
         content: "";
@@ -97,7 +99,7 @@ st.markdown(
         width: 160px;
         height: 160px;
         border-radius: 999px;
-        background: rgba(255,255,255,0.08);
+        background: radial-gradient(circle, rgba(16,185,129,0.14) 0%, rgba(16,185,129,0.03) 65%, transparent 75%);
         bottom: -55px;
         left: -35px;
     }
@@ -113,23 +115,31 @@ st.markdown(
         display: inline-block;
         padding: 7px 12px;
         border-radius: 999px;
-        background: rgba(255,255,255,0.14);
-        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
         font-size: 0.78rem;
         font-weight: 800;
-        letter-spacing: 0.3px;
+        letter-spacing: 0.55px;
+        font-family: "Rajdhani", "Segoe UI", sans-serif;
+        text-transform: uppercase;
     }
     .hero-titulo {
-        font-size: 1.85rem;
+        font-size: 2.05rem;
         font-weight: 900;
-        margin: 8px 0 8px 0;
-        letter-spacing: -0.4px;
+        margin: 10px 0 6px 0;
+        letter-spacing: 1.2px;
+        font-family: "Orbitron", "Rajdhani", "Segoe UI", sans-serif;
+        text-transform: uppercase;
+        color: #f8fafc !important;
+        text-shadow: 0 2px 10px rgba(15,23,42,0.35);
     }
     .hero-sub {
         font-size: 0.98rem;
-        opacity: 0.96;
-        line-height: 1.55;
+        opacity: 0.95;
+        line-height: 1.58;
         max-width: 860px;
+        font-family: "Rajdhani", "Segoe UI", sans-serif;
+        color: #dbe7f5 !important;
     }
     .hero-chip-wrap { margin-top: 14px; }
     .hero-chip {
@@ -137,10 +147,12 @@ st.markdown(
         margin: 4px 7px 0 0;
         padding: 8px 12px;
         border-radius: 999px;
-        background: rgba(255,255,255,0.13);
-        border: 1px solid rgba(255,255,255,0.18);
-        font-size: 0.83rem;
+        background: rgba(255,255,255,0.07);
+        border: 1px solid rgba(255,255,255,0.12);
+        font-size: 0.82rem;
         font-weight: 800;
+        font-family: "Rajdhani", "Segoe UI", sans-serif;
+        letter-spacing: 0.35px;
     }
 
     .painel-resumo {
@@ -368,7 +380,7 @@ st.markdown(
     @media (max-width: 768px) {
         .block-container {padding-left: 0.85rem; padding-right: 0.85rem;}
         .hero { border-radius: 24px; padding: 20px 18px 16px 18px; }
-        .hero-titulo {font-size: 1.36rem;}
+        .hero-titulo {font-size: 1.42rem; letter-spacing: 0.9px;}
         .hero-sub {font-size: 0.92rem;}
         .painel-resumo { grid-template-columns: 1fr 1fr; gap: 10px; }
         .resumo-card { padding: 12px; }
@@ -1453,8 +1465,8 @@ st.markdown(
             <span class="hero-selo">VERSÃO PREMIUM</span>
             <span class="hero-selo">VISUAL OTIMIZADO PARA CELULAR</span>
         </div>
-        <div class="hero-titulo">TEX STATISTICS PRO 15.13</div>
-        <div class="hero-sub">Agora com visual premium: aparência mais elegante, mais limpa e com melhor leitura no celular. A ideia é você abrir, bater o olho e entender rápido o que importa — sem sensação de planilha dura.</div>
+        <div class="hero-titulo">TEX STATISTICS</div>
+        <div class="hero-sub">Interface refinada com estética mais tecnológica e mais profissional. O nome ganhou presença visual inspirada em engenharia, avanço e performance — menos cara de slide escolar, mais cara de sistema sério.</div>
         <div class="hero-chip-wrap">
             <span class="hero-chip">Blocos de decisão</span>
             <span class="hero-chip">Layout premium</span>
@@ -1464,7 +1476,7 @@ st.markdown(
         </div>
     </div>
     <div class="painel-resumo">
-        <div class="resumo-card"><div class="resumo-label">Visual</div><div class="resumo-valor">Mais bonito e mais limpo</div></div>
+        <div class="resumo-card"><div class="resumo-label">Identidade</div><div class="resumo-valor">Mais tecnológica e profissional</div></div>
         <div class="resumo-card"><div class="resumo-label">Leitura</div><div class="resumo-valor">Fácil de enxergar no celular</div></div>
         <div class="resumo-card"><div class="resumo-label">Decisão</div><div class="resumo-valor">APOSTAR / NÃO APOSTAR em destaque</div></div>
         <div class="resumo-card"><div class="resumo-label">Base</div><div class="resumo-valor">Mesma lógica do motor</div></div>
