@@ -1093,6 +1093,8 @@ MERCADOS = [
 ]
 
 ARQUIVO_AUDITORIA = "logs/auditoria_tex_pro_15.csv"
+ARQUIVO_CATALOGO_ODDS = "logs/catalogo_odds_tex_pro_15.csv"
+ARQUIVO_CATALOGO_ODDS_XLSX = "logs/catalogo_odds_tex_pro_15.xlsx"
 
 # ============================================================
 # FUNÇÕES GERAIS
@@ -1813,6 +1815,168 @@ def gerar_excel_simples(abas: Dict[str, pd.DataFrame]) -> bytes:
     return buffer.getvalue()
 
 
+# ============================================================
+# CATÁLOGO DE ODDS MANUAIS
+# ============================================================
+
+COLUNAS_CATALOGO_ODDS = [
+    "ID Coleta",
+    "Registrado em",
+    "Data da coleta",
+    "Hora da coleta",
+    "Casa de apostas",
+    "Liga",
+    "Jogo",
+    "Mandante",
+    "Visitante",
+    "Data do jogo",
+    "Hora do jogo",
+    "Mercado",
+    "Seleção",
+    "Cotação",
+    "Banca no momento",
+    "Perfil",
+    "Origem",
+    "Observação",
+]
+
+
+def carregar_catalogo_odds() -> pd.DataFrame:
+    garantir_pasta_logs()
+    if os.path.exists(ARQUIVO_CATALOGO_ODDS):
+        try:
+            df = pd.read_csv(ARQUIVO_CATALOGO_ODDS)
+            for col in COLUNAS_CATALOGO_ODDS:
+                if col not in df.columns:
+                    df[col] = ""
+            return df[COLUNAS_CATALOGO_ODDS]
+        except Exception:
+            return pd.DataFrame(columns=COLUNAS_CATALOGO_ODDS)
+    return pd.DataFrame(columns=COLUNAS_CATALOGO_ODDS)
+
+
+def selecao_por_mercado(mercado: str, time_casa: str, time_fora: str) -> str:
+    mapa = {
+        "Vitória Casa": time_casa,
+        "Empate": "Empate",
+        "Vitória Fora": time_fora,
+        "Casa ou Empate": f"{time_casa} ou Empate",
+        "Fora ou Empate": f"{time_fora} ou Empate",
+        "Empate Anula Casa": time_casa,
+        "Empate Anula Fora": time_fora,
+        "Mais de 2.5 gols": "Mais de 2.5 gols",
+        "Menos de 2.5 gols": "Menos de 2.5 gols",
+        "Ambos marcam - Sim": "Sim",
+        "Ambos marcam - Não": "Não",
+    }
+    return mapa.get(str(mercado), str(mercado))
+
+
+def registrar_odds_no_catalogo(
+    catalogo: pd.DataFrame,
+    liga: str,
+    jogo: str,
+    time_casa: str,
+    time_fora: str,
+    casa_apostas: str,
+    odds: Dict[str, float],
+    banca: float,
+    perfil: str,
+    data_jogo: Optional[date] = None,
+    hora_jogo: str = "",
+    origem: str = "Manual",
+    observacao: str = "",
+) -> pd.DataFrame:
+    agora = datetime.now()
+    coleta_id = str(uuid.uuid4())[:8]
+
+    if isinstance(data_jogo, (datetime, date)):
+        data_jogo_txt = data_jogo.strftime("%Y-%m-%d")
+    else:
+        data_jogo_txt = str(data_jogo or "")
+
+    linhas = []
+    for mercado, odd in odds.items():
+        if not odd_valida(odd):
+            continue
+        linhas.append({
+            "ID Coleta": coleta_id,
+            "Registrado em": agora.strftime("%Y-%m-%d %H:%M:%S"),
+            "Data da coleta": agora.strftime("%Y-%m-%d"),
+            "Hora da coleta": agora.strftime("%H:%M:%S"),
+            "Casa de apostas": casa_apostas,
+            "Liga": liga,
+            "Jogo": jogo,
+            "Mandante": time_casa,
+            "Visitante": time_fora,
+            "Data do jogo": data_jogo_txt,
+            "Hora do jogo": str(hora_jogo or ""),
+            "Mercado": str(mercado),
+            "Seleção": selecao_por_mercado(str(mercado), time_casa, time_fora),
+            "Cotação": round(float(odd), 4),
+            "Banca no momento": round(float(banca), 2),
+            "Perfil": perfil,
+            "Origem": origem,
+            "Observação": observacao,
+        })
+
+    if not linhas:
+        return catalogo
+
+    novo = pd.DataFrame(linhas)
+    base = pd.concat([catalogo, novo], ignore_index=True)
+    for col in COLUNAS_CATALOGO_ODDS:
+        if col not in base.columns:
+            base[col] = ""
+    return base[COLUNAS_CATALOGO_ODDS]
+
+
+def gerar_excel_catalogo_odds(catalogo: pd.DataFrame) -> bytes:
+    if catalogo.empty:
+        return gerar_excel_simples({"Catalogo": pd.DataFrame([{"Aviso": "Ainda não há odds salvas no catálogo."}])})
+
+    base = catalogo.copy()
+    base["Cotação"] = pd.to_numeric(base.get("Cotação", 0), errors="coerce")
+    base["Banca no momento"] = pd.to_numeric(base.get("Banca no momento", 0), errors="coerce")
+    base = base.sort_values("Registrado em", kind="mergesort")
+
+    chaves = ["Casa de apostas", "Liga", "Jogo", "Mercado", "Seleção"]
+    ultimas = base.groupby(chaves, dropna=False).tail(1).copy()
+    ultimas = ultimas[[
+        "Registrado em", "Casa de apostas", "Liga", "Jogo", "Data do jogo", "Hora do jogo",
+        "Mercado", "Seleção", "Cotação", "Banca no momento", "Perfil", "Origem", "Observação"
+    ]]
+
+    resumo_jogo = (
+        base.groupby(["Casa de apostas", "Liga", "Jogo"], dropna=False)
+        .agg(
+            Coletas=("ID Coleta", "nunique"),
+            Odds_registradas=("Cotação", "count"),
+            Primeira_coleta=("Registrado em", "min"),
+            Ultima_coleta=("Registrado em", "max"),
+        )
+        .reset_index()
+    )
+
+    return gerar_excel_simples({
+        "Historico odds": base,
+        "Ultimas odds": ultimas,
+        "Resumo por jogo": resumo_jogo,
+    })
+
+
+def salvar_catalogo_odds(catalogo: pd.DataFrame) -> None:
+    garantir_pasta_logs()
+    catalogo.to_csv(ARQUIVO_CATALOGO_ODDS, index=False)
+    try:
+        excel_bytes = gerar_excel_catalogo_odds(catalogo)
+        with open(ARQUIVO_CATALOGO_ODDS_XLSX, "wb") as f:
+            f.write(excel_bytes)
+    except Exception:
+        # O CSV continua sendo salvo mesmo se houver falha ao gerar o XLSX.
+        pass
+
+
 def gerar_excel_auditoria(auditoria: pd.DataFrame, banca_inicial: float) -> bytes:
     """Gera Excel completo da auditoria sem depender de openpyxl."""
     if auditoria.empty:
@@ -2159,9 +2323,9 @@ with st.sidebar:
     st.header("Casa de apostas")
     casa_apostas = st.selectbox("Onde você vai apostar?", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"])
 
-aba_analisar, aba_auditoria, aba_calendario = st.tabs(["🎯 Analisar jogo", "📒 Auditoria", "🗓️ Calendário das ligas"])
+aba_analisar, aba_catalogo, aba_auditoria, aba_calendario = st.tabs(["🎯 Analisar jogo", "📊 Catálogo de odds", "📒 Auditoria", "🗓️ Calendário das ligas"])
 
-st.markdown("<div class='caixa-info'><strong>Leitura rápida:</strong> use a aba <strong>Analisar jogo</strong> para ver as oportunidades em blocos; a aba <strong>Auditoria</strong> para registrar e baixar resultados; e a aba <strong>Calendário das ligas</strong> para saber onde focar no mês.</div>", unsafe_allow_html=True)
+st.markdown("<div class='caixa-info'><strong>Leitura rápida:</strong> use a aba <strong>Analisar jogo</strong> para ver as oportunidades em blocos; a aba <strong>Catálogo de odds</strong> para guardar cotações manuais; a aba <strong>Auditoria</strong> para registrar e baixar resultados; e a aba <strong>Calendário das ligas</strong> para saber onde focar no mês.</div>", unsafe_allow_html=True)
 
 # O calendário vem antes da análise para nunca depender de jogo selecionado.
 with aba_calendario:
@@ -2321,6 +2485,10 @@ with aba_analisar:
     jogo_nome = ""
     origem = modo
 
+    botao_salvar_catalogo = False
+    data_jogo_catalogo = date.today()
+    hora_jogo_catalogo = ""
+
     if modo == "Manual":
         st.markdown("### Jogo")
         c1, c2 = st.columns(2)
@@ -2329,13 +2497,46 @@ with aba_analisar:
         with c2:
             time_fora = st.selectbox("Visitante", times, key="time_fora_manual")
 
+        c1, c2 = st.columns(2)
+        with c1:
+            data_jogo_catalogo = st.date_input("Data do jogo/mercado", value=date.today(), key="data_jogo_catalogo_manual")
+        with c2:
+            hora_jogo_catalogo = st.text_input("Hora do jogo", value="", placeholder="ex: 15:45", key="hora_jogo_catalogo_manual")
+
         if time_casa == time_fora:
             st.warning("Mandante e visitante não podem ser o mesmo time. Altere um dos times para analisar. As outras abas continuam funcionando normalmente.")
             botao_analisar = False
         else:
             jogo_nome = f"{time_casa} x {time_fora}"
             odds = coletar_odds_manuais("manual")
-            botao_analisar = st.button("ANALISAR JOGO MANUAL", type="primary")
+            c1, c2 = st.columns(2)
+            with c1:
+                botao_analisar = st.button("ANALISAR JOGO MANUAL", type="primary")
+            with c2:
+                botao_salvar_catalogo = st.button("SALVAR ODDS NO CATÁLOGO")
+
+            if botao_salvar_catalogo:
+                if not odds:
+                    st.error("Nenhuma cotação válida foi informada para salvar no catálogo.")
+                else:
+                    catalogo = carregar_catalogo_odds()
+                    catalogo = registrar_odds_no_catalogo(
+                        catalogo=catalogo,
+                        liga=liga_sel,
+                        jogo=jogo_nome,
+                        time_casa=time_casa,
+                        time_fora=time_fora,
+                        casa_apostas=casa_apostas,
+                        odds=odds,
+                        banca=float(banca_usada),
+                        perfil=perfil,
+                        data_jogo=data_jogo_catalogo,
+                        hora_jogo=hora_jogo_catalogo,
+                        origem="Manual digitado",
+                        observacao="Odds salvas antes/sem obrigação de apostar",
+                    )
+                    salvar_catalogo_odds(catalogo)
+                    st.success(f"{len(odds)} cotação(ões) salvas no catálogo. XLSX atualizado em logs/catalogo_odds_tex_pro_15.xlsx.")
 
     else:
         if not chave_api:
@@ -2512,6 +2713,77 @@ with aba_analisar:
         if st.button("LIMPAR ÚLTIMA ANÁLISE"):
             st.session_state.pop("ultima_analise", None)
             st.rerun()
+
+
+with aba_catalogo:
+    st.subheader("Catálogo de odds")
+    st.caption("Aqui ficam salvas as cotações que você digitou manualmente. O app registra horário, data, banca usada, casa de apostas, liga, jogo, mercado e odd.")
+
+    catalogo = carregar_catalogo_odds()
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Odds salvas", len(catalogo))
+    c2.metric("Coletas", catalogo["ID Coleta"].nunique() if not catalogo.empty else 0)
+    c3.metric("Casas", catalogo["Casa de apostas"].nunique() if not catalogo.empty else 0)
+
+    if catalogo.empty:
+        st.info("Ainda não há odds salvas. Vá na aba Analisar jogo, preencha as odds manuais e clique em SALVAR ODDS NO CATÁLOGO.")
+    else:
+        st.markdown("### Filtros")
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            filtro_casa = st.multiselect("Casa", sorted(catalogo["Casa de apostas"].dropna().unique().tolist()))
+        with f2:
+            filtro_liga = st.multiselect("Liga", sorted(catalogo["Liga"].dropna().unique().tolist()))
+        with f3:
+            filtro_jogo = st.text_input("Buscar jogo/time", value="", placeholder="Ex: Derry, Shamrock, Galway...")
+
+        filtrado = catalogo.copy()
+        if filtro_casa:
+            filtrado = filtrado[filtrado["Casa de apostas"].isin(filtro_casa)]
+        if filtro_liga:
+            filtrado = filtrado[filtrado["Liga"].isin(filtro_liga)]
+        if filtro_jogo.strip():
+            termo = filtro_jogo.strip().lower()
+            filtrado = filtrado[
+                filtrado["Jogo"].astype(str).str.lower().str.contains(termo, na=False)
+                | filtrado["Mandante"].astype(str).str.lower().str.contains(termo, na=False)
+                | filtrado["Visitante"].astype(str).str.lower().str.contains(termo, na=False)
+            ]
+
+        st.markdown("### Histórico catalogado")
+        st.dataframe(filtrado.tail(500), use_container_width=True, hide_index=True)
+
+        st.markdown("### Últimas odds por mercado")
+        ultimas = (
+            filtrado.sort_values("Registrado em", kind="mergesort")
+            .groupby(["Casa de apostas", "Liga", "Jogo", "Mercado", "Seleção"], dropna=False)
+            .tail(1)
+        )
+        colunas_ultimas = [
+            "Registrado em", "Casa de apostas", "Liga", "Jogo", "Data do jogo", "Hora do jogo",
+            "Mercado", "Seleção", "Cotação", "Banca no momento", "Perfil"
+        ]
+        st.dataframe(ultimas[colunas_ultimas].tail(300), use_container_width=True, hide_index=True)
+
+        csv_cat = filtrado.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "BAIXAR CATÁLOGO FILTRADO EM CSV",
+            data=csv_cat,
+            file_name="catalogo_odds_tex_pro_15.csv",
+            mime="text/csv",
+        )
+
+        excel_cat = gerar_excel_catalogo_odds(filtrado)
+        st.download_button(
+            "BAIXAR CATÁLOGO EM EXCEL (.xlsx)",
+            data=excel_cat,
+            file_name="catalogo_odds_tex_pro_15.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        st.caption(f"Arquivo local atualizado automaticamente em: {ARQUIVO_CATALOGO_ODDS_XLSX}")
+
 
 with aba_auditoria:
     st.subheader("Auditoria operacional")
