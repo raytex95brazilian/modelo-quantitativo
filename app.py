@@ -1146,7 +1146,7 @@ def odd_valida(odd: Optional[float]) -> bool:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def extrair_dados(url: str) -> pd.DataFrame:
+def extrair_dados(url: str, jogos_historicos: int = 500, peso_inicial: float = -2.60) -> pd.DataFrame:
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, headers=headers, timeout=20)
@@ -1162,9 +1162,27 @@ def extrair_dados(url: str) -> pd.DataFrame:
         if "Date" in df.columns:
             df["DataTemp"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
             df = df.sort_values("DataTemp", kind="mergesort")
-        df = df.tail(1500).reset_index(drop=True)
-        # Peso parecido com a versão antiga, mas um pouco mais estável
-        df["Peso"] = np.exp(np.linspace(-1.25, 0, len(df)))
+
+        # Janela histórica dinâmica.
+        # Padrão profissional: 500 jogos da liga, com peso mais forte para jogos recentes.
+        # Isso mantém estabilidade sem deixar temporadas antigas mandarem demais no cálculo.
+        try:
+            jogos_historicos = int(jogos_historicos)
+        except Exception:
+            jogos_historicos = 500
+        jogos_historicos = int(np.clip(jogos_historicos, 120, 1500))
+
+        try:
+            peso_inicial = float(peso_inicial)
+        except Exception:
+            peso_inicial = -2.60
+        peso_inicial = float(np.clip(peso_inicial, -4.00, -0.50))
+
+        df = df.tail(jogos_historicos).reset_index(drop=True)
+        if len(df) > 0:
+            df["Peso"] = np.exp(np.linspace(peso_inicial, 0, len(df)))
+        else:
+            df["Peso"] = []
         return df
     except Exception:
         return pd.DataFrame()
@@ -2317,6 +2335,33 @@ with st.sidebar:
     st.divider()
     st.header("Dados")
     liga_sel = st.selectbox("Liga", list(LIGAS_CSV.keys()))
+
+    perfil_janela = st.selectbox(
+        "Janela histórica do modelo",
+        [
+            "Atual/agressivo — 380 jogos",
+            "Equilibrado — 500 jogos",
+            "Estável — 760 jogos",
+            "Histórico longo — 1500 jogos",
+        ],
+        index=1,
+        help="Define quantos jogos recentes da liga entram no cálculo. O banco de odds/auditoria não é alterado por essa configuração.",
+    )
+    config_janela = {
+        "Atual/agressivo — 380 jogos": {"jogos": 380, "peso": -2.80, "descricao": "mais sensível à fase recente"},
+        "Equilibrado — 500 jogos": {"jogos": 500, "peso": -2.60, "descricao": "padrão recomendado para operar"},
+        "Estável — 760 jogos": {"jogos": 760, "peso": -2.20, "descricao": "mais estabilidade, menos sensibilidade"},
+        "Histórico longo — 1500 jogos": {"jogos": 1500, "peso": -1.25, "descricao": "modo antigo/estudo, com mais histórico"},
+    }
+    janela_cfg = config_janela.get(perfil_janela, config_janela["Equilibrado — 500 jogos"])
+    jogos_historicos_modelo = int(janela_cfg["jogos"])
+    peso_inicial_modelo = float(janela_cfg["peso"])
+    st.caption(
+        f"Usando os últimos {jogos_historicos_modelo} jogos da liga. "
+        f"Peso do jogo mais antigo: {np.exp(peso_inicial_modelo):.1%}. "
+        f"Perfil: {janela_cfg['descricao']}."
+    )
+
     chave_api = st.text_input("Chave da API de cotações", value=os.getenv("ODDS_API_KEY", ""), type="password")
 
     st.divider()
@@ -2463,7 +2508,7 @@ with aba_calendario:
 
 with aba_analisar:
     with st.spinner("Carregando dados históricos da liga..."):
-        df = extrair_dados(LIGAS_CSV[liga_sel])
+        df = extrair_dados(LIGAS_CSV[liga_sel], jogos_historicos_modelo, peso_inicial_modelo)
 
     if df.empty:
         st.error("Não consegui carregar os dados históricos desta liga.")
