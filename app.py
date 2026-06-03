@@ -1094,15 +1094,17 @@ MERCADOS = [
 ]
 
 ARQUIVO_AUDITORIA = "logs/auditoria_tex_pro_15.csv"
+ARQUIVO_AUDITORIA_XLSX = "logs/auditoria_tex_pro_15.xlsx"
 ARQUIVO_CATALOGO_ODDS = "logs/catalogo_odds_tex_pro_15.csv"
 ARQUIVO_CATALOGO_ODDS_XLSX = "logs/catalogo_odds_tex_pro_15.xlsx"
 
-# Google Sheets — armazenamento persistente do catálogo de odds.
+# Google Sheets — armazenamento persistente do catálogo de odds e da auditoria.
 # Configure em .streamlit/secrets.toml:
 #
 # [google_sheets]
 # spreadsheet_id = "ID_DA_PLANILHA_GOOGLE"
 # worksheet_catalogo = "catalogo_odds"
+# worksheet_auditoria = "auditoria_entradas"
 #
 # [gcp_service_account]
 # type = "service_account"
@@ -1117,6 +1119,7 @@ ARQUIVO_CATALOGO_ODDS_XLSX = "logs/catalogo_odds_tex_pro_15.xlsx"
 # client_x509_cert_url = "..."
 # universe_domain = "googleapis.com"
 GOOGLE_SHEETS_WORKSHEET_PADRAO = "catalogo_odds"
+GOOGLE_SHEETS_WORKSHEET_AUDITORIA_PADRAO = "auditoria_entradas"
 
 # ============================================================
 # FUNÇÕES GERAIS
@@ -1881,6 +1884,30 @@ COLUNAS_CATALOGO_ODDS = [
 ]
 
 
+COLUNAS_AUDITORIA = [
+    "ID",
+    "Registrado em",
+    "Liga",
+    "Jogo",
+    "Casa de apostas",
+    "Mercado",
+    "Cotação de entrada",
+    "Cotação justa",
+    "Chance pelo sistema %",
+    "Valor esperado %",
+    "Entrada %",
+    "Entrada R$",
+    "Banca antes",
+    "Cotação de fechamento",
+    "Vantagem no fechamento %",
+    "Status",
+    "Resultado R$",
+    "Banca depois",
+    "Origem",
+    "Observação",
+]
+
+
 def normalizar_catalogo_odds(df: pd.DataFrame) -> pd.DataFrame:
     """Garante que o catálogo sempre tenha as mesmas colunas, na mesma ordem."""
     if df is None or df.empty:
@@ -1890,6 +1917,36 @@ def normalizar_catalogo_odds(df: pd.DataFrame) -> pd.DataFrame:
         if col not in base.columns:
             base[col] = ""
     return base[COLUNAS_CATALOGO_ODDS].fillna("")
+
+
+def normalizar_auditoria(df: pd.DataFrame) -> pd.DataFrame:
+    """Garante que a auditoria sempre tenha as mesmas colunas, na mesma ordem."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=COLUNAS_AUDITORIA)
+    base = df.copy()
+    for col in COLUNAS_AUDITORIA:
+        if col not in base.columns:
+            base[col] = ""
+    base = base[COLUNAS_AUDITORIA].fillna("")
+
+    # Mantém colunas monetárias/numéricas usáveis quando o dado vem do Google Sheets como texto.
+    for col in [
+        "Cotação de entrada",
+        "Cotação justa",
+        "Chance pelo sistema %",
+        "Valor esperado %",
+        "Entrada %",
+        "Entrada R$",
+        "Banca antes",
+        "Cotação de fechamento",
+        "Vantagem no fechamento %",
+        "Resultado R$",
+        "Banca depois",
+    ]:
+        if col in base.columns:
+            # Não força conversão aqui para preservar células vazias; conversão é feita nos cálculos.
+            base[col] = base[col].astype(str).replace({"nan": "", "None": ""})
+    return base
 
 
 def _segredo_para_dict(obj):
@@ -1908,11 +1965,13 @@ def obter_config_google_sheets() -> Dict[str, str]:
         cfg = _segredo_para_dict(st.secrets.get("google_sheets", {}))
         spreadsheet_id = str(cfg.get("spreadsheet_id", "")).strip()
         worksheet_catalogo = str(cfg.get("worksheet_catalogo", GOOGLE_SHEETS_WORKSHEET_PADRAO)).strip() or GOOGLE_SHEETS_WORKSHEET_PADRAO
+        worksheet_auditoria = str(cfg.get("worksheet_auditoria", GOOGLE_SHEETS_WORKSHEET_AUDITORIA_PADRAO)).strip() or GOOGLE_SHEETS_WORKSHEET_AUDITORIA_PADRAO
         service_account = _segredo_para_dict(st.secrets.get("gcp_service_account", {}))
         client_email = str(service_account.get("client_email", "")).strip() if isinstance(service_account, dict) else ""
         return {
             "spreadsheet_id": spreadsheet_id,
             "worksheet_catalogo": worksheet_catalogo,
+            "worksheet_auditoria": worksheet_auditoria,
             "client_email": client_email,
             "configurado": bool(spreadsheet_id and client_email),
         }
@@ -1920,6 +1979,7 @@ def obter_config_google_sheets() -> Dict[str, str]:
         return {
             "spreadsheet_id": "",
             "worksheet_catalogo": GOOGLE_SHEETS_WORKSHEET_PADRAO,
+            "worksheet_auditoria": GOOGLE_SHEETS_WORKSHEET_AUDITORIA_PADRAO,
             "client_email": "",
             "configurado": False,
         }
@@ -1976,6 +2036,116 @@ def obter_aba_catalogo_google():
 
     return aba
 
+
+
+
+def obter_aba_google(nome_aba: str, colunas: List[str], linhas: int = 1000, cols_extra: int = 4):
+    """Obtém/cria uma aba no Google Sheets e garante cabeçalho."""
+    planilha = conectar_google_sheets_catalogo()
+    if planilha is None:
+        return None
+
+    try:
+        aba = planilha.worksheet(nome_aba)
+    except Exception:
+        aba = planilha.add_worksheet(title=nome_aba, rows=linhas, cols=max(len(colunas) + cols_extra, len(colunas)))
+
+    try:
+        primeira_linha = aba.row_values(1)
+        if primeira_linha != colunas:
+            if not primeira_linha:
+                aba.append_row(colunas, value_input_option="USER_ENTERED")
+            else:
+                aba.update("A1", [colunas])
+    except Exception:
+        pass
+
+    return aba
+
+
+def obter_aba_auditoria_google():
+    nome_aba = obter_config_google_sheets().get("worksheet_auditoria", GOOGLE_SHEETS_WORKSHEET_AUDITORIA_PADRAO)
+    return obter_aba_google(nome_aba, COLUNAS_AUDITORIA, linhas=1500, cols_extra=4)
+
+
+def carregar_auditoria_google() -> Optional[pd.DataFrame]:
+    aba = obter_aba_auditoria_google()
+    if aba is None:
+        return None
+    try:
+        valores = aba.get_all_values()
+        if not valores or len(valores) <= 1:
+            return pd.DataFrame(columns=COLUNAS_AUDITORIA)
+        cabecalho = valores[0]
+        linhas = valores[1:]
+        df = pd.DataFrame(linhas, columns=cabecalho)
+        return normalizar_auditoria(df)
+    except Exception as exc:
+        st.warning(f"Não consegui ler a auditoria no Google Sheets. Usando backup local temporário. Detalhe: {exc}")
+        return None
+
+
+def salvar_auditoria_google(auditoria: pd.DataFrame) -> bool:
+    aba = obter_aba_auditoria_google()
+    if aba is None:
+        return False
+    try:
+        base = normalizar_auditoria(auditoria).astype(str)
+        valores = [COLUNAS_AUDITORIA] + base.values.tolist()
+        aba.clear()
+        aba.update("A1", valores, value_input_option="USER_ENTERED")
+        return True
+    except Exception as exc:
+        st.warning(f"Não consegui salvar a auditoria no Google Sheets. O backup local foi atualizado, mas ele é temporário no Streamlit Cloud. Detalhe: {exc}")
+        return False
+
+
+def carregar_auditoria_local() -> pd.DataFrame:
+    garantir_pasta_logs()
+    if os.path.exists(ARQUIVO_AUDITORIA):
+        try:
+            df = pd.read_csv(ARQUIVO_AUDITORIA)
+            return normalizar_auditoria(df)
+        except Exception:
+            return pd.DataFrame(columns=COLUNAS_AUDITORIA)
+    return pd.DataFrame(columns=COLUNAS_AUDITORIA)
+
+
+# As definições abaixo sobrescrevem as funções locais antigas.
+# A auditoria agora usa Google Sheets quando configurado, com backup local apenas temporário.
+def carregar_auditoria() -> pd.DataFrame:
+    if google_sheets_configurado():
+        df_google = carregar_auditoria_google()
+        if df_google is not None:
+            # Migra automaticamente uma auditoria local antiga, se existir, quando a aba online ainda estiver vazia.
+            if df_google.empty:
+                local = carregar_auditoria_local()
+                if not local.empty:
+                    salvar_auditoria_google(local)
+                    return local
+            return df_google
+    return carregar_auditoria_local()
+
+
+def salvar_auditoria(df: pd.DataFrame) -> str:
+    garantir_pasta_logs()
+    auditoria = normalizar_auditoria(df)
+
+    # Backup local: útil para download, mas NÃO é permanente no Streamlit Cloud.
+    auditoria.to_csv(ARQUIVO_AUDITORIA, index=False)
+    try:
+        excel_bytes = gerar_excel_auditoria(auditoria, banca_inicial if "banca_inicial" in globals() else 1000.0)
+        with open(ARQUIVO_AUDITORIA_XLSX, "wb") as f:
+            f.write(excel_bytes)
+    except Exception:
+        pass
+
+    if google_sheets_configurado():
+        if salvar_auditoria_google(auditoria):
+            return "Google Sheets + backup local"
+        return "backup local temporário; Google Sheets falhou"
+
+    return "backup local temporário; Google Sheets não configurado"
 
 def carregar_catalogo_odds_google() -> Optional[pd.DataFrame]:
     aba = obter_aba_catalogo_google()
@@ -2919,8 +3089,8 @@ with aba_analisar:
                             origem=origem_analise,
                             observacao=observacao,
                         )
-                    salvar_auditoria(auditoria)
-                    st.success("Entradas salvas na auditoria.")
+                    destino_auditoria = salvar_auditoria(auditoria)
+                    st.success(f"Entradas salvas na auditoria. Destino: {destino_auditoria}.")
 
         if st.button("LIMPAR ÚLTIMA ANÁLISE"):
             st.session_state.pop("ultima_analise", None)
@@ -3019,6 +3189,13 @@ with aba_catalogo:
 with aba_auditoria:
     st.subheader("Auditoria operacional")
     st.caption("Aqui você acompanha banca, resultado e vantagem no fechamento.")
+
+    cfg_google_aud = obter_config_google_sheets()
+    if cfg_google_aud.get("configurado"):
+        st.success(f"Auditoria permanente ativa no Google Sheets. Aba usada: {cfg_google_aud.get('worksheet_auditoria', GOOGLE_SHEETS_WORKSHEET_AUDITORIA_PADRAO)}.")
+    else:
+        st.warning("Auditoria em backup local temporário. Configure o Google Sheets para não perder entradas quando o Streamlit reiniciar.")
+
     auditoria = carregar_auditoria()
     banca_calc = banca_atual_auditada(banca_inicial, auditoria)
 
@@ -3066,8 +3243,8 @@ with aba_auditoria:
                     origem="Manual livre",
                     observacao=aud_obs,
                 )
-                salvar_auditoria(auditoria)
-                st.success("Entrada manual salva.")
+                destino_auditoria = salvar_auditoria(auditoria)
+                st.success(f"Entrada manual salva. Destino: {destino_auditoria}.")
 
     st.markdown("---")
     st.markdown("### Fechar resultado de uma entrada")
@@ -3115,8 +3292,8 @@ with aba_auditoria:
                 auditoria.loc[idx, "Cotação de fechamento"] = odd_fechamento if odd_fechamento is not None else ""
                 auditoria.loc[idx, "Vantagem no fechamento %"] = vantagem_fechamento
                 auditoria.loc[idx, "Observação"] = str(row.get("Observação", "")) + " | Fechamento: " + obs_fechamento
-                salvar_auditoria(auditoria)
-                st.success("Entrada fechada e auditoria atualizada.")
+                destino_auditoria = salvar_auditoria(auditoria)
+                st.success(f"Entrada fechada e auditoria atualizada. Destino: {destino_auditoria}.")
 
     st.markdown("---")
     st.markdown("### Histórico")
