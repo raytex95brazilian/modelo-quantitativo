@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import uuid
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
@@ -1096,6 +1097,27 @@ ARQUIVO_AUDITORIA = "logs/auditoria_tex_pro_15.csv"
 ARQUIVO_CATALOGO_ODDS = "logs/catalogo_odds_tex_pro_15.csv"
 ARQUIVO_CATALOGO_ODDS_XLSX = "logs/catalogo_odds_tex_pro_15.xlsx"
 
+# Google Sheets — armazenamento persistente do catálogo de odds.
+# Configure em .streamlit/secrets.toml:
+#
+# [google_sheets]
+# spreadsheet_id = "ID_DA_PLANILHA_GOOGLE"
+# worksheet_catalogo = "catalogo_odds"
+#
+# [gcp_service_account]
+# type = "service_account"
+# project_id = "..."
+# private_key_id = "..."
+# private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+# client_email = "...@...iam.gserviceaccount.com"
+# client_id = "..."
+# auth_uri = "https://accounts.google.com/o/oauth2/auth"
+# token_uri = "https://oauth2.googleapis.com/token"
+# auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+# client_x509_cert_url = "..."
+# universe_domain = "googleapis.com"
+GOOGLE_SHEETS_WORKSHEET_PADRAO = "catalogo_odds"
+
 # ============================================================
 # FUNÇÕES GERAIS
 # ============================================================
@@ -1859,18 +1881,152 @@ COLUNAS_CATALOGO_ODDS = [
 ]
 
 
-def carregar_catalogo_odds() -> pd.DataFrame:
+def normalizar_catalogo_odds(df: pd.DataFrame) -> pd.DataFrame:
+    """Garante que o catálogo sempre tenha as mesmas colunas, na mesma ordem."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=COLUNAS_CATALOGO_ODDS)
+    base = df.copy()
+    for col in COLUNAS_CATALOGO_ODDS:
+        if col not in base.columns:
+            base[col] = ""
+    return base[COLUNAS_CATALOGO_ODDS].fillna("")
+
+
+def _segredo_para_dict(obj):
+    """Converte st.secrets/AttrDict em dict comum, sem expor segredo na tela."""
+    if hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    try:
+        return dict(obj)
+    except Exception:
+        return obj
+
+
+def obter_config_google_sheets() -> Dict[str, str]:
+    """Lê configuração do Google Sheets no secrets.toml, se existir."""
+    try:
+        cfg = _segredo_para_dict(st.secrets.get("google_sheets", {}))
+        spreadsheet_id = str(cfg.get("spreadsheet_id", "")).strip()
+        worksheet_catalogo = str(cfg.get("worksheet_catalogo", GOOGLE_SHEETS_WORKSHEET_PADRAO)).strip() or GOOGLE_SHEETS_WORKSHEET_PADRAO
+        service_account = _segredo_para_dict(st.secrets.get("gcp_service_account", {}))
+        client_email = str(service_account.get("client_email", "")).strip() if isinstance(service_account, dict) else ""
+        return {
+            "spreadsheet_id": spreadsheet_id,
+            "worksheet_catalogo": worksheet_catalogo,
+            "client_email": client_email,
+            "configurado": bool(spreadsheet_id and client_email),
+        }
+    except Exception:
+        return {
+            "spreadsheet_id": "",
+            "worksheet_catalogo": GOOGLE_SHEETS_WORKSHEET_PADRAO,
+            "client_email": "",
+            "configurado": False,
+        }
+
+
+def google_sheets_configurado() -> bool:
+    return bool(obter_config_google_sheets().get("configurado"))
+
+
+@st.cache_resource(show_spinner=False)
+def conectar_google_sheets_catalogo():
+    """Abre a planilha Google do catálogo. Usa cache para não reconectar a cada clique."""
+    if not google_sheets_configurado():
+        return None
+
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+
+        service_account = _segredo_para_dict(st.secrets.get("gcp_service_account", {}))
+        service_account = json.loads(json.dumps(service_account))
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_info(service_account, scopes=scopes)
+        client = gspread.authorize(creds)
+        cfg = obter_config_google_sheets()
+        return client.open_by_key(cfg["spreadsheet_id"])
+    except Exception as exc:
+        # Não quebra o app; volta para backup local se o Google Sheets falhar.
+        st.warning(f"Google Sheets não conectou. O app vai usar backup local temporário. Detalhe: {exc}")
+        return None
+
+
+def obter_aba_catalogo_google():
+    planilha = conectar_google_sheets_catalogo()
+    if planilha is None:
+        return None
+
+    nome_aba = obter_config_google_sheets()["worksheet_catalogo"]
+    try:
+        aba = planilha.worksheet(nome_aba)
+    except Exception:
+        aba = planilha.add_worksheet(title=nome_aba, rows=1000, cols=max(20, len(COLUNAS_CATALOGO_ODDS)))
+
+    try:
+        primeira_linha = aba.row_values(1)
+        if primeira_linha != COLUNAS_CATALOGO_ODDS:
+            # Se a aba estiver vazia, cria cabeçalho. Se tiver cabeçalho antigo, atualiza a linha 1.
+            if not primeira_linha:
+                aba.append_row(COLUNAS_CATALOGO_ODDS, value_input_option="USER_ENTERED")
+            else:
+                aba.update("A1", [COLUNAS_CATALOGO_ODDS])
+    except Exception:
+        pass
+
+    return aba
+
+
+def carregar_catalogo_odds_google() -> Optional[pd.DataFrame]:
+    aba = obter_aba_catalogo_google()
+    if aba is None:
+        return None
+    try:
+        valores = aba.get_all_values()
+        if not valores or len(valores) <= 1:
+            return pd.DataFrame(columns=COLUNAS_CATALOGO_ODDS)
+        cabecalho = valores[0]
+        linhas = valores[1:]
+        df = pd.DataFrame(linhas, columns=cabecalho)
+        return normalizar_catalogo_odds(df)
+    except Exception as exc:
+        st.warning(f"Não consegui ler o catálogo no Google Sheets. Usando backup local temporário. Detalhe: {exc}")
+        return None
+
+
+def salvar_catalogo_odds_google(catalogo: pd.DataFrame) -> bool:
+    aba = obter_aba_catalogo_google()
+    if aba is None:
+        return False
+    try:
+        base = normalizar_catalogo_odds(catalogo).astype(str)
+        valores = [COLUNAS_CATALOGO_ODDS] + base.values.tolist()
+        aba.clear()
+        aba.update("A1", valores, value_input_option="USER_ENTERED")
+        return True
+    except Exception as exc:
+        st.warning(f"Não consegui salvar no Google Sheets. O backup local foi atualizado, mas ele é temporário no Streamlit Cloud. Detalhe: {exc}")
+        return False
+
+
+def carregar_catalogo_odds_local() -> pd.DataFrame:
     garantir_pasta_logs()
     if os.path.exists(ARQUIVO_CATALOGO_ODDS):
         try:
             df = pd.read_csv(ARQUIVO_CATALOGO_ODDS)
-            for col in COLUNAS_CATALOGO_ODDS:
-                if col not in df.columns:
-                    df[col] = ""
-            return df[COLUNAS_CATALOGO_ODDS]
+            return normalizar_catalogo_odds(df)
         except Exception:
             return pd.DataFrame(columns=COLUNAS_CATALOGO_ODDS)
     return pd.DataFrame(columns=COLUNAS_CATALOGO_ODDS)
+
+
+def carregar_catalogo_odds() -> pd.DataFrame:
+    """Carrega do Google Sheets quando configurado; senão, usa arquivo local temporário."""
+    if google_sheets_configurado():
+        df_google = carregar_catalogo_odds_google()
+        if df_google is not None:
+            return df_google
+    return carregar_catalogo_odds_local()
 
 
 def selecao_por_mercado(mercado: str, time_casa: str, time_fora: str) -> str:
@@ -1983,8 +2139,12 @@ def gerar_excel_catalogo_odds(catalogo: pd.DataFrame) -> bytes:
     })
 
 
-def salvar_catalogo_odds(catalogo: pd.DataFrame) -> None:
+def salvar_catalogo_odds(catalogo: pd.DataFrame) -> str:
+    """Salva o catálogo. Google Sheets é o destino permanente; local é apenas backup temporário."""
     garantir_pasta_logs()
+    catalogo = normalizar_catalogo_odds(catalogo)
+
+    # Backup local: útil para download, mas NÃO é permanente no Streamlit Cloud.
     catalogo.to_csv(ARQUIVO_CATALOGO_ODDS, index=False)
     try:
         excel_bytes = gerar_excel_catalogo_odds(catalogo)
@@ -1993,6 +2153,13 @@ def salvar_catalogo_odds(catalogo: pd.DataFrame) -> None:
     except Exception:
         # O CSV continua sendo salvo mesmo se houver falha ao gerar o XLSX.
         pass
+
+    if google_sheets_configurado():
+        if salvar_catalogo_odds_google(catalogo):
+            return "Google Sheets + backup local"
+        return "backup local temporário; Google Sheets falhou"
+
+    return "backup local temporário; Google Sheets não configurado"
 
 
 def gerar_excel_auditoria(auditoria: pd.DataFrame, banca_inicial: float) -> bytes:
@@ -2580,8 +2747,8 @@ with aba_analisar:
                         origem="Manual digitado",
                         observacao="Odds salvas antes/sem obrigação de apostar",
                     )
-                    salvar_catalogo_odds(catalogo)
-                    st.success(f"{len(odds)} cotação(ões) salvas no catálogo. XLSX atualizado em logs/catalogo_odds_tex_pro_15.xlsx.")
+                    destino_catalogo = salvar_catalogo_odds(catalogo)
+                    st.success(f"{len(odds)} cotação(ões) salvas no catálogo. Destino: {destino_catalogo}.")
 
     else:
         if not chave_api:
@@ -2764,12 +2931,28 @@ with aba_catalogo:
     st.subheader("Catálogo de odds")
     st.caption("Aqui ficam salvas as cotações que você digitou manualmente. O app registra horário, data, banca usada, casa de apostas, liga, jogo, mercado e odd.")
 
+    cfg_google = obter_config_google_sheets()
+    if cfg_google.get("configurado"):
+        url_planilha = f"https://docs.google.com/spreadsheets/d/{cfg_google['spreadsheet_id']}"
+        st.success(f"Catálogo permanente ativo no Google Sheets. Aba usada: {cfg_google['worksheet_catalogo']}.")
+        st.markdown(f"[Abrir planilha no Google Sheets]({url_planilha})")
+    else:
+        st.warning("Google Sheets ainda não está configurado. Se salvar assim no Streamlit Cloud, o catálogo local pode sumir quando o app reiniciar.")
+
     catalogo = carregar_catalogo_odds()
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Odds salvas", len(catalogo))
     c2.metric("Coletas", catalogo["ID Coleta"].nunique() if not catalogo.empty else 0)
     c3.metric("Casas", catalogo["Casa de apostas"].nunique() if not catalogo.empty else 0)
+
+    if cfg_google.get("configurado"):
+        local_existente = carregar_catalogo_odds_local()
+        if not local_existente.empty and catalogo.empty:
+            if st.button("MIGRAR BACKUP LOCAL PARA GOOGLE SHEETS"):
+                destino_migracao = salvar_catalogo_odds(local_existente)
+                st.success(f"Backup local migrado. Destino: {destino_migracao}.")
+                st.rerun()
 
     if catalogo.empty:
         st.info("Ainda não há odds salvas. Vá na aba Analisar jogo, preencha as odds manuais e clique em SALVAR ODDS NO CATÁLOGO.")
@@ -2827,7 +3010,10 @@ with aba_catalogo:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-        st.caption(f"Arquivo local atualizado automaticamente em: {ARQUIVO_CATALOGO_ODDS_XLSX}")
+        if google_sheets_configurado():
+            st.caption("Fonte permanente: Google Sheets. O arquivo local é só backup temporário/download.")
+        else:
+            st.caption(f"Arquivo local atualizado automaticamente em: {ARQUIVO_CATALOGO_ODDS_XLSX}. Atenção: no Streamlit Cloud esse arquivo pode sumir ao reiniciar.")
 
 
 with aba_auditoria:
