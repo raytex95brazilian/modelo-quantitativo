@@ -2013,94 +2013,63 @@ def conectar_google_sheets_catalogo():
 
 
 def obter_aba_catalogo_google():
-    planilha = conectar_google_sheets_catalogo()
-    if planilha is None:
-        return None
-
-    nome_aba = obter_config_google_sheets()["worksheet_catalogo"]
-    try:
-        aba = planilha.worksheet(nome_aba)
-    except Exception:
-        aba = planilha.add_worksheet(title=nome_aba, rows=1000, cols=max(20, len(COLUNAS_CATALOGO_ODDS)))
-
-    try:
-        primeira_linha = aba.row_values(1)
-        if primeira_linha != COLUNAS_CATALOGO_ODDS:
-            # Se a aba estiver vazia, cria cabeçalho. Se tiver cabeçalho antigo, atualiza a linha 1.
-            if not primeira_linha:
-                aba.append_row(COLUNAS_CATALOGO_ODDS, value_input_option="USER_ENTERED")
-            else:
-                aba.update("A1", [COLUNAS_CATALOGO_ODDS])
-    except Exception:
-        pass
-
-    return aba
-
+    nome_aba = obter_config_google_sheets().get("worksheet_catalogo", GOOGLE_SHEETS_WORKSHEET_PADRAO)
+    return obter_aba_google(
+        nome_aba,
+        COLUNAS_CATALOGO_ODDS,
+        linhas=1000,
+        cols_extra=4,
+    )
 
 
 
 def obter_aba_google(nome_aba: str, colunas: List[str], linhas: int = 1000, cols_extra: int = 4):
-    """Obtém uma aba existente no Google Sheets e garante cabeçalho, sem criar aba nova automaticamente."""
+    """
+    Abre uma aba já existente no Google Sheets.
+
+    Importante:
+    - não usa add_worksheet automaticamente;
+    - não lista todas as abas com worksheets();
+    - não lê cabeçalho em toda abertura;
+    - se o Google bater limite 429/quota, o app volta para o backup local temporário.
+    """
     planilha = conectar_google_sheets_catalogo()
     if planilha is None:
         return None
 
     nome_aba = str(nome_aba).strip()
+    if not nome_aba:
+        st.warning("Nome da aba do Google Sheets vazio. Usando backup local temporário.")
+        return None
 
-    # IMPORTANTE:
-    # Não usamos add_worksheet aqui.
-    # Se o app não encontrar a aba, ele mostra quais abas existem em vez de quebrar
-    # com erro redigido do gspread/Streamlit Cloud.
     try:
-        abas = planilha.worksheets()
+        return planilha.worksheet(nome_aba)
+
     except Exception as exc:
-        st.error(
-            "Consegui conectar na planilha, mas não consegui listar as abas do Google Sheets. "
-            "Confira se a planilha foi compartilhada com o e-mail da conta de serviço. "
-            f"Detalhe: {exc}"
-        )
-        st.stop()
+        detalhe = str(exc)
+        detalhe_lower = detalhe.lower()
+        classe_erro = exc.__class__.__name__
 
-    aba = None
+        if "429" in detalhe or "quota" in detalhe_lower or "read requests" in detalhe_lower:
+            st.warning(
+                "O Google Sheets bloqueou temporariamente por excesso de leituras por minuto. "
+                "O app vai usar o backup local temporário agora. Aguarde 1 a 2 minutos e atualize a página."
+            )
+            return None
 
-    # 1) Procura pelo nome exato.
-    for ws in abas:
-        if str(ws.title).strip() == nome_aba:
-            aba = ws
-            break
+        if classe_erro == "WorksheetNotFound" or "worksheetnotfound" in detalhe_lower:
+            st.error(
+                f"Não encontrei a aba '{nome_aba}' no Google Sheets. "
+                "Confira se o nome da aba nos Secrets está exatamente igual ao nome da aba na planilha."
+            )
+            return None
 
-    # 2) Se não achou, procura ignorando maiúsculas/minúsculas e espaços.
-    if aba is None:
-        for ws in abas:
-            if str(ws.title).strip().lower() == nome_aba.lower():
-                aba = ws
-                break
-
-    # 3) Se não achou, não tenta criar. Mostra o diagnóstico correto.
-    if aba is None:
-        nomes_abas = ", ".join([str(ws.title) for ws in abas]) or "nenhuma aba encontrada"
-        st.error(
-            f"Não encontrei a aba '{nome_aba}' na planilha do Google Sheets. "
-            f"As abas que o app está enxergando são: {nomes_abas}. "
-            "Confira se o nome no Secrets está exatamente igual ao nome da aba."
-        )
-        st.stop()
-
-    # 4) Garante cabeçalho.
-    try:
-        primeira_linha = aba.row_values(1)
-        if primeira_linha != colunas:
-            if not primeira_linha:
-                aba.append_row(colunas, value_input_option="USER_ENTERED")
-            else:
-                aba.update("A1", [colunas])
-    except Exception as exc:
         st.warning(
-            f"A aba '{nome_aba}' foi encontrada, mas não consegui ajustar o cabeçalho. "
-            f"Detalhe: {exc}"
+            f"Não consegui abrir a aba '{nome_aba}' no Google Sheets. "
+            f"Usando backup local temporário. Detalhe: {exc}"
         )
+        return None
 
-    return aba
 
 
 def obter_aba_auditoria_google():
@@ -2108,7 +2077,7 @@ def obter_aba_auditoria_google():
         "auditoria_entradas",
         COLUNAS_AUDITORIA,
         linhas=1500,
-        cols_extra=4
+        cols_extra=4,
     )
 
 
