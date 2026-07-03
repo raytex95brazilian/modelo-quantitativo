@@ -12,12 +12,12 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 15.14 — HÍBRIDO
-# Coração da versão 2.14 + visual em blocos + banca dinâmica + auditoria
+# TEX STATISTICS PRO 16 — NÚCLEO PLANILHA
+# Lógica da planilha antiga + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — Claro Total", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — Núcleo Planilha", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -1093,6 +1093,22 @@ MERCADOS = [
     "Ambos marcam - Não",
 ]
 
+# Núcleo real da planilha antiga.
+# Proteções como Empate Anula e Dupla Chance continuam disponíveis para digitar/auditar,
+# mas NÃO viram recomendação automática. A planilha que funcionou trabalhava com
+# 1x2, gols e ambos marcam; o resto pode ser salvo manualmente, sem o app empurrar entrada.
+MERCADOS_NUCLEO_PLANILHA = {
+    "Vitória Casa",
+    "Empate",
+    "Vitória Fora",
+    "Mais de 2.5 gols",
+    "Menos de 2.5 gols",
+    "Ambos marcam - Sim",
+    "Ambos marcam - Não",
+}
+
+MERCADOS_FORA_NUCLEO_PLANILHA = set(MERCADOS) - MERCADOS_NUCLEO_PLANILHA
+
 ARQUIVO_AUDITORIA = "logs/auditoria_tex_pro_15.csv"
 ARQUIVO_AUDITORIA_XLSX = "logs/auditoria_tex_pro_15.xlsx"
 ARQUIVO_CATALOGO_ODDS = "logs/catalogo_odds_tex_pro_15.csv"
@@ -1171,7 +1187,15 @@ def odd_valida(odd: Optional[float]) -> bool:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def extrair_dados(url: str, jogos_historicos: int = 500, peso_inicial: float = -2.60) -> pd.DataFrame:
+def extrair_dados(url: str, jogos_historicos: int = 500, peso_inicial: float = 0.0) -> pd.DataFrame:
+    """
+    Carrega a base da liga e aplica apenas a janela de volume escolhida.
+
+    V16 — Núcleo Planilha:
+    - mantém os 300/500/760/1500 jogos para estudo de volume;
+    - remove peso exponencial e sensibilidade exagerada;
+    - cada jogo da janela vale 1, como na planilha simples que funcionou.
+    """
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, headers=headers, timeout=20)
@@ -1184,33 +1208,24 @@ def extrair_dados(url: str, jogos_historicos: int = 500, peso_inicial: float = -
         df["HG"] = pd.to_numeric(df["HG"], errors="coerce")
         df["AG"] = pd.to_numeric(df["AG"], errors="coerce")
         df = df.dropna(subset=["HG", "AG"])
+
         if "Date" in df.columns:
             df["DataTemp"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
             df = df.sort_values("DataTemp", kind="mergesort")
 
-        # Janela histórica dinâmica.
-        # Padrão profissional: 500 jogos da liga, com peso mais forte para jogos recentes.
-        # Isso mantém estabilidade sem deixar temporadas antigas mandarem demais no cálculo.
         try:
             jogos_historicos = int(jogos_historicos)
         except Exception:
             jogos_historicos = 500
-        jogos_historicos = int(np.clip(jogos_historicos, 120, 1500))
-
-        try:
-            peso_inicial = float(peso_inicial)
-        except Exception:
-            peso_inicial = -2.60
-        peso_inicial = float(np.clip(peso_inicial, -4.00, -0.50))
+        jogos_historicos = int(np.clip(jogos_historicos, 80, 1500))
 
         df = df.tail(jogos_historicos).reset_index(drop=True)
-        if len(df) > 0:
-            df["Peso"] = np.exp(np.linspace(peso_inicial, 0, len(df)))
-        else:
-            df["Peso"] = []
+        df["Peso"] = 1.0
         return df
     except Exception:
         return pd.DataFrame()
+
+
 
 
 def media_ponderada(serie: pd.Series, pesos: pd.Series, padrao: float) -> float:
@@ -1225,79 +1240,73 @@ def media_ponderada(serie: pd.Series, pesos: pd.Series, padrao: float) -> float:
 # MOTOR — base antiga melhorada
 # ============================================================
 
-def media_ponderada_estabilizada(serie: pd.Series, pesos: pd.Series, media_liga: float, k: float = 10.0) -> float:
-    """
-    Média do time puxada para a média da liga quando a amostra é pequena.
-
-    Exemplo: se o visitante tem só 1 jogo fora, o app não pode concluir que ele
-    é péssimo ou excelente. Com poucos jogos, a média da liga pesa mais.
-    """
+def media_simples(serie: pd.Series, padrao: float) -> float:
+    """Média direta, sem firula. Se não existir amostra, usa a média da liga."""
     try:
-        n = len(serie)
-        if n == 0:
-            return float(media_liga)
-        media_time = float(np.average(serie, weights=pesos))
-        return float(((n * media_time) + (k * media_liga)) / (n + k))
+        serie = pd.to_numeric(serie, errors="coerce").dropna()
+        if len(serie) == 0:
+            return float(padrao)
+        return float(serie.mean())
     except Exception:
-        return float(media_liga)
+        return float(padrao)
 
 
 def calcular_forcas_e_probabilidades(df: pd.DataFrame, time_casa: str, time_fora: str) -> Tuple[float, float, Dict[str, float], float, Dict[str, object]]:
     """
-    Motor híbrido 15.5:
-    - mantém a lógica simples da versão 2.14;
-    - usa Poisson direto;
-    - corrige o erro de amostra pequena;
-    - puxa dados pobres para a média da liga;
-    - reduz confiança quando um dos lados tem poucos jogos no mando certo.
+    V16 — Núcleo Planilha Original.
+
+    Replica a lógica objetiva da planilha:
+    - média da liga;
+    - força ataque/defesa mandante/visitante;
+    - gols esperados;
+    - matriz Poisson simples de 0 a 4 gols;
+    - probabilidades de 1x2, gols e ambos marcam.
+
+    Sem shrinkage, sem peso exponencial, sem ajuste acadêmico escondido.
     """
-    media_gols_casa_liga = max(0.20, float(np.average(df["HG"], weights=df["Peso"])))
-    media_gols_fora_liga = max(0.20, float(np.average(df["AG"], weights=df["Peso"])))
+    media_gols_casa_liga = max(0.20, float(df["HG"].mean()))
+    media_gols_fora_liga = max(0.20, float(df["AG"].mean()))
 
     jogos_casa = df[df["Home"] == time_casa]
     jogos_fora = df[df["Away"] == time_fora]
 
-    amostra_casa = len(jogos_casa)
-    amostra_fora = len(jogos_fora)
+    amostra_casa = int(len(jogos_casa))
+    amostra_fora = int(len(jogos_fora))
     amostra_minima = min(amostra_casa, amostra_fora)
     amostra_total = amostra_casa + amostra_fora
 
-    # Quanto menor a amostra, mais a média da liga entra no cálculo.
-    # Isso evita absurdos como visitante com 1 jogo fora virar ataque 0,20.
-    k_casa = 10.0
-    k_fora = 12.0
-
-    gols_feitos_casa = media_ponderada_estabilizada(jogos_casa["HG"], jogos_casa["Peso"], media_gols_casa_liga, k=k_casa)
-    gols_sofridos_casa = media_ponderada_estabilizada(jogos_casa["AG"], jogos_casa["Peso"], media_gols_fora_liga, k=k_casa)
-    gols_feitos_fora = media_ponderada_estabilizada(jogos_fora["AG"], jogos_fora["Peso"], media_gols_fora_liga, k=k_fora)
-    gols_sofridos_fora = media_ponderada_estabilizada(jogos_fora["HG"], jogos_fora["Peso"], media_gols_casa_liga, k=k_fora)
+    gols_feitos_casa = media_simples(jogos_casa["HG"], media_gols_casa_liga)
+    gols_sofridos_casa = media_simples(jogos_casa["AG"], media_gols_fora_liga)
+    gols_feitos_fora = media_simples(jogos_fora["AG"], media_gols_fora_liga)
+    gols_sofridos_fora = media_simples(jogos_fora["HG"], media_gols_casa_liga)
 
     forca_ataque_casa = gols_feitos_casa / media_gols_casa_liga if media_gols_casa_liga > 0 else 1.0
-    fragilidade_defesa_fora = gols_sofridos_fora / media_gols_casa_liga if media_gols_casa_liga > 0 else 1.0
+    forca_defesa_casa = gols_sofridos_casa / media_gols_fora_liga if media_gols_fora_liga > 0 else 1.0
     forca_ataque_fora = gols_feitos_fora / media_gols_fora_liga if media_gols_fora_liga > 0 else 1.0
-    fragilidade_defesa_casa = gols_sofridos_casa / media_gols_fora_liga if media_gols_fora_liga > 0 else 1.0
+    forca_defesa_fora = gols_sofridos_fora / media_gols_casa_liga if media_gols_casa_liga > 0 else 1.0
 
-    gols_esperados_casa = media_gols_casa_liga * forca_ataque_casa * fragilidade_defesa_fora
-    gols_esperados_fora = media_gols_fora_liga * forca_ataque_fora * fragilidade_defesa_casa
+    gols_esperados_casa = media_gols_casa_liga * forca_ataque_casa * forca_defesa_fora
+    gols_esperados_fora = media_gols_fora_liga * forca_ataque_fora * forca_defesa_casa
 
-    gols_esperados_casa = float(np.clip(gols_esperados_casa, 0.25, 4.00))
-    gols_esperados_fora = float(np.clip(gols_esperados_fora, 0.25, 4.00))
+    gols_esperados_casa = float(np.clip(gols_esperados_casa, 0.05, 5.00))
+    gols_esperados_fora = float(np.clip(gols_esperados_fora, 0.05, 5.00))
 
-    tamanho = 15
+    # Igual à planilha: placares de 0 a 4.
+    tamanho = 5
     matriz = np.zeros((tamanho, tamanho), dtype=float)
     for g_c in range(tamanho):
         for g_f in range(tamanho):
             matriz[g_c, g_f] = poisson.pmf(g_c, gols_esperados_casa) * poisson.pmf(g_f, gols_esperados_fora)
-
-    soma = matriz.sum()
-    if soma > 0:
-        matriz = matriz / soma
 
     prob_casa = float(np.tril(matriz, -1).sum())
     prob_empate = float(np.diag(matriz).sum())
     prob_fora = float(np.triu(matriz, 1).sum())
     prob_mais25 = float(matriz[np.add.outer(np.arange(tamanho), np.arange(tamanho)) >= 3].sum())
     prob_ambos_sim = float(matriz[1:, 1:].sum())
+
+    # Para mercados complementares, mantém coerência entre sim/não.
+    prob_menos25 = max(0.0, 1.0 - prob_mais25)
+    prob_ambos_nao = max(0.0, 1.0 - prob_ambos_sim)
 
     probabilidades = {
         "Vitória Casa": prob_casa,
@@ -1306,36 +1315,31 @@ def calcular_forcas_e_probabilidades(df: pd.DataFrame, time_casa: str, time_fora
         "Casa ou Empate": prob_casa + prob_empate,
         "Fora ou Empate": prob_fora + prob_empate,
         "Mais de 2.5 gols": prob_mais25,
-        "Menos de 2.5 gols": 1.0 - prob_mais25,
+        "Menos de 2.5 gols": prob_menos25,
         "Ambos marcam - Sim": prob_ambos_sim,
-        "Ambos marcam - Não": 1.0 - prob_ambos_sim,
+        "Ambos marcam - Não": prob_ambos_nao,
     }
 
     total_sem_empate = prob_casa + prob_fora
     probabilidades["Empate Anula Casa"] = prob_casa / total_sem_empate if total_sem_empate > 0 else 0.0
     probabilidades["Empate Anula Fora"] = prob_fora / total_sem_empate if total_sem_empate > 0 else 0.0
 
-    # Confiança nova: quem manda é o lado com MENOS amostra.
-    # Se visitante tem 1 jogo fora, confiança fica baixa, mesmo que o mandante tenha 90 jogos.
-    confianca_minima_mando = min(100.0, (amostra_minima / 12.0) * 100.0)
-    confianca_total = min(100.0, (amostra_total / 70.0) * 100.0)
-    equilibrio = amostra_minima / max(1, max(amostra_casa, amostra_fora))
-
-    confianca = (confianca_minima_mando * 0.70) + (confianca_total * 0.20) + (equilibrio * 10.0)
-
-    if amostra_minima < 4:
-        confianca = min(confianca, 35.0)
-    elif amostra_minima < 8:
-        confianca = min(confianca, 49.0)
-
-    confianca = float(np.clip(confianca, 0.0, 100.0))
-
-    if amostra_minima < 4:
-        alerta = "Amostra muito baixa: não operar com dinheiro real."
-    elif amostra_minima < 8:
-        alerta = "Amostra baixa: observar ou usar valor simbólico."
+    if amostra_minima >= 8:
+        confianca = 100.0
+        alerta = "Amostra suficiente para o Núcleo Planilha."
+        amostra_fraca = False
+    elif amostra_minima >= 5:
+        confianca = 70.0
+        alerta = "Amostra menor que o ideal, mas ainda utilizável com stake da planilha."
+        amostra_fraca = False
+    elif amostra_minima >= 3:
+        confianca = 45.0
+        alerta = "Amostra baixa: se houver entrada, use apenas stake pequena."
+        amostra_fraca = True
     else:
-        alerta = "Amostra suficiente para análise."
+        confianca = 25.0
+        alerta = "Amostra muito baixa: não operar com dinheiro real."
+        amostra_fraca = True
 
     amostras = {
         "casa": amostra_casa,
@@ -1343,9 +1347,12 @@ def calcular_forcas_e_probabilidades(df: pd.DataFrame, time_casa: str, time_fora
         "total": amostra_total,
         "minima": amostra_minima,
         "alerta": alerta,
-        "amostra_fraca": amostra_minima < 8,
+        "amostra_fraca": amostra_fraca,
+        "media_gols_casa_liga": media_gols_casa_liga,
+        "media_gols_fora_liga": media_gols_fora_liga,
     }
-    return gols_esperados_casa, gols_esperados_fora, probabilidades, confianca, amostras
+    return gols_esperados_casa, gols_esperados_fora, probabilidades, float(confianca), amostras
+
 
 # ============================================================
 # ODDS MANUAIS E API
@@ -1493,32 +1500,33 @@ def extrair_odds_de_jogo_api(jogo: dict) -> Dict[str, float]:
 # DECISÃO DE ENTRADA
 # ============================================================
 
-def classificar_entrada(prob: float, odd: float, confianca: float, perfil: str) -> Dict[str, object]:
-    valor = (prob * odd) - 1.0
-    odd_justa = 1.0 / prob if prob > 0 else np.inf
+def stake_planilha_quarto_kelly(prob: float, odd: float) -> float:
+    """
+    Stake da planilha:
+    EV = prob * odd - 1
+    Stake = (EV / (odd - 1)) / 4
 
-    if perfil == "Conservador":
-        regras = [
-            (0.18, 75, 0.030, "forte"),
-            (0.13, 65, 0.020, "boa"),
-            (0.09, 58, 0.010, "leve"),
-        ]
-    elif perfil == "Volume controlado":
-        regras = [
-            (0.15, 70, 0.030, "forte"),
-            (0.10, 60, 0.020, "boa"),
-            (0.06, 52, 0.010, "leve"),
-        ]
-    else:  # Agressivo com controle
-        # Mais volume sem passar de 3% por entrada.
-        # A diferença real do modo agressivo aparece em duas partes:
-        # 1) aceita valor menor;
-        # 2) na barra lateral, o limite total padrão do jogo sobe.
-        regras = [
-            (0.10, 60, 0.030, "forte"),
-            (0.06, 52, 0.020, "boa"),
-            (0.03, 45, 0.0075, "leve"),
-        ]
+    Retorna percentual da banca em decimal.
+    """
+    try:
+        if not odd_valida(odd) or prob <= 0:
+            return 0.0
+        ev = (float(prob) * float(odd)) - 1.0
+        if ev <= 0:
+            return 0.0
+        return max(0.0, ev / (float(odd) - 1.0) / 4.0)
+    except Exception:
+        return 0.0
+
+
+def classificar_entrada(mercado: str, prob: float, odd: float, confianca: float, perfil: str) -> Dict[str, object]:
+    """
+    Decide como a planilha decidia: tem preço acima da odd justa? Calcula stake pequena.
+    O app não inventa entrada em mercado que a planilha não trabalhava.
+    """
+    valor = (prob * odd) - 1.0 if odd_valida(odd) else -1.0
+    odd_justa = 1.0 / prob if prob > 0 else np.inf
+    stake_original = stake_planilha_quarto_kelly(prob, odd)
 
     if not odd_valida(odd):
         return {
@@ -1528,40 +1536,85 @@ def classificar_entrada(prob: float, odd: float, confianca: float, perfil: str) 
             "motivo": "cotação não informada",
             "valor": valor,
             "odd_justa": odd_justa,
+            "stake_planilha": 0.0,
         }
 
-    confianca_minima_absoluta = 45 if perfil == "Agressivo com controle" else 50
-    if confianca < confianca_minima_absoluta:
+    if mercado not in MERCADOS_NUCLEO_PLANILHA:
         return {
             "apostar": False,
             "nivel": "nao",
             "percentual": 0.0,
-            "motivo": "amostra baixa",
+            "motivo": "fora do núcleo da planilha; use só para auditoria manual se você quiser",
             "valor": valor,
             "odd_justa": odd_justa,
+            "stake_planilha": stake_original,
         }
 
-    for valor_min, conf_min, percentual, nivel in regras:
-        if valor >= valor_min and confianca >= conf_min:
-            return {
-                "apostar": True,
-                "nivel": nivel,
-                "percentual": percentual,
-                "motivo": "valor encontrado",
-                "valor": valor,
-                "odd_justa": odd_justa,
-            }
+    if confianca < 30:
+        return {
+            "apostar": False,
+            "nivel": "nao",
+            "percentual": 0.0,
+            "motivo": "amostra muito baixa para usar dinheiro real",
+            "valor": valor,
+            "odd_justa": odd_justa,
+            "stake_planilha": stake_original,
+        }
 
-    motivo = "valor insuficiente"
-    if valor > 0 and confianca >= 50:
-        motivo = "tem algum valor, mas fraco para entrada"
+    # Perfis simples, sem malabarismo: só mudam corte mínimo e teto de stake.
+    if perfil == "Conservador":
+        margem_minima = 0.03
+        teto_stake = 0.015
+    elif perfil == "Agressivo com controle":
+        margem_minima = 0.00
+        teto_stake = 0.030
+    else:
+        margem_minima = 0.00
+        teto_stake = 0.025
+
+    percentual = min(stake_original, teto_stake)
+
+    if valor <= margem_minima or percentual <= 0:
+        motivo = "sem valor pela planilha"
+        if valor > 0:
+            motivo = "valor pequeno demais para virar entrada"
+        return {
+            "apostar": False,
+            "nivel": "nao",
+            "percentual": 0.0,
+            "motivo": motivo,
+            "valor": valor,
+            "odd_justa": odd_justa,
+            "stake_planilha": stake_original,
+        }
+
+    minimo_executavel = 0.0025  # 0,25% da banca
+    if percentual < minimo_executavel:
+        return {
+            "apostar": False,
+            "nivel": "nao",
+            "percentual": 0.0,
+            "motivo": "valor existe, mas a stake da planilha ficou simbólica demais",
+            "valor": valor,
+            "odd_justa": odd_justa,
+            "stake_planilha": stake_original,
+        }
+
+    if valor >= 0.15 and percentual >= 0.015:
+        nivel = "forte"
+    elif valor >= 0.07 and percentual >= 0.008:
+        nivel = "boa"
+    else:
+        nivel = "leve"
+
     return {
-        "apostar": False,
-        "nivel": "nao",
-        "percentual": 0.0,
-        "motivo": motivo,
+        "apostar": True,
+        "nivel": nivel,
+        "percentual": percentual,
+        "motivo": "valor pela planilha; stake calculada por 1/4 Kelly",
         "valor": valor,
         "odd_justa": odd_justa,
+        "stake_planilha": stake_original,
     }
 
 
@@ -1572,8 +1625,8 @@ def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], 
             continue
         prob = float(probabilidades[mercado])
         odd = float(odds[mercado])
-        decisao = classificar_entrada(prob, odd, confianca, perfil)
-        percentual_original = min(float(decisao["percentual"]), 0.03)  # trava máxima: 3% por entrada
+        decisao = classificar_entrada(mercado, prob, odd, confianca, perfil)
+        percentual_original = min(float(decisao["percentual"]), 0.03)
         resultados.append({
             "mercado": mercado,
             "probabilidade": prob,
@@ -1584,6 +1637,7 @@ def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], 
             "nivel": str(decisao["nivel"]),
             "percentual": percentual_original if decisao["apostar"] else 0.0,
             "percentual_original": percentual_original if decisao["apostar"] else 0.0,
+            "stake_planilha": float(decisao.get("stake_planilha", 0.0)),
             "entrada_rs": banca * percentual_original if banca > 0 and decisao["apostar"] else 0.0,
             "motivo": str(decisao["motivo"]),
         })
@@ -1591,12 +1645,9 @@ def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], 
     ordem = {"forte": 0, "boa": 1, "leve": 2, "nao": 3}
     resultados.sort(key=lambda r: (ordem.get(r["nivel"], 9), -r["valor"]))
 
-    # Limite real de exposição no mesmo jogo.
-    # Correção 15.8: em vez de reduzir TODAS as entradas até ficarem minúsculas
-    # e depois reprovar tudo, o app escolhe as melhores entradas até preencher o teto.
-    # Isso evita o bug em que uma simulação com odds 10 em tudo gerava 0 entradas.
+    # Limite por jogo continua, mas agora só corta excesso; não cria stake artificial.
     limite_total_jogo = float(np.clip(limite_total_jogo, 0.01, 0.09))
-    minimo_executavel = 0.003  # 0,30% da banca
+    minimo_executavel = 0.0025
     usado = 0.0
     aprovadas_ordenadas = [r for r in resultados if r["apostar"] and float(r["percentual_original"]) > 0]
 
@@ -1612,27 +1663,23 @@ def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], 
             r["motivo"] = "valor existe, mas o limite total do jogo já foi preenchido"
             continue
 
-        if percentual_desejado <= restante:
-            percentual_final = percentual_desejado
-            if usado > 0:
-                r["motivo"] = "valor encontrado; respeitando limite total do jogo"
-        else:
-            percentual_final = restante
-            r["motivo"] = "valor encontrado; entrada reduzida pelo limite total do jogo"
-
+        percentual_final = min(percentual_desejado, restante)
         if percentual_final < minimo_executavel:
             r["apostar"] = False
             r["nivel"] = "nao"
             r["percentual"] = 0.0
             r["entrada_rs"] = 0.0
-            r["motivo"] = "valor existe, mas ficou abaixo do mínimo executável após o limite do jogo"
+            r["motivo"] = "valor existe, mas ficou abaixo do mínimo executável"
         else:
+            if percentual_final < percentual_desejado:
+                r["motivo"] = "valor pela planilha; entrada reduzida pelo limite total do jogo"
             r["percentual"] = percentual_final
             r["entrada_rs"] = banca * percentual_final if banca > 0 else 0.0
             usado += percentual_final
 
     resultados.sort(key=lambda r: (ordem.get(r["nivel"], 9), -r["valor"]))
     return resultados
+
 
 # ============================================================
 # AUDITORIA
@@ -2577,6 +2624,7 @@ def render_card(resultado: Dict[str, object], banca: float, time_casa: str, time
     nivel = str(resultado["nivel"])
     apostar = bool(resultado["apostar"])
     percentual = float(resultado["percentual"])
+    stake_planilha = float(resultado.get("stake_planilha", percentual))
 
     if apostar and nivel == "forte":
         classe = "card-forte"
@@ -2596,22 +2644,26 @@ def render_card(resultado: Dict[str, object], banca: float, time_casa: str, time
         cor = "bad"
 
     odd_justa_txt = "-" if not np.isfinite(float(resultado["odd_justa"])) else numero(float(resultado["odd_justa"]), 2)
+    nucleo_txt = "Sim" if mercado in MERCADOS_NUCLEO_PLANILHA else "Não"
 
     st.markdown(
         f"""
         <div class="card-aposta {classe}">
             <div class="titulo-card {cor}">{titulo}</div>
             <div class="mercado-card">{nome_mercado}</div>
+            <div class="linha-info"><b>Núcleo da planilha:</b> {nucleo_txt}</div>
             <div class="linha-info"><b>Cotação da casa:</b> {numero(float(resultado['odd']), 2)}</div>
             <div class="linha-info"><b>Cotação justa:</b> {odd_justa_txt}</div>
-            <div class="linha-info"><b>Chance pelo sistema:</b> {porcentagem(float(resultado['probabilidade']), 1)}</div>
-            <div class="linha-info"><b>Valor esperado:</b> {porcentagem(float(resultado['valor']), 1)}</div>
+            <div class="linha-info"><b>Chance pela planilha:</b> {porcentagem(float(resultado['probabilidade']), 1)}</div>
+            <div class="linha-info"><b>Margem de valor:</b> {porcentagem(float(resultado['valor']), 1)}</div>
+            <div class="linha-info"><b>Stake 1/4 Kelly:</b> {porcentagem(stake_planilha, 2)}</div>
             <div class="linha-info"><b>Entrada sugerida:</b> {dinheiro(float(resultado['entrada_rs']))}</div>
             <div class="mini"><b>Motivo:</b> {resultado['motivo']}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
 
 # ============================================================
 # APP
@@ -2625,11 +2677,11 @@ st.markdown(
             <span class="hero-selo">CLARO E LEGÍVEL</span>
         </div>
         <div class="hero-titulo">TEX STATISTICS</div>
-        <div class="hero-sub">Sistema com interface clara, limpa e profissional, sem fundo azul escuro ofuscando os textos. A leitura fica estável tanto no computador quanto no celular, mesmo quando o aparelho está em modo escuro.</div>
+        <div class="hero-sub">Sistema com a lógica objetiva da planilha que funcionou: força ataque/defesa, Poisson simples, margem de valor e stake 1/4 Kelly. Auditoria, Google Sheets, catálogo de odds, cores, alertas e calendário foram mantidos.</div>
         <div class="hero-chip-wrap">
-            <span class="hero-chip">Motor preservado</span>
+            <span class="hero-chip">Núcleo Planilha</span>
             <span class="hero-chip">Auditoria preservada</span>
-            <span class="hero-chip">Banca preservada</span>
+            <span class="hero-chip">Lógica da planilha</span>
             <span class="hero-chip">Odds preservadas</span>
             <span class="hero-chip">Calendário preservado</span>
         </div>
@@ -2638,7 +2690,7 @@ st.markdown(
         <div class="resumo-card"><div class="resumo-label">Visual</div><div class="resumo-valor">Claro, limpo e sem poluição</div></div>
         <div class="resumo-card"><div class="resumo-label">Leitura</div><div class="resumo-valor">Contraste forte no celular</div></div>
         <div class="resumo-card"><div class="resumo-label">Decisão</div><div class="resumo-valor">APOSTAR / NÃO APOSTAR em destaque</div></div>
-        <div class="resumo-card"><div class="resumo-label">Base</div><div class="resumo-valor">Mesma lógica do motor</div></div>
+        <div class="resumo-card"><div class="resumo-label">Base</div><div class="resumo-valor">Poisson simples + 1/4 Kelly</div></div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -2653,7 +2705,7 @@ with st.sidebar:
     banca_manual = st.number_input("Banca manual", min_value=0.0, value=1000.0, step=50.0)
     banca_usada = banca_auditada if usar_banca_auditada else banca_manual
     st.metric("Banca usada pelo sistema", dinheiro(banca_usada))
-    st.caption("A entrada máxima por aposta nunca passa de 3% da banca atual; o total no mesmo jogo também é limitado.")
+    st.caption("A stake agora vem da planilha: 1/4 Kelly, com teto simples por perfil e limite total no mesmo jogo.")
 
     st.divider()
     st.header("Perfil")
@@ -2661,7 +2713,7 @@ with st.sidebar:
         "Como quer operar?",
         ["Volume controlado", "Conservador", "Agressivo com controle"],
         index=0,
-        help="Volume controlado é o equilíbrio entre a versão antiga e a auditoria nova.",
+        help="Todos usam a lógica da planilha. O perfil só muda o teto de stake e o corte mínimo.",
     )
     limite_padrao_por_perfil = {
         "Conservador": 3.0,
@@ -2689,8 +2741,8 @@ with st.sidebar:
     perfil_janela = st.selectbox(
         "Janela histórica do modelo",
         [
-            "Atual/agressivo — 380 jogos",
-            "Equilibrado — 500 jogos",
+                "Volume curto — 300 jogos",
+            "Planilha padrão — 500 jogos",
             "Estável — 760 jogos",
             "Histórico longo — 1500 jogos",
         ],
@@ -2698,17 +2750,16 @@ with st.sidebar:
         help="Define quantos jogos recentes da liga entram no cálculo. O banco de odds/auditoria não é alterado por essa configuração.",
     )
     config_janela = {
-        "Atual/agressivo — 380 jogos": {"jogos": 380, "peso": -2.80, "descricao": "mais sensível à fase recente"},
-        "Equilibrado — 500 jogos": {"jogos": 500, "peso": -2.60, "descricao": "padrão recomendado para operar"},
-        "Estável — 760 jogos": {"jogos": 760, "peso": -2.20, "descricao": "mais estabilidade, menos sensibilidade"},
-        "Histórico longo — 1500 jogos": {"jogos": 1500, "peso": -1.25, "descricao": "modo antigo/estudo, com mais histórico"},
+        "Volume curto — 300 jogos": {"jogos": 300, "peso": 0.0, "descricao": "mais volume recente"},
+        "Planilha padrão — 500 jogos": {"jogos": 500, "peso": 0.0, "descricao": "padrão recomendado para operar"},
+        "Estável — 760 jogos": {"jogos": 760, "peso": 0.0, "descricao": "mais estabilidade"},
+        "Histórico longo — 1500 jogos": {"jogos": 1500, "peso": 0.0, "descricao": "modo estudo, com mais histórico"},
     }
-    janela_cfg = config_janela.get(perfil_janela, config_janela["Equilibrado — 500 jogos"])
+    janela_cfg = config_janela.get(perfil_janela, config_janela["Planilha padrão — 500 jogos"])
     jogos_historicos_modelo = int(janela_cfg["jogos"])
     peso_inicial_modelo = float(janela_cfg["peso"])
     st.caption(
-        f"Usando os últimos {jogos_historicos_modelo} jogos da liga. "
-        f"Peso do jogo mais antigo: {np.exp(peso_inicial_modelo):.1%}. "
+        f"Usando os últimos {jogos_historicos_modelo} jogos da liga, sem peso exponencial. "
         f"Perfil: {janela_cfg['descricao']}."
     )
 
@@ -3026,7 +3077,7 @@ with aba_analisar:
 
         st.markdown("---")
         st.subheader(f"Análise — {jogo_nome_analise}")
-        st.caption(f"Resultado da última análise calculada no perfil: {perfil_analise}. Você pode marcar/desmarcar entradas abaixo sem a tela fechar.")
+        st.caption(f"Resultado calculado pelo Núcleo Planilha no perfil: {perfil_analise}. Você pode marcar/desmarcar entradas abaixo sem a tela fechar.")
         if perfil_analise != perfil or abs(limite_analise - limite_total_jogo_pct) > 0.00001:
             st.warning(
                 "Você mudou o perfil ou o limite total depois da última análise. "
@@ -3035,7 +3086,7 @@ with aba_analisar:
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Força de gols casa", numero(gols_casa, 2))
         m2.metric("Força de gols fora", numero(gols_fora, 2))
-        m3.metric("Confiança", f"{confianca:.1f}%".replace(".", ","))
+        m3.metric("Amostra", f"{confianca:.0f}%".replace(".", ","))
         m4.metric("Entradas", len(aprovadas))
         m5.metric("Máximo no jogo", dinheiro(banca_analise * limite_analise))
 
@@ -3051,7 +3102,7 @@ with aba_analisar:
             if total_sugerido >= banca_analise * limite_analise * 0.99 and len(aprovadas) > 1:
                 st.warning("As entradas aprovadas foram ajustadas para respeitar o limite total do mesmo jogo. Isso evita concentrar dinheiro demais em mercados que dependem do mesmo placar.")
         else:
-            st.info("Nenhuma entrada passou. Se você quiser mais volume, use o perfil 'Agressivo com controle', mas registre tudo na auditoria.")
+            st.info("Nenhuma entrada passou pela planilha. Isso é proteção: sem margem positiva e stake real, não vira aposta.")
 
         st.markdown("### Blocos de decisão")
         for r in resultados:
@@ -3100,7 +3151,7 @@ with aba_analisar:
                             entrada_rs=float(r["entrada_rs"]),
                             banca_antes=float(banca_analise),
                             origem=origem_analise,
-                            observacao=observacao,
+                            observacao=(observacao + f" | Janela: {jogos_historicos_modelo} jogos | Núcleo Planilha V16"),
                         )
                     destino_auditoria = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas na auditoria. Destino: {destino_auditoria}.")
