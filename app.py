@@ -1213,13 +1213,35 @@ def obter_aba(nome: str, colunas: List[str]):
 
 
 def normalizar_df(df: pd.DataFrame, colunas: List[str]) -> pd.DataFrame:
+    """
+    Normaliza CSV/Google Sheets sem deixar nomes de colunas duplicados.
+
+    O erro do Streamlit/Arrow acontece quando a planilha tem duas colunas com
+    o mesmo nome, por exemplo duas colunas chamadas "Liga" ou "Mercado".
+    Isso pode vir de cabeçalho antigo no Google Sheets, CSV editado manualmente
+    ou concatenações anteriores. Aqui a gente preserva a primeira coluna válida,
+    remove as duplicadas e entrega sempre exatamente as colunas oficiais.
+    """
     if df is None or df.empty:
         return pd.DataFrame(columns=colunas)
+
     base = df.copy()
+
+    # Garante que todos os nomes de coluna sejam texto limpo.
+    base.columns = [str(c).strip() for c in base.columns]
+
+    # Remove colunas duplicadas antes de selecionar. Sem isso, base[colunas]
+    # pode devolver duas colunas com o mesmo nome e quebrar o st.dataframe.
+    base = base.loc[:, ~pd.Index(base.columns).duplicated(keep="first")].copy()
+
+    # Se a planilha tiver colunas vazias/sem nome, elas não entram na saída.
     for c in colunas:
         if c not in base.columns:
             base[c] = ""
-    return base[colunas].fillna("")
+
+    saida = base.loc[:, colunas].copy().fillna("")
+    saida.columns = colunas
+    return saida
 
 
 def carregar_csv(path: str, colunas: List[str]) -> pd.DataFrame:
@@ -1823,7 +1845,7 @@ with tabs[1]:
 
         st.markdown("### Histórico")
         auditoria = carregar_auditoria()
-        st.dataframe(auditoria.tail(500), use_container_width=True, hide_index=True)
+        st.dataframe(normalizar_df(auditoria, COLUNAS_AUDITORIA).tail(500), use_container_width=True, hide_index=True)
         csv = auditoria.to_csv(index=False).encode("utf-8-sig")
         st.download_button("BAIXAR AUDITORIA CSV", data=csv, file_name="auditoria_tex_v18.csv", mime="text/csv")
         xb = excel_bytes({"Auditoria": auditoria})
@@ -1856,7 +1878,7 @@ with tabs[2]:
                 | filtrado["Visitante"].astype(str).str.lower().str.contains(termo, na=False)
             ]
 
-        st.dataframe(filtrado.tail(500), use_container_width=True, hide_index=True)
+        st.dataframe(normalizar_df(filtrado, COLUNAS_CATALOGO).tail(500), use_container_width=True, hide_index=True)
         csv = filtrado.to_csv(index=False).encode("utf-8-sig")
         st.download_button("BAIXAR CATÁLOGO CSV", data=csv, file_name="catalogo_odds_tex_v18.csv", mime="text/csv")
         xb = excel_bytes({"Catalogo": filtrado})
