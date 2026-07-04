@@ -12,12 +12,12 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ============================================================
-# TEX STATISTICS PRO 16 — NÚCLEO PLANILHA
+# TEX STATISTICS PRO 17 — NÚCLEO PLANILHA + ANTI-ODD PODRE
 # Lógica da planilha antiga + visual em blocos + banca dinâmica + auditoria
 # Tela em português brasileiro, sem termos técnicos desnecessários
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — Núcleo Planilha", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V17 Anti-Odd Podre", layout="wide")
 
 # ============================================================
 # ESTILO VISUAL — melhor para celular
@@ -1497,8 +1497,25 @@ def extrair_odds_de_jogo_api(jogo: dict) -> Dict[str, float]:
     return odds
 
 # ============================================================
-# DECISÃO DE ENTRADA
+# DECISÃO DE ENTRADA — V17 BLINDAGEM CONTRA ODD PODRE
 # ============================================================
+
+MERCADOS_RESULTADO_SECO = {
+    "Vitória Casa",
+    "Empate",
+    "Vitória Fora",
+}
+
+MERCADOS_GOLS_BAIXOS = {
+    "Menos de 2.5 gols",
+    "Ambos marcam - Não",
+}
+
+MERCADOS_GOLS_ALTOS = {
+    "Mais de 2.5 gols",
+    "Ambos marcam - Sim",
+}
+
 
 def stake_planilha_quarto_kelly(prob: float, odd: float) -> float:
     """
@@ -1511,149 +1528,733 @@ def stake_planilha_quarto_kelly(prob: float, odd: float) -> float:
     try:
         if not odd_valida(odd) or prob <= 0:
             return 0.0
+
         ev = (float(prob) * float(odd)) - 1.0
+
         if ev <= 0:
             return 0.0
-        return max(0.0, ev / (float(odd) - 1.0) / 4.0)
+
+        return max(
+            0.0,
+            ev / (float(odd) - 1.0) / 4.0
+        )
+
     except Exception:
         return 0.0
 
 
-def classificar_entrada(mercado: str, prob: float, odd: float, confianca: float, perfil: str) -> Dict[str, object]:
+def resposta_decisao(
+    apostar: bool,
+    nivel: str,
+    percentual: float,
+    motivo: str,
+    valor: float,
+    odd_justa: float,
+    stake_original: float,
+) -> Dict[str, object]:
+    return {
+        "apostar": bool(apostar),
+        "nivel": str(nivel),
+        "percentual": float(percentual),
+        "motivo": str(motivo),
+        "valor": float(valor),
+        "odd_justa": float(odd_justa) if np.isfinite(odd_justa) else np.inf,
+        "stake_planilha": float(stake_original),
+    }
+
+
+def odds_1x2_disponiveis(odds: Dict[str, float]) -> Dict[str, float]:
+    saida = {}
+
+    for mercado in MERCADOS_RESULTADO_SECO:
+        odd = odds.get(mercado)
+
+        if odd_valida(odd):
+            saida[mercado] = float(odd)
+
+    return saida
+
+
+def prob_implicita_normalizada_1x2(odds: Dict[str, float]) -> Dict[str, float]:
     """
-    Decide como a planilha decidia: tem preço acima da odd justa? Calcula stake pequena.
-    O app não inventa entrada em mercado que a planilha não trabalhava.
+    Converte odds 1x2 da casa em probabilidades implícitas normalizadas.
+
+    Isso não decide aposta sozinho. Serve para detectar quando o modelo
+    está discordando demais do mercado em odds altas.
     """
+    odds_validas = odds_1x2_disponiveis(odds)
+
+    if len(odds_validas) < 2:
+        return {}
+
+    brutas = {}
+
+    for mercado, odd in odds_validas.items():
+        if odd_valida(odd):
+            brutas[mercado] = 1.0 / float(odd)
+
+    total = sum(brutas.values())
+
+    if total <= 0:
+        return {}
+
+    return {
+        mercado: valor / total
+        for mercado, valor in brutas.items()
+    }
+
+
+def menor_odd_1x2(odds: Dict[str, float]) -> Optional[float]:
+    vals = [
+        float(odds[m])
+        for m in MERCADOS_RESULTADO_SECO
+        if odd_valida(odds.get(m))
+    ]
+
+    if not vals:
+        return None
+
+    return min(vals)
+
+
+def mercado_oposto_vitoria(mercado: str) -> Optional[str]:
+    if mercado == "Vitória Casa":
+        return "Vitória Fora"
+
+    if mercado == "Vitória Fora":
+        return "Vitória Casa"
+
+    return None
+
+
+def filtro_odd_podre(
+    mercado: str,
+    prob: float,
+    odd: float,
+    probabilidades: Dict[str, float],
+    odds: Dict[str, float],
+    confianca: float,
+    gols_casa: Optional[float] = None,
+    gols_fora: Optional[float] = None,
+) -> Tuple[bool, str, float]:
+    """
+    Filtro de realidade.
+
+    O Núcleo Planilha continua calculando valor, mas agora o app não deixa
+    odd podre virar recomendação automática só porque a conta achou edge.
+
+    Retorna:
+    - bloquear: True/False
+    - motivo: texto
+    - fator_stake: multiplicador de stake quando não bloqueia
+    """
+
+    try:
+        prob = float(prob)
+        odd = float(odd)
+    except Exception:
+        return True, "cotação/probabilidade inválida", 0.0
+
+    if not odd_valida(odd) or prob <= 0:
+        return True, "cotação ou probabilidade inválida", 0.0
+
+    valor = (prob * odd) - 1.0
+    menor_odd = menor_odd_1x2(odds)
+    probs_mercado = prob_implicita_normalizada_1x2(odds)
+
+    try:
+        gc = float(gols_casa) if gols_casa is not None else None
+        gf = float(gols_fora) if gols_fora is not None else None
+    except Exception:
+        gc = None
+        gf = None
+
+    total_gols = None
+    menor_forca_gols = None
+    maior_forca_gols = None
+
+    if gc is not None and gf is not None:
+        total_gols = gc + gf
+        menor_forca_gols = min(gc, gf)
+        maior_forca_gols = max(gc, gf)
+
+    # ========================================================
+    # 1) BLOQUEIO DE ODD SECA PODRE EM AZARÃO
+    # ========================================================
+
+    if mercado in {"Vitória Casa", "Vitória Fora"}:
+        mercado_oposto = mercado_oposto_vitoria(mercado)
+        odd_oposta = odds.get(mercado_oposto) if mercado_oposto else None
+
+        if odd >= 6.00:
+            return (
+                True,
+                "odd seca acima de 6,00: mercado pode estar avisando desnível, escalação, mando ou informação que a planilha não vê",
+                0.0,
+            )
+
+        if menor_odd is not None and menor_odd <= 1.40 and odd >= 4.50:
+            return (
+                True,
+                "bloqueado por mercado gritando favorito forte contra esta entrada",
+                0.0,
+            )
+
+        if odd_valida(odd_oposta) and float(odd_oposta) <= 1.45 and odd >= 4.25:
+            return (
+                True,
+                "bloqueado: vitória seca contra favorito muito forte na casa",
+                0.0,
+            )
+
+        if prob < 0.24 and odd >= 4.00:
+            return (
+                True,
+                "probabilidade baixa demais para vitória seca em odd alta; vira auditoria, não aposta",
+                0.0,
+            )
+
+        if odd >= 4.00 and valor >= 0.35:
+            return (
+                True,
+                "valor alto demais em azarão: provável distorção/odd podre, não recomendação automática",
+                0.0,
+            )
+
+        prob_implicita = probs_mercado.get(mercado)
+
+        if prob_implicita is not None:
+            diferenca_modelo_mercado = prob - prob_implicita
+
+            if odd >= 3.50 and diferenca_modelo_mercado >= 0.13:
+                return (
+                    True,
+                    "modelo discordou demais do mercado em odd alta; precisa confirmação externa, então o app bloqueia",
+                    0.0,
+                )
+
+    # ========================================================
+    # 2) EMPATE COM CARA DE LIXO
+    # ========================================================
+
+    if mercado == "Empate":
+        if odd >= 4.50:
+            return (
+                True,
+                "empate acima de 4,50 é variância pesada; não vira entrada automática",
+                0.0,
+            )
+
+        if prob < 0.255:
+            return (
+                True,
+                "probabilidade de empate baixa demais para aposta real",
+                0.0,
+            )
+
+        if menor_odd is not None and menor_odd <= 1.45:
+            return (
+                True,
+                "existe favorito forte no 1x2; empate fica só para auditoria",
+                0.0,
+            )
+
+    # ========================================================
+    # 3) UNDER CONTRA JOGO COM CARA DE GOLS
+    # ========================================================
+
+    if mercado == "Menos de 2.5 gols":
+        odd_over = odds.get("Mais de 2.5 gols")
+
+        if total_gols is not None and total_gols >= 2.65 and odd >= 1.95:
+            return (
+                True,
+                "under bloqueado: força total de gols alta para comprar Menos de 2.5 nessa cotação",
+                0.0,
+            )
+
+        if maior_forca_gols is not None and maior_forca_gols >= 2.05 and odd >= 1.90:
+            return (
+                True,
+                "under bloqueado: um lado tem força ofensiva alta e pode fazer 3 gols sozinho",
+                0.0,
+            )
+
+        if odd_valida(odd_over) and float(odd_over) <= 1.60 and odd >= 2.00:
+            return (
+                True,
+                "under bloqueado: mercado está precificando Over forte",
+                0.0,
+            )
+
+    # ========================================================
+    # 4) OVER CONTRA JOGO FRIO
+    # ========================================================
+
+    if mercado == "Mais de 2.5 gols":
+        odd_under = odds.get("Menos de 2.5 gols")
+
+        if total_gols is not None and total_gols <= 2.05 and odd <= 1.75:
+            return (
+                True,
+                "over bloqueado: força total de gols baixa para aceitar odd curta",
+                0.0,
+            )
+
+        if odd_valida(odd_under) and float(odd_under) <= 1.65 and odd >= 2.00:
+            return (
+                True,
+                "over bloqueado: mercado está precificando Under forte",
+                0.0,
+            )
+
+    # ========================================================
+    # 5) BTTS NÃO CONTRA TOTAL ALTO
+    # ========================================================
+
+    if mercado == "Ambos marcam - Não":
+        odd_btts_sim = odds.get("Ambos marcam - Sim")
+
+        if (
+            total_gols is not None
+            and menor_forca_gols is not None
+            and total_gols >= 3.00
+            and menor_forca_gols >= 0.95
+        ):
+            return (
+                True,
+                "BTTS Não bloqueado: jogo tem força total alta e os dois lados têm chance real de gol",
+                0.0,
+            )
+
+        if odd_valida(odd_btts_sim) and float(odd_btts_sim) <= 1.55 and odd >= 2.10:
+            return (
+                True,
+                "BTTS Não bloqueado: mercado está precificando Ambos Marcam Sim forte",
+                0.0,
+            )
+
+    # ========================================================
+    # 6) BTTS SIM COM UM LADO MORTO
+    # ========================================================
+
+    if mercado == "Ambos marcam - Sim":
+        odd_btts_nao = odds.get("Ambos marcam - Não")
+
+        if menor_forca_gols is not None and menor_forca_gols <= 0.75:
+            return (
+                True,
+                "BTTS Sim bloqueado: um dos lados tem força ofensiva baixa demais",
+                0.0,
+            )
+
+        if odd_valida(odd_btts_nao) and float(odd_btts_nao) <= 1.65 and odd >= 2.00:
+            return (
+                True,
+                "BTTS Sim bloqueado: mercado está precificando Ambos Marcam Não forte",
+                0.0,
+            )
+
+    # ========================================================
+    # 7) REDUÇÃO DE STAKE POR RISCO
+    # ========================================================
+
+    fator_stake = 1.0
+
+    if confianca < 100:
+        fator_stake *= 0.55
+
+    if valor < 0.05:
+        fator_stake *= 0.50
+
+    if mercado in {"Vitória Casa", "Vitória Fora"}:
+        if odd >= 3.00:
+            fator_stake *= 0.45
+        elif odd >= 2.50:
+            fator_stake *= 0.70
+
+    if mercado == "Empate":
+        fator_stake *= 0.45
+
+    if mercado in {"Menos de 2.5 gols", "Mais de 2.5 gols"}:
+        if total_gols is not None and 2.35 <= total_gols <= 2.75:
+            fator_stake *= 0.75
+
+    fator_stake = float(np.clip(fator_stake, 0.0, 1.0))
+
+    return False, "", fator_stake
+
+
+def classificar_entrada(
+    mercado: str,
+    prob: float,
+    odd: float,
+    confianca: float,
+    perfil: str,
+    probabilidades: Optional[Dict[str, float]] = None,
+    odds_mercado: Optional[Dict[str, float]] = None,
+    gols_casa: Optional[float] = None,
+    gols_fora: Optional[float] = None,
+) -> Dict[str, object]:
+    """
+    V17:
+    - mantém Núcleo Planilha;
+    - mantém 1/4 Kelly;
+    - adiciona blindagem contra odds podres;
+    - bloqueia azarão seco absurdo;
+    - bloqueia empate ruim;
+    - bloqueia under/BTTS contraditório com força de gols;
+    - reduz stake quando a amostra é menor ou a margem é fraca.
+    """
+
+    probabilidades = probabilidades or {}
+    odds_mercado = odds_mercado or {mercado: odd}
+
     valor = (prob * odd) - 1.0 if odd_valida(odd) else -1.0
     odd_justa = 1.0 / prob if prob > 0 else np.inf
     stake_original = stake_planilha_quarto_kelly(prob, odd)
 
     if not odd_valida(odd):
-        return {
-            "apostar": False,
-            "nivel": "nao",
-            "percentual": 0.0,
-            "motivo": "cotação não informada",
-            "valor": valor,
-            "odd_justa": odd_justa,
-            "stake_planilha": 0.0,
-        }
+        return resposta_decisao(
+            False,
+            "nao",
+            0.0,
+            "cotação não informada",
+            valor,
+            odd_justa,
+            0.0,
+        )
 
     if mercado not in MERCADOS_NUCLEO_PLANILHA:
-        return {
-            "apostar": False,
-            "nivel": "nao",
-            "percentual": 0.0,
-            "motivo": "fora do núcleo da planilha; use só para auditoria manual se você quiser",
-            "valor": valor,
-            "odd_justa": odd_justa,
-            "stake_planilha": stake_original,
-        }
+        return resposta_decisao(
+            False,
+            "nao",
+            0.0,
+            "fora do núcleo da planilha; use só para auditoria manual se você quiser",
+            valor,
+            odd_justa,
+            stake_original,
+        )
 
     if confianca < 30:
-        return {
-            "apostar": False,
-            "nivel": "nao",
-            "percentual": 0.0,
-            "motivo": "amostra muito baixa para usar dinheiro real",
-            "valor": valor,
-            "odd_justa": odd_justa,
-            "stake_planilha": stake_original,
-        }
+        return resposta_decisao(
+            False,
+            "nao",
+            0.0,
+            "amostra muito baixa para usar dinheiro real",
+            valor,
+            odd_justa,
+            stake_original,
+        )
 
-    # Perfis simples, sem malabarismo: só mudam corte mínimo e teto de stake.
+    # Perfis agora têm corte mínimo real.
+    # Antes o app aceitava valor positivo quase sem filtro.
     if perfil == "Conservador":
-        margem_minima = 0.03
-        teto_stake = 0.015
+        margem_minima = 0.05
+        teto_stake = 0.0125
     elif perfil == "Agressivo com controle":
-        margem_minima = 0.00
-        teto_stake = 0.030
-    else:
-        margem_minima = 0.00
+        margem_minima = 0.02
         teto_stake = 0.025
+    else:
+        margem_minima = 0.03
+        teto_stake = 0.020
 
-    percentual = min(stake_original, teto_stake)
-
-    if valor <= margem_minima or percentual <= 0:
+    if valor <= margem_minima:
         motivo = "sem valor pela planilha"
+
         if valor > 0:
-            motivo = "valor pequeno demais para virar entrada"
-        return {
-            "apostar": False,
-            "nivel": "nao",
-            "percentual": 0.0,
-            "motivo": motivo,
-            "valor": valor,
-            "odd_justa": odd_justa,
-            "stake_planilha": stake_original,
-        }
+            motivo = "valor pequeno demais para virar entrada real"
 
-    minimo_executavel = 0.0025  # 0,25% da banca
+        return resposta_decisao(
+            False,
+            "nao",
+            0.0,
+            motivo,
+            valor,
+            odd_justa,
+            stake_original,
+        )
+
+    bloquear, motivo_bloqueio, fator_stake = filtro_odd_podre(
+        mercado=mercado,
+        prob=prob,
+        odd=odd,
+        probabilidades=probabilidades,
+        odds=odds_mercado,
+        confianca=confianca,
+        gols_casa=gols_casa,
+        gols_fora=gols_fora,
+    )
+
+    if bloquear:
+        return resposta_decisao(
+            False,
+            "nao",
+            0.0,
+            motivo_bloqueio,
+            valor,
+            odd_justa,
+            stake_original,
+        )
+
+    percentual = min(
+        stake_original * fator_stake,
+        teto_stake,
+    )
+
+    minimo_executavel = 0.0025
+
     if percentual < minimo_executavel:
-        return {
-            "apostar": False,
-            "nivel": "nao",
-            "percentual": 0.0,
-            "motivo": "valor existe, mas a stake da planilha ficou simbólica demais",
-            "valor": valor,
-            "odd_justa": odd_justa,
-            "stake_planilha": stake_original,
-        }
+        return resposta_decisao(
+            False,
+            "nao",
+            0.0,
+            "valor existe, mas depois da blindagem a stake ficou pequena demais",
+            valor,
+            odd_justa,
+            stake_original,
+        )
 
-    if valor >= 0.15 and percentual >= 0.015:
+    if valor >= 0.18 and percentual >= 0.012:
         nivel = "forte"
-    elif valor >= 0.07 and percentual >= 0.008:
+    elif valor >= 0.08 and percentual >= 0.0075:
         nivel = "boa"
     else:
         nivel = "leve"
 
-    return {
-        "apostar": True,
-        "nivel": nivel,
-        "percentual": percentual,
-        "motivo": "valor pela planilha; stake calculada por 1/4 Kelly",
-        "valor": valor,
-        "odd_justa": odd_justa,
-        "stake_planilha": stake_original,
-    }
+    motivo = "valor pela planilha, aprovado após filtro anti-odd podre"
+
+    if fator_stake < 0.99:
+        motivo = "valor pela planilha, mas stake reduzida pela blindagem de risco"
+
+    return resposta_decisao(
+        True,
+        nivel,
+        percentual,
+        motivo,
+        valor,
+        odd_justa,
+        stake_original,
+    )
 
 
-def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], confianca: float, banca: float, perfil: str, limite_total_jogo: float) -> List[Dict[str, object]]:
+def prioridade_entrada_sem_correlacao(
+    resultado: Dict[str, object],
+    gols_casa: Optional[float] = None,
+    gols_fora: Optional[float] = None,
+) -> float:
+    """
+    Score para decidir qual entrada fica quando duas entradas contam
+    praticamente a mesma história.
+
+    Exemplo:
+    - Menos de 2.5 e BTTS Não são correlacionadas.
+    - Over 2.5 e BTTS Sim também.
+    """
+
+    mercado = str(resultado.get("mercado", ""))
+    valor = float(resultado.get("valor", 0.0))
+    prob = float(resultado.get("probabilidade", 0.0))
+    stake = float(resultado.get("percentual_original", resultado.get("percentual", 0.0)))
+
+    score = valor + (stake * 2.0) + (prob * 0.05)
+
+    try:
+        gc = float(gols_casa) if gols_casa is not None else None
+        gf = float(gols_fora) if gols_fora is not None else None
+    except Exception:
+        gc = None
+        gf = None
+
+    if gc is not None and gf is not None:
+        total = gc + gf
+        menor = min(gc, gf)
+        maior = max(gc, gf)
+
+        # Quando um lado é fraco e o outro pode fazer 3x0,
+        # BTTS Não é uma tese melhor que Under.
+        if mercado == "Ambos marcam - Não" and menor <= 0.90 and maior >= 1.10:
+            score += 0.16
+
+        # Quando os dois lados são frios e o total é baixo,
+        # Under ganha força.
+        if mercado == "Menos de 2.5 gols" and total <= 2.10 and maior < 1.45:
+            score += 0.12
+
+        # Se o total é alto, BTTS Não perde prioridade.
+        if mercado == "Ambos marcam - Não" and total >= 2.80:
+            score -= 0.12
+
+        # Se o total é alto e os dois lados têm gol,
+        # BTTS Sim ganha prioridade sobre Over curto.
+        if mercado == "Ambos marcam - Sim" and total >= 2.80 and menor >= 0.95:
+            score += 0.10
+
+    if mercado in {"Vitória Casa", "Vitória Fora"} and prob >= 0.48:
+        score += 0.08
+
+    if mercado == "Empate":
+        score -= 0.08
+
+    return float(score)
+
+
+def aplicar_trava_de_correlacao(
+    resultados: List[Dict[str, object]],
+    gols_casa: Optional[float] = None,
+    gols_fora: Optional[float] = None,
+) -> List[Dict[str, object]]:
+    """
+    Evita o app sugerir várias entradas que dependem do mesmo desenho de placar.
+
+    Isso corta o erro clássico:
+    - Under 2.5 + BTTS Não cheio;
+    - Over 2.5 + BTTS Sim cheio;
+    - vitória seca + empate no mesmo jogo.
+    """
+
+    grupos = [
+        MERCADOS_GOLS_BAIXOS,
+        MERCADOS_GOLS_ALTOS,
+        MERCADOS_RESULTADO_SECO,
+    ]
+
+    for grupo in grupos:
+        aprovadas_grupo = [
+            r
+            for r in resultados
+            if bool(r.get("apostar"))
+            and str(r.get("mercado")) in grupo
+        ]
+
+        if len(aprovadas_grupo) <= 1:
+            continue
+
+        melhor = max(
+            aprovadas_grupo,
+            key=lambda r: prioridade_entrada_sem_correlacao(
+                r,
+                gols_casa=gols_casa,
+                gols_fora=gols_fora,
+            ),
+        )
+
+        mercado_melhor = str(melhor.get("mercado", ""))
+
+        for r in aprovadas_grupo:
+            if r is melhor:
+                continue
+
+            r["apostar"] = False
+            r["nivel"] = "nao"
+            r["percentual"] = 0.0
+            r["percentual_original"] = 0.0
+            r["entrada_rs"] = 0.0
+            r["motivo"] = f"bloqueada por correlação com {mercado_melhor}; o app mantém só a melhor tese do jogo"
+
+    return resultados
+
+
+def montar_resultados(
+    probabilidades: Dict[str, float],
+    odds: Dict[str, float],
+    confianca: float,
+    banca: float,
+    perfil: str,
+    limite_total_jogo: float,
+    gols_casa: Optional[float] = None,
+    gols_fora: Optional[float] = None,
+) -> List[Dict[str, object]]:
+
     resultados = []
+
     for mercado in MERCADOS:
         if mercado not in probabilidades or mercado not in odds:
             continue
+
         prob = float(probabilidades[mercado])
         odd = float(odds[mercado])
-        decisao = classificar_entrada(mercado, prob, odd, confianca, perfil)
-        percentual_original = min(float(decisao["percentual"]), 0.03)
-        resultados.append({
-            "mercado": mercado,
-            "probabilidade": prob,
-            "odd": odd,
-            "odd_justa": float(decisao["odd_justa"]),
-            "valor": float(decisao["valor"]),
-            "apostar": bool(decisao["apostar"]),
-            "nivel": str(decisao["nivel"]),
-            "percentual": percentual_original if decisao["apostar"] else 0.0,
-            "percentual_original": percentual_original if decisao["apostar"] else 0.0,
-            "stake_planilha": float(decisao.get("stake_planilha", 0.0)),
-            "entrada_rs": banca * percentual_original if banca > 0 and decisao["apostar"] else 0.0,
-            "motivo": str(decisao["motivo"]),
-        })
 
-    ordem = {"forte": 0, "boa": 1, "leve": 2, "nao": 3}
-    resultados.sort(key=lambda r: (ordem.get(r["nivel"], 9), -r["valor"]))
+        decisao = classificar_entrada(
+            mercado=mercado,
+            prob=prob,
+            odd=odd,
+            confianca=confianca,
+            perfil=perfil,
+            probabilidades=probabilidades,
+            odds_mercado=odds,
+            gols_casa=gols_casa,
+            gols_fora=gols_fora,
+        )
 
-    # Limite por jogo continua, mas agora só corta excesso; não cria stake artificial.
-    limite_total_jogo = float(np.clip(limite_total_jogo, 0.01, 0.09))
+        percentual_original = min(
+            float(decisao["percentual"]),
+            0.03,
+        )
+
+        resultados.append(
+            {
+                "mercado": mercado,
+                "probabilidade": prob,
+                "odd": odd,
+                "odd_justa": float(decisao["odd_justa"]),
+                "valor": float(decisao["valor"]),
+                "apostar": bool(decisao["apostar"]),
+                "nivel": str(decisao["nivel"]),
+                "percentual": percentual_original if decisao["apostar"] else 0.0,
+                "percentual_original": percentual_original if decisao["apostar"] else 0.0,
+                "stake_planilha": float(decisao.get("stake_planilha", 0.0)),
+                "entrada_rs": banca * percentual_original if banca > 0 and decisao["apostar"] else 0.0,
+                "motivo": str(decisao["motivo"]),
+            }
+        )
+
+    resultados = aplicar_trava_de_correlacao(
+        resultados,
+        gols_casa=gols_casa,
+        gols_fora=gols_fora,
+    )
+
+    ordem = {
+        "forte": 0,
+        "boa": 1,
+        "leve": 2,
+        "nao": 3,
+    }
+
+    resultados.sort(
+        key=lambda r: (
+            ordem.get(r["nivel"], 9),
+            -float(r["valor"]),
+        )
+    )
+
+    # Limite por jogo continua, mas agora só corta excesso.
+    # Não cria stake artificial.
+    limite_total_jogo = float(
+        np.clip(
+            limite_total_jogo,
+            0.01,
+            0.09,
+        )
+    )
+
     minimo_executavel = 0.0025
     usado = 0.0
-    aprovadas_ordenadas = [r for r in resultados if r["apostar"] and float(r["percentual_original"]) > 0]
+
+    aprovadas_ordenadas = [
+        r
+        for r in resultados
+        if r["apostar"]
+        and float(r["percentual_original"]) > 0
+    ]
 
     for r in aprovadas_ordenadas:
         percentual_desejado = float(r["percentual_original"])
-        restante = max(0.0, limite_total_jogo - usado)
+        restante = max(
+            0.0,
+            limite_total_jogo - usado,
+        )
 
         if restante < minimo_executavel:
             r["apostar"] = False
@@ -1663,21 +2264,33 @@ def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], 
             r["motivo"] = "valor existe, mas o limite total do jogo já foi preenchido"
             continue
 
-        percentual_final = min(percentual_desejado, restante)
+        percentual_final = min(
+            percentual_desejado,
+            restante,
+        )
+
         if percentual_final < minimo_executavel:
             r["apostar"] = False
             r["nivel"] = "nao"
             r["percentual"] = 0.0
             r["entrada_rs"] = 0.0
             r["motivo"] = "valor existe, mas ficou abaixo do mínimo executável"
+
         else:
             if percentual_final < percentual_desejado:
                 r["motivo"] = "valor pela planilha; entrada reduzida pelo limite total do jogo"
+
             r["percentual"] = percentual_final
             r["entrada_rs"] = banca * percentual_final if banca > 0 else 0.0
             usado += percentual_final
 
-    resultados.sort(key=lambda r: (ordem.get(r["nivel"], 9), -r["valor"]))
+    resultados.sort(
+        key=lambda r: (
+            ordem.get(r["nivel"], 9),
+            -float(r["valor"]),
+        )
+    )
+
     return resultados
 
 
@@ -2677,12 +3290,12 @@ st.markdown(
             <span class="hero-selo">CLARO E LEGÍVEL</span>
         </div>
         <div class="hero-titulo">TEX STATISTICS</div>
-        <div class="hero-sub">Sistema com a lógica objetiva da planilha que funcionou: força ataque/defesa, Poisson simples, margem de valor e stake 1/4 Kelly. Auditoria, Google Sheets, catálogo de odds, cores, alertas e calendário foram mantidos.</div>
+        <div class="hero-sub">Sistema com a lógica objetiva da planilha que funcionou: força ataque/defesa, Poisson simples, margem de valor, stake 1/4 Kelly e blindagem contra odds podres. Auditoria, Google Sheets, catálogo de odds, cores, alertas e calendário foram mantidos.</div>
         <div class="hero-chip-wrap">
             <span class="hero-chip">Núcleo Planilha</span>
             <span class="hero-chip">Auditoria preservada</span>
             <span class="hero-chip">Lógica da planilha</span>
-            <span class="hero-chip">Odds preservadas</span>
+            <span class="hero-chip">Anti-odd podre</span>
             <span class="hero-chip">Calendário preservado</span>
         </div>
     </div>
@@ -3037,7 +3650,16 @@ with aba_analisar:
 
     if botao_analisar and odds:
         gols_casa, gols_fora, probabilidades, confianca, amostras = calcular_forcas_e_probabilidades(df, time_casa, time_fora)
-        resultados = montar_resultados(probabilidades, odds, confianca, banca_usada, perfil, limite_total_jogo_pct)
+        resultados = montar_resultados(
+            probabilidades=probabilidades,
+            odds=odds,
+            confianca=confianca,
+            banca=banca_usada,
+            perfil=perfil,
+            limite_total_jogo=limite_total_jogo_pct,
+            gols_casa=gols_casa,
+            gols_fora=gols_fora,
+        )
         st.session_state["ultima_analise"] = {
             "id": str(pd.Timestamp.now().value),
             "liga": liga_sel,
