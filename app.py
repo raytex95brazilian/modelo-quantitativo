@@ -3724,7 +3724,10 @@ with aba_analisar:
             if total_sugerido >= banca_analise * limite_analise * 0.99 and len(aprovadas) > 1:
                 st.warning("As entradas aprovadas foram ajustadas para respeitar o limite total do mesmo jogo. Isso evita concentrar dinheiro demais em mercados que dependem do mesmo placar.")
         else:
-            st.info("Nenhuma entrada passou pela planilha. Isso é proteção: sem margem positiva e stake real, não vira aposta.")
+           st.info(
+    "Nenhuma entrada passou pelos filtros finais. Isso é proteção: pode até existir valor bruto pela planilha, "
+    "mas a blindagem bloqueia odd podre, mercado contraditório, correlação ruim ou stake fraca."
+)
 
         st.markdown("### Blocos de decisão")
         for r in resultados:
