@@ -196,12 +196,6 @@ st.markdown(
     .kv { border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 18px; background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); padding: 12px 13px; }
     .kv-label { font-size: .72rem; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; color: var(--muted) !important; -webkit-text-fill-color: var(--muted) !important; margin-bottom: 4px; }
     .kv-value { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 1.32rem; font-weight: 800; line-height: 1; letter-spacing: -0.04em; color: var(--navy) !important; -webkit-text-fill-color: var(--navy) !important; }
-    .entry-alert { margin-top: 14px; border-radius: 18px; border: 1px solid #fed7aa; background: #fff7ed; padding: 12px 14px; }
-    .entry-alert-title { font-weight: 900; color: #9a3412 !important; -webkit-text-fill-color: #9a3412 !important; margin-bottom: 6px; }
-    .entry-alert ul { margin: 0 0 0 19px; padding: 0; }
-    .entry-alert li { margin: 4px 0; color: #7c2d12 !important; -webkit-text-fill-color: #7c2d12 !important; font-weight: 680; }
-    /* Tags e rodapé de motivo removidos da tela. Mantém oculto até para registros antigos em cache. */
-    .tag-row, .tag-pill, .entry-foot { display: none !important; visibility: hidden !important; height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; }
 
     .warn-list-box { background: #fff7ed; border: 1px solid #fed7aa; border-left: 7px solid #f97316; border-radius: 20px; padding: 14px 16px; margin: 10px 0 14px 0; box-shadow: var(--shadow-soft); }
     .market-alert { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; padding: 10px 12px; color: #7c2d12; font-weight: 800; }
@@ -211,7 +205,7 @@ st.markdown(
     .big-yellow { color: var(--amber) !important; -webkit-text-fill-color: var(--amber) !important; font-weight: 900; }
 
     .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button, button[kind="primary"], button[kind="secondary"] { border-radius: 16px !important; font-weight: 900 !important; border: 1px solid rgba(15, 118, 110, 0.24) !important; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08) !important; }
-    button[kind="primary"] { background: linear-gradient(135deg, #0f766e 0%, #0f172a 120%) !important; color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; }
+    button[kind="primary"] { background: #ffffff !important; color: #0f172a !important; -webkit-text-fill-color: #0f172a !important; border: 1px solid #ef4444 !important; }
     button[kind="secondary"], .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button { background: rgba(255, 255, 255, 0.88) !important; color: var(--ink) !important; -webkit-text-fill-color: var(--ink) !important; }
     .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover, button[kind="primary"]:hover, button[kind="secondary"]:hover { transform: translateY(-1px); border-color: rgba(15, 118, 110, 0.55) !important; }
 
@@ -219,40 +213,10 @@ st.markdown(
     [data-testid="stExpander"] summary { font-weight: 850 !important; }
     [data-testid="stAlert"] { border-radius: 18px !important; border: 1px solid rgba(148, 163, 184, 0.22) !important; box-shadow: var(--shadow-soft) !important; }
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 999px !important;
-        background: rgba(255, 255, 255, 0.92) !important;
-        border: 1px solid rgba(148, 163, 184, 0.34) !important;
-        padding: 8px 14px !important;
-        font-weight: 850 !important;
-        color: var(--ink) !important;
-        -webkit-text-fill-color: var(--ink) !important;
-    }
-    .stTabs [data-baseweb="tab"] *,
-    .stTabs [data-baseweb="tab"] p,
-    .stTabs [data-baseweb="tab"] span {
-        color: var(--ink) !important;
-        -webkit-text-fill-color: var(--ink) !important;
-        opacity: 1 !important;
-    }
-    .stTabs [data-baseweb="tab"][aria-selected="true"],
-    .stTabs [aria-selected="true"] {
-        background: #ffffff !important;
-        color: #020617 !important;
-        -webkit-text-fill-color: #020617 !important;
-        border: 1px solid rgba(239, 68, 68, 0.55) !important;
-        box-shadow: inset 0 -3px 0 #ef4444, 0 8px 22px rgba(15, 23, 42, 0.08) !important;
-    }
-    .stTabs [data-baseweb="tab"][aria-selected="true"] *,
-    .stTabs [aria-selected="true"] *,
-    .stTabs [data-baseweb="tab"][aria-selected="true"] p,
-    .stTabs [aria-selected="true"] p,
-    .stTabs [data-baseweb="tab"][aria-selected="true"] span,
-    .stTabs [aria-selected="true"] span {
-        color: #020617 !important;
-        -webkit-text-fill-color: #020617 !important;
-        opacity: 1 !important;
-    }
+    .stTabs [data-baseweb="tab"] { border-radius: 999px !important; background: rgba(255, 255, 255, 0.72) !important; border: 1px solid rgba(148, 163, 184, 0.24) !important; padding: 8px 14px !important; font-weight: 850 !important; }
+    .stTabs [data-baseweb="tab"] * { color: #0f172a !important; -webkit-text-fill-color: #0f172a !important; }
+    .stTabs [aria-selected="true"] { background: #ffffff !important; color: #0f172a !important; -webkit-text-fill-color: #0f172a !important; border-bottom: 3px solid #ef4444 !important; box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08) !important; }
+    .stTabs [aria-selected="true"] * { color: #0f172a !important; -webkit-text-fill-color: #0f172a !important; }
 
     @media (max-width: 860px) {
         .hero { padding: 22px 18px; border-radius: 24px; }
@@ -695,25 +659,13 @@ def _classe_card_prioridade(prioridade: str) -> str:
 
 
 def _tag_pills_html(etiquetas: str) -> str:
-    """Não renderiza mais etiquetas no card principal para evitar HTML/ruído visual na tela."""
+    """Desativado: não renderiza etiquetas no card principal para evitar HTML cru na tela."""
     return ""
 
 
 def _alertas_html(alertas: List[str]) -> str:
-    limpos = []
-    for a in alertas:
-        a = texto_limpo_para_tela(a).strip()
-        if a and a not in limpos:
-            limpos.append(a)
-    if not limpos:
-        return ""
-    lis = "".join(f"<li>{escape_card_html(a)}</li>" for a in limpos)
-    return f'''
-        <div class="entry-alert">
-            <div class="entry-alert-title">Atenção de mercado</div>
-            <ul>{lis}</ul>
-        </div>
-    '''
+    """Desativado: alertas ficam na tabela técnica/checklist, não dentro do card principal."""
+    return ""
 
 
 def render_card_valor_positivo(r: pd.Series) -> None:
@@ -736,6 +688,8 @@ def render_card_valor_positivo(r: pd.Series) -> None:
     entrada_rs = _num("Entrada R$", fmt_dinheiro)
 
     alertas = [p.strip() for p in texto_limpo_para_tela(r.get("Alerta de mercado", "")).split("|") if p.strip()]
+    etiquetas = texto_limpo_para_tela(r.get("Etiquetas", ""))
+    motivo = texto_limpo_para_tela(r.get("Motivo", ""))
     status = texto_limpo_para_tela(r.get("Status operacional", "LIBERADO"))
     valor_matematico = texto_limpo_para_tela(r.get("Valor matemático", "SIM"))
     mercado = mercado_exibicao(r.get("Mercado", ""))
@@ -759,7 +713,6 @@ def render_card_valor_positivo(r: pd.Series) -> None:
             <div class="kv"><div class="kv-label">Entrada %</div><div class="kv-value">{escape_card_html(entrada_pct)}</div></div>
             <div class="kv"><div class="kv-label">Entrada em reais</div><div class="kv-value">{escape_card_html(entrada_rs)}</div></div>
         </div>
-        {_alertas_html(alertas)}
     </div>
     '''
     st.markdown(html_card, unsafe_allow_html=True)
