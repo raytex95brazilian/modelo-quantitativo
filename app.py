@@ -13,7 +13,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.2 — PURE SHEET MANUAL + SCIENTIFIC DIAGNOSTICS
+# TEX STATISTICS V19.2.1 — PURE SHEET MANUAL + SCIENTIFIC DIAGNOSTICS
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -22,7 +22,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.2 Pure Sheet Manual", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.2.1 Pure Sheet Manual", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -844,7 +844,7 @@ def calcular_scout_opcional(df: pd.DataFrame, time_casa: str, time_fora: str) ->
 
     tabela = pd.DataFrame(linhas)
     for col in tabela.columns[1:]:
-        tabela[col] = pd.to_numeric(tabela[col], errors="ignore")
+        tabela[col] = pd.to_numeric(tabela[col], errors="coerce")
     return tabela, avisos
 
 
@@ -1062,7 +1062,7 @@ def extrair_odds_api(jogo: dict, casa_alvo: Optional[str] = None) -> Tuple[Dict[
     """
     Extrai odds da API.
 
-    Regra V19.2:
+    Regra V19.2.1:
     - se a casa escolhida existir na API, usa somente essa casa;
     - se não existir, usa mediana do mercado só como referência e avisa claramente;
     - no uso real, o modo Manual continua sendo o padrão recomendado.
@@ -1389,7 +1389,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.2</div>
+        <div class="hero-title">TEX STATISTICS V19.2.1</div>
         <div class="hero-sub">
             Pure Sheet Manual: ataque/defesa, mando, Poisson, odd justa, margem +EV e Kelly fracionado.
             Padrão fiel à planilha: temporada inteira, margem mínima prática de 3% e modo manual como prioridade.
@@ -1728,7 +1728,7 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.2 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']}").strip(),
+                            observacao=(obs + f" | V19.2.1 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']}").strip(),
                         )
                     destino = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas. Destino: {destino}.")
@@ -1761,7 +1761,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "A decisão da V19.2 continua sendo pela planilha: odd real contra odd justa."
+        "A decisão da V19.2.1 continua sendo pela planilha: odd real contra odd justa."
     )
 
 
