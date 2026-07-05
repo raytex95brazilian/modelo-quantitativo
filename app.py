@@ -200,9 +200,8 @@ st.markdown(
     .entry-alert-title { font-weight: 900; color: #9a3412 !important; -webkit-text-fill-color: #9a3412 !important; margin-bottom: 6px; }
     .entry-alert ul { margin: 0 0 0 19px; padding: 0; }
     .entry-alert li { margin: 4px 0; color: #7c2d12 !important; -webkit-text-fill-color: #7c2d12 !important; font-weight: 680; }
-    .tag-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
-    .tag-pill { display: inline-flex; padding: 6px 9px; border-radius: 999px; background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3 !important; -webkit-text-fill-color: #3730a3 !important; font-size: .76rem; font-weight: 800; }
-    .entry-foot { margin-top: 13px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.22); color: var(--muted) !important; -webkit-text-fill-color: var(--muted) !important; font-size: .86rem; line-height: 1.48; font-weight: 620; }
+    /* Tags e rodapé de motivo removidos da tela. Mantém oculto até para registros antigos em cache. */
+    .tag-row, .tag-pill, .entry-foot { display: none !important; visibility: hidden !important; height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; }
 
     .warn-list-box { background: #fff7ed; border: 1px solid #fed7aa; border-left: 7px solid #f97316; border-radius: 20px; padding: 14px 16px; margin: 10px 0 14px 0; box-shadow: var(--shadow-soft); }
     .market-alert { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; padding: 10px 12px; color: #7c2d12; font-weight: 800; }
@@ -220,8 +219,40 @@ st.markdown(
     [data-testid="stExpander"] summary { font-weight: 850 !important; }
     [data-testid="stAlert"] { border-radius: 18px !important; border: 1px solid rgba(148, 163, 184, 0.22) !important; box-shadow: var(--shadow-soft) !important; }
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] { border-radius: 999px !important; background: rgba(255, 255, 255, 0.72) !important; border: 1px solid rgba(148, 163, 184, 0.24) !important; padding: 8px 14px !important; font-weight: 850 !important; }
-    .stTabs [aria-selected="true"] { background: #0f172a !important; color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 999px !important;
+        background: rgba(255, 255, 255, 0.92) !important;
+        border: 1px solid rgba(148, 163, 184, 0.34) !important;
+        padding: 8px 14px !important;
+        font-weight: 850 !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    .stTabs [data-baseweb="tab"] *,
+    .stTabs [data-baseweb="tab"] p,
+    .stTabs [data-baseweb="tab"] span {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        opacity: 1 !important;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"],
+    .stTabs [aria-selected="true"] {
+        background: #ffffff !important;
+        color: #020617 !important;
+        -webkit-text-fill-color: #020617 !important;
+        border: 1px solid rgba(239, 68, 68, 0.55) !important;
+        box-shadow: inset 0 -3px 0 #ef4444, 0 8px 22px rgba(15, 23, 42, 0.08) !important;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] *,
+    .stTabs [aria-selected="true"] *,
+    .stTabs [data-baseweb="tab"][aria-selected="true"] p,
+    .stTabs [aria-selected="true"] p,
+    .stTabs [data-baseweb="tab"][aria-selected="true"] span,
+    .stTabs [aria-selected="true"] span {
+        color: #020617 !important;
+        -webkit-text-fill-color: #020617 !important;
+        opacity: 1 !important;
+    }
 
     @media (max-width: 860px) {
         .hero { padding: 22px 18px; border-radius: 24px; }
@@ -664,14 +695,8 @@ def _classe_card_prioridade(prioridade: str) -> str:
 
 
 def _tag_pills_html(etiquetas: str) -> str:
-    itens = []
-    for parte in str(etiquetas or "").split(";"):
-        parte = texto_limpo_para_tela(parte).strip()
-        if parte:
-            itens.append(f'<span class="tag-pill">{escape_card_html(parte)}</span>')
-    if not itens:
-        return ""
-    return f'<div class="tag-row">{"".join(itens)}</div>'
+    """Não renderiza mais etiquetas no card principal para evitar HTML/ruído visual na tela."""
+    return ""
 
 
 def _alertas_html(alertas: List[str]) -> str:
@@ -711,8 +736,6 @@ def render_card_valor_positivo(r: pd.Series) -> None:
     entrada_rs = _num("Entrada R$", fmt_dinheiro)
 
     alertas = [p.strip() for p in texto_limpo_para_tela(r.get("Alerta de mercado", "")).split("|") if p.strip()]
-    etiquetas = texto_limpo_para_tela(r.get("Etiquetas", ""))
-    motivo = texto_limpo_para_tela(r.get("Motivo", ""))
     status = texto_limpo_para_tela(r.get("Status operacional", "LIBERADO"))
     valor_matematico = texto_limpo_para_tela(r.get("Valor matemático", "SIM"))
     mercado = mercado_exibicao(r.get("Mercado", ""))
@@ -737,8 +760,6 @@ def render_card_valor_positivo(r: pd.Series) -> None:
             <div class="kv"><div class="kv-label">Entrada em reais</div><div class="kv-value">{escape_card_html(entrada_rs)}</div></div>
         </div>
         {_alertas_html(alertas)}
-        {_tag_pills_html(etiquetas)}
-        {f'<div class="entry-foot"><strong>Motivo:</strong> {escape_card_html(motivo)}</div>' if motivo else ''}
     </div>
     '''
     st.markdown(html_card, unsafe_allow_html=True)
