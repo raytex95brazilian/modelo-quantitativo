@@ -15,7 +15,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.3.5 — PRIORIDADE OPERACIONAL REAL + GOOGLE ECONOMY
+# TEX STATISTICS V19.4 — PRIORIDADE OPERACIONAL REAL + GOOGLE ECONOMY
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -368,7 +368,7 @@ COLUNAS_AUDITORIA = [
     "ID", "Registrado em", "Liga", "Jogo", "Casa de apostas", "Mercado",
     "Cotação de entrada", "Cotação justa", "Chance pelo sistema %", "Valor esperado %",
     "Entrada %", "Entrada R$", "Banca antes", "Cotação de fechamento",
-    "Vantagem no fechamento %", "Status", "Resultado R$", "Banca depois", "Origem", "Observação",
+    "Vantagem no fechamento %", "Status", "Resultado R$", "Banca depois", "Origem", "Observação", "Etiquetas",
 ]
 
 COLUNAS_CATALOGO = [
@@ -719,21 +719,99 @@ def aplicar_recorte_historico(
 
 def resumo_base_dados(df: pd.DataFrame) -> Dict[str, object]:
     if df is None or df.empty:
-        return {"jogos": 0, "inicio": "-", "fim": "-", "times": 0}
+        return {"jogos": 0, "inicio": "-", "fim": "-", "times": 0, "inicio_data": None, "fim_data": None}
     inicio = fim = "sem data"
+    inicio_data = fim_data = None
     if "DataTemp" in df.columns and pd.to_datetime(df["DataTemp"], errors="coerce").notna().any():
         datas = pd.to_datetime(df["DataTemp"], errors="coerce").dropna()
-        inicio = datas.min().strftime("%d/%m/%Y")
-        fim = datas.max().strftime("%d/%m/%Y")
+        dmin = datas.min()
+        dmax = datas.max()
+        inicio_data = dmin.strftime("%Y-%m-%d")
+        fim_data = dmax.strftime("%Y-%m-%d")
+        inicio = dmin.strftime("%d/%m/%Y")
+        fim = dmax.strftime("%d/%m/%Y")
     home = df.get("Home", pd.Series(dtype=str)).dropna().astype(str)
     away = df.get("Away", pd.Series(dtype=str)).dropna().astype(str)
     times = sorted(set(home) | set(away))
-    return {"jogos": int(len(df)), "inicio": inicio, "fim": fim, "times": int(len(times))}
-
+    return {"jogos": int(len(df)), "inicio": inicio, "fim": fim, "times": int(len(times)), "inicio_data": inicio_data, "fim_data": fim_data}
 
 def texto_base_dados(resumo: Dict[str, object], modo: str) -> str:
     return f"Base usada: {html.escape(str(modo))} | Período: {resumo.get('inicio', '-')} até {resumo.get('fim', '-')} | Jogos: {resumo.get('jogos', 0)} | Times: {resumo.get('times', 0)}"
 
+
+
+def dias_base_ate_jogo(resumo: Dict[str, object], data_jogo: object) -> Optional[int]:
+    """Distância em dias entre a última data da base usada e a data do jogo analisado."""
+    try:
+        fim = resumo.get("fim_data") if isinstance(resumo, dict) else None
+        if not fim or str(fim).lower() in {"none", "-", "sem data"}:
+            return None
+        dt_base = pd.to_datetime(fim, errors="coerce")
+        dt_jogo = pd.to_datetime(data_jogo, errors="coerce")
+        if pd.isna(dt_base) or pd.isna(dt_jogo):
+            return None
+        return int((dt_jogo.normalize() - dt_base.normalize()).days)
+    except Exception:
+        return None
+
+
+def append_tag_texto(valor: object, *tags: str) -> str:
+    existentes: List[str] = []
+    for parte in str(valor or "").split(";"):
+        parte = parte.strip()
+        if parte:
+            existentes.append(parte)
+    for tag in tags:
+        tag = str(tag or "").strip()
+        if tag and tag not in existentes:
+            existentes.append(tag)
+    return "; ".join(existentes)
+
+
+def classificar_divergencia_mercado(prob_app: float, odd_real: float, mercado: str, margem: float, alertas: List[str]) -> Tuple[str, float, float]:
+    """
+    Índice simples e auditável de divergência com o mercado.
+    Usa apenas probabilidade do modelo e probabilidade implícita bruta da cotação real.
+    Não é filtro subjetivo; é alerta operacional.
+    """
+    try:
+        prob_app = float(prob_app)
+        odd_real = float(odd_real)
+        prob_mercado = 1.0 / odd_real if odd_real > 1 else 0.0
+        dif = prob_app - prob_mercado
+    except Exception:
+        return "INDEFINIDA", 0.0, 0.0
+
+    texto_alerta = " ".join(str(a).lower() for a in (alertas or []))
+    extremo_por_1x2 = str(mercado) in {"Vitória Casa", "Vitória Fora"} and prob_app >= 0.50 and odd_real >= 3.00
+    extremo_por_dif = abs(dif) >= 0.25 and ("favorito do mercado" in texto_alerta or "cotação real muito acima" in texto_alerta)
+    if extremo_por_1x2 or extremo_por_dif:
+        nivel = "EXTREMA"
+    elif abs(dif) >= 0.18 or "favorito do mercado" in texto_alerta:
+        nivel = "FORTE"
+    elif abs(dif) >= 0.10 or bool(alertas):
+        nivel = "MÉDIA"
+    else:
+        nivel = "NORMAL"
+    return nivel, prob_mercado, dif
+
+
+def aplicar_alerta_base_distante(resultados: pd.DataFrame, dias_distante: Optional[int]) -> pd.DataFrame:
+    if resultados is None or resultados.empty or dias_distante is None or dias_distante <= 14:
+        return resultados
+    out = resultados.copy()
+    tag = "Base distante da data do jogo"
+    detalhe = f"base distante da data do jogo ({dias_distante} dias desde o último jogo da base)"
+    for idx in out.index:
+        if str(out.at[idx, "Veredito"]) == "VALOR POSITIVO":
+            out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx].get("Etiquetas", ""), tag)
+            out.at[idx, "Motivo"] = str(out.at[idx].get("Motivo", "")) + f" | atenção: {detalhe}."
+            # Base muito distante não transforma valor em lixo, mas impede leitura alta.
+            if str(out.at[idx].get("Prioridade", "")).startswith("🟢"):
+                out.at[idx, "Prioridade"] = "🟠 Média"
+                out.at[idx, "_prioridade_score"] = 2
+                out.at[idx, "_prioridade_motivo"] = "valor positivo, mas a base está distante da data do jogo"
+    return out
 
 def render_stat_card(label: str, value: object, hint: str = "", icon: str = "") -> None:
     st.markdown(
@@ -800,8 +878,14 @@ def prioridade_aposta(
     amostra = int(amostra_minima or 0)
     status = str(status_operacional or "").upper()
 
+    if "DIVERGÊNCIA EXTREMA" in status:
+        return "🔴 Baixa", 1, "valor contra o mercado; exige confirmação manual antes de apostar"
+
     if amostra < 5 or "AMOSTRA BAIXA" in status:
         return "🔴 Fraca", 1, "valor matemático existe, mas a amostra baixa limita a prioridade operacional"
+
+    if "DIVERGÊNCIA FORTE" in status and score > 2:
+        return "🟠 Média", 2, "valor forte, mas há divergência importante com o mercado"
 
     if 5 <= amostra <= 7 and score > 2:
         return "🟠 Média", 2, "valor forte, mas amostra mínima aprovada ainda limita a prioridade operacional"
@@ -1086,6 +1170,7 @@ def avaliar_valor_planilha(
     politica_amostra_baixa: str = "Avisar e reduzir entrada",
     fator_reducao_amostra: float = 0.50,
     amostra_minima_real: int = 0,
+    fator_reducao_divergencia: float = 0.50,
 ) -> pd.DataFrame:
     """
     Avalia valor como a planilha, mas separa duas coisas que não podem ficar misturadas:
@@ -1146,14 +1231,49 @@ def avaliar_valor_planilha(
 
         alertas_mercado = detectar_alertas_mercado(mercado, float(odd), float(odd_justa), float(margem), odds) if tem_valor else []
         alerta_mercado_txt = " | ".join(alertas_mercado)
+        nivel_divergencia, prob_mercado, dif_app_mercado = classificar_divergencia_mercado(prob, float(odd), mercado, float(margem), alertas_mercado) if tem_valor else ("NORMAL", 1.0 / float(odd), prob - (1.0 / float(odd)))
+
+        etiquetas: List[str] = []
+        if not amostra_ok:
+            etiquetas.append("Amostra baixa")
+        elif 5 <= int(amostra_minima_real or 0) <= 7:
+            etiquetas.append("Amostra mínima aprovada")
+        elif int(amostra_minima_real or 0) >= 13:
+            etiquetas.append("Amostra forte")
+        elif int(amostra_minima_real or 0) >= 8:
+            etiquetas.append("Amostra boa")
+
+        if nivel_divergencia == "EXTREMA":
+            etiquetas.append("Divergência extrema com mercado")
+        elif nivel_divergencia == "FORTE":
+            etiquetas.append("Divergência forte com mercado")
+        elif nivel_divergencia == "MÉDIA":
+            etiquetas.append("Divergência média com mercado")
+
+        for alerta in alertas_mercado:
+            a = str(alerta).lower()
+            if "favorito do mercado" in a:
+                etiquetas.append("Contra favorito do mercado")
+            if "mercado de gols" in a:
+                etiquetas.append("Mercado de gols contrário")
+            if "ambos marcam" in a:
+                etiquetas.append("Mercado de ambos marcam contrário")
+
         if alerta_mercado_txt and entrada_pct > 0:
             motivo = motivo + " | atenção de mercado: conferência manual recomendada."
 
+        if tem_valor and entrada_pct > 0 and nivel_divergencia == "EXTREMA":
+            fator_div = float(max(0.0, min(1.0, fator_reducao_divergencia)))
+            entrada_pct = entrada_pct * fator_div
+            motivo = motivo + f" | divergência extrema com o mercado; entrada reduzida para {fmt_pct(fator_div, 0)} da entrada original."
+            if status_operacional == "LIBERADO":
+                status_operacional = "LIBERADO — DIVERGÊNCIA EXTREMA"
+            else:
+                status_operacional = status_operacional + " — DIVERGÊNCIA EXTREMA"
+        elif tem_valor and nivel_divergencia == "FORTE" and status_operacional == "LIBERADO":
+            status_operacional = "LIBERADO — DIVERGÊNCIA FORTE"
+
         prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(prob, margem, entrada_pct, veredito, status_operacional, amostra_minima_real)
-        if alerta_mercado_txt and prioridade_score > 2:
-            prioridade_txt = "🟠 Média"
-            prioridade_score = 2
-            prioridade_motivo = "valor forte, mas há divergência importante com o mercado; confira antes de apostar"
 
         linhas.append({
             "Mercado": mercado,
@@ -1161,6 +1281,10 @@ def avaliar_valor_planilha(
             "Valor matemático": valor_matematico,
             "Status operacional": status_operacional,
             "Alerta de mercado": alerta_mercado_txt,
+            "Divergência mercado": nivel_divergencia,
+            "Prob. mercado": prob_mercado,
+            "Diferença app-mercado": dif_app_mercado,
+            "Etiquetas": append_tag_texto("", *etiquetas),
             "Probabilidade": prob,
             "Cotação justa": odd_justa,
             "Cotação real": float(odd),
@@ -1194,7 +1318,11 @@ def avaliar_valor_planilha(
                 str(row.get("Status operacional", "")),
                 amostra_minima_real,
             )
-            if str(row.get("Alerta de mercado", "")).strip() and prioridade_score > 2:
+            if str(row.get("Divergência mercado", "")).strip().upper() == "EXTREMA":
+                prioridade_txt = "🔴 Baixa"
+                prioridade_score = 1
+                prioridade_motivo = "valor contra o mercado; exige confirmação manual antes de apostar"
+            elif str(row.get("Alerta de mercado", "")).strip() and prioridade_score > 2:
                 prioridade_txt = "🟠 Média"
                 prioridade_score = 2
                 prioridade_motivo = "valor forte, mas há divergência importante com o mercado; confira antes de apostar"
@@ -1204,7 +1332,9 @@ def avaliar_valor_planilha(
 
     ordem_status = {
         "LIBERADO": 0,
-        "AMOSTRA BAIXA — ENTRADA REDUZIDA": 1,
+        "LIBERADO — DIVERGÊNCIA FORTE": 1,
+        "LIBERADO — DIVERGÊNCIA EXTREMA": 2,
+        "AMOSTRA BAIXA — ENTRADA REDUZIDA": 3,
         "AMOSTRA BAIXA — ESTUDO": 2,
         "SEM VALOR": 3,
         "AMOSTRA BAIXA — BLOQUEADO": 4,
@@ -1447,11 +1577,31 @@ def resumo_auditoria_avancado(auditoria: pd.DataFrame) -> Dict[str, pd.DataFrame
         "ROI": float(fechadas["Resultado R$"].sum() / max(0.01, fechadas["Entrada R$"].sum())),
     }])
 
+    por_etiqueta = pd.DataFrame()
+    if "Etiquetas" in fechadas.columns:
+        tag_base = fechadas.copy()
+        tag_base["Etiqueta"] = tag_base["Etiquetas"].fillna("").astype(str).str.split(";")
+        tag_base = tag_base.explode("Etiqueta")
+        tag_base["Etiqueta"] = tag_base["Etiqueta"].astype(str).str.strip()
+        tag_base = tag_base[tag_base["Etiqueta"].ne("")]
+        if not tag_base.empty:
+            g = tag_base.groupby("Etiqueta", dropna=False).agg(
+                Entradas=("ID", "count"),
+                Greens=("Green_bin", "sum"),
+                Reds=("Red_bin", "sum"),
+                Apostado=("Entrada R$", "sum"),
+                Resultado=("Resultado R$", "sum"),
+            ).reset_index()
+            g["Taxa acerto"] = np.where((g["Greens"] + g["Reds"]) > 0, g["Greens"] / (g["Greens"] + g["Reds"]), 0.0)
+            g["ROI"] = np.where(g["Apostado"] > 0, g["Resultado"] / g["Apostado"], 0.0)
+            por_etiqueta = g.sort_values("Resultado", ascending=False)
+
     return {
         "geral": geral,
         "por_mercado": agrupar("Mercado"),
         "por_liga": agrupar("Liga"),
         "por_faixa_odd": agrupar("Faixa odd"),
+        "por_etiqueta": por_etiqueta,
     }
 
 
@@ -1781,7 +1931,7 @@ def _salvar_cache_google(nome: str, df: pd.DataFrame, colunas: List[str]) -> Non
 def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
     """Obtém ou cria uma aba no Google Sheets sem fazer leituras desnecessárias.
 
-    V19.3.3: o Streamlit reroda o script a cada clique. Antes, o app lia o Google
+    V19.4: o Streamlit reroda o script a cada clique. Antes, o app lia o Google
     Sheets várias vezes por rerun e batia quota de leitura. Agora o Google fica em
     modo economia: leitura só por cache ou sincronização manual, com cooldown quando
     aparecer quota 429.
@@ -1965,6 +2115,7 @@ def registrar_entrada(
     banca_antes: float,
     origem: str,
     observacao: str,
+    etiquetas: str = "",
 ) -> pd.DataFrame:
     base = normalizar_colunas(auditoria, COLUNAS_AUDITORIA)
     nova = {
@@ -1988,6 +2139,7 @@ def registrar_entrada(
         "Banca depois": "",
         "Origem": origem,
         "Observação": observacao,
+        "Etiquetas": etiquetas,
     }
     return pd.concat([base, pd.DataFrame([nova])], ignore_index=True)
 
@@ -2087,9 +2239,9 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.3.5</div>
+        <div class="hero-title">TEX STATISTICS V19.4</div>
         <div class="hero-sub">
-            Planilha pura manual: ataque/defesa, mando, Poisson, cotação justa, margem positiva e Kelly fracionado.
+            Planilha pura manual: ataque/defesa, mando, Poisson, cotação justa, margem positiva e conferência operacional.
             Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
             Sem firula subjetiva. Diagnóstico, scout e auditoria informam — não bloqueiam o valor da planilha.
         </div>
@@ -2178,6 +2330,16 @@ with st.sidebar:
     teto_por_jogo_pct = st.slider("Teto total no jogo", 1.0, 20.0, 6.0, 0.5, format="%.1f%%")
     teto_por_entrada = teto_por_entrada_pct / 100.0
     teto_por_jogo = teto_por_jogo_pct / 100.0
+    fator_reducao_divergencia_pct = st.slider(
+        "Entrada em divergência extrema com mercado",
+        min_value=10.0,
+        max_value=100.0,
+        value=50.0,
+        step=5.0,
+        format="%.0f%%",
+        help="Quando o modelo bate de frente com o mercado, a entrada é reduzida automaticamente. Não bloqueia; só protege a banca.",
+    )
+    fator_reducao_divergencia = fator_reducao_divergencia_pct / 100.0
     st.caption("Padrão recomendado: 1/4 do cálculo, margem mínima 3%, teto de 3% por entrada e 6% por jogo. O recorte padrão agora é temporada atual, não histórico gigante.")
 
     st.divider()
@@ -2329,7 +2491,11 @@ with aba_analisar:
                 politica_amostra_baixa=politica_amostra_baixa,
                 fator_reducao_amostra=fator_reducao_amostra,
                 amostra_minima_real=int(calc.get("amostra_minima", 0)),
+                fator_reducao_divergencia=fator_reducao_divergencia,
             )
+            periodo_usado = resumo_base_dados(df_liga)
+            dias_base_jogo = dias_base_ate_jogo(periodo_usado, data_jogo_catalogo)
+            resultados = aplicar_alerta_base_distante(resultados, dias_base_jogo)
 
             st.session_state["ultima_analise_v19"] = {
                 "id": str(pd.Timestamp.now().value),
@@ -2347,7 +2513,9 @@ with aba_analisar:
                 "motivo_bloqueio": motivo_bloqueio,
                 "config": {
                     "janela": modo_recorte,
-                    "periodo_base": resumo_base_dados(df_liga),
+                    "periodo_base": periodo_usado,
+                    "data_jogo": data_jogo_catalogo.strftime("%Y-%m-%d") if isinstance(data_jogo_catalogo, date) else str(data_jogo_catalogo),
+                    "dias_base_jogo": dias_base_jogo,
                     "fracao_kelly": fracao_kelly,
                     "margem_minima": margem_minima,
                     "teto_por_entrada": teto_por_entrada,
@@ -2355,6 +2523,7 @@ with aba_analisar:
                     "amostra_minima": amostra_minima,
                     "politica_amostra_baixa": politica_amostra_baixa,
                     "fator_reducao_amostra": fator_reducao_amostra,
+                    "fator_reducao_divergencia": fator_reducao_divergencia,
                 },
             }
 
@@ -2385,6 +2554,13 @@ with aba_analisar:
 
         periodo_base = analise.get("config", {}).get("periodo_base") or resumo_base_dados(df_liga)
         st.markdown(f'<div class="base-info">{html.escape(texto_base_dados(periodo_base, analise.get("config", {}).get("janela", "-")))}</div>', unsafe_allow_html=True)
+        dias_base_jogo = analise.get("config", {}).get("dias_base_jogo")
+        data_jogo_cfg = analise.get("config", {}).get("data_jogo", "-")
+        if dias_base_jogo is not None:
+            if int(dias_base_jogo) > 14:
+                st.warning(f"⚠️ Base distante da data do jogo: jogo em {data_jogo_cfg}, última partida da base em {periodo_base.get('fim', '-')}. Distância: {int(dias_base_jogo)} dia(s). Pode haver pausa, amistosos, desfalques, troca de técnico ou mudança de elenco que o modelo não capturou.")
+            elif int(dias_base_jogo) >= 0:
+                st.info(f"Base próxima da data do jogo: {int(dias_base_jogo)} dia(s) entre a última partida da base e o jogo analisado.")
 
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
@@ -2472,7 +2648,30 @@ with aba_analisar:
                             if parte not in alertas_mercado_gerais:
                                 alertas_mercado_gerais.append(parte)
                     if alertas_mercado_gerais:
-                        st.warning("⚠️ Divergência com o mercado: " + " ".join(alertas_mercado_gerais))
+                        st.warning("⚠️ Divergência com o mercado:\n" + "\n".join([f"- {a}" for a in alertas_mercado_gerais]))
+
+                etiquetas_gerais = "; ".join(str(x) for x in aprovadas.get("Etiquetas", pd.Series(dtype=str)).dropna().astype(str).tolist())
+                precisa_checklist = any(p in etiquetas_gerais for p in ["Divergência extrema", "Divergência forte", "Contra favorito", "Mercado de gols contrário", "Base distante"])
+                if precisa_checklist:
+                    with st.expander("✅ Checklist de conferência manual antes de apostar", expanded=True):
+                        st.warning("Há valor matemático, mas existe alerta operacional. Marque isto como conferência humana; o app não consegue saber notícia, escalação, lesão ou movimento real da cotação.")
+                        checks = [
+                            ("cotacao", "Conferi a cotação na mesma casa onde vou apostar."),
+                            ("mandante", "Conferi que mandante, visitante e competição estão corretos."),
+                            ("base", "Conferi se a base está atualizada ou aceitei o risco de base distante/pós-pausa."),
+                            ("noticias", "Conferi notícias reais de desfalque, treinador, escalação ou elenco — ou assumo que não sei."),
+                            ("mercado", "Entendi quando o mercado de gols/resultado está contra o modelo."),
+                            ("exposicao", "Entendi que entradas correlacionadas não são apostas independentes."),
+                        ]
+                        valores_check = []
+                        for suf, texto_check in checks:
+                            valores_check.append(st.checkbox(texto_check, value=False, key=f"check_operacional_{analise['id']}_{suf}"))
+                        checklist_ok = all(valores_check)
+                        st.session_state[f"checklist_operacional_ok_{analise['id']}"] = checklist_ok
+                        if checklist_ok:
+                            st.success("Checklist operacional concluído. Ainda não garante acerto; só confirma que a conferência mínima foi feita.")
+                        else:
+                            st.error("Entrada operacional pendente de conferência. Para banca real, trate como estudo ou reduza bastante a exposição.")
 
                 for _, r in aprovadas.iterrows():
                     prioridade = str(r.get("Prioridade", "🟠 Média"))
@@ -2488,6 +2687,7 @@ with aba_analisar:
                             <p><b>Probabilidade:</b> {fmt_pct(float(r['Probabilidade']), 1)} | <b>Cotação justa:</b> {fmt_num(float(r['Cotação justa']), 2)} | <b>Cotação real:</b> {fmt_num(float(r['Cotação real']), 2)}</p>
                             <p><b>Margem:</b> {fmt_pct(float(r['Margem positiva']), 1)} | <b>Entrada %:</b> {fmt_pct(float(r['Entrada %']), 2)} | <b>Entrada R$:</b> {fmt_dinheiro(float(r['Entrada R$']))}</p>
                             {('<p class="market-alert"><b>Atenção de mercado:</b> ' + html.escape(str(r.get('Alerta de mercado', ''))) + '</p>') if str(r.get('Alerta de mercado', '')).strip() else ''}
+                            {('<p class="muted"><b>Etiquetas:</b> ' + html.escape(str(r.get('Etiquetas', ''))) + '</p>') if str(r.get('Etiquetas', '')).strip() else ''}
                             <p class="muted"><b>Motivo:</b> {html.escape(str(r['Motivo']))}</p>
                         </div>
                         """,
@@ -2532,7 +2732,8 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.3.4 Planilha Pura Manual | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
+                            observacao=(obs + f" | V19.4 Conferência Operacional | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Checklist operacional: {'OK' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
+                            etiquetas=str(r.get("Etiquetas", "")),
                         )
                     destino = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas. Destino: {destino}.")
@@ -2565,7 +2766,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "A decisão da V19.3.3 continua sendo pela planilha: cotação real contra cotação justa."
+        "A decisão da V19.4 continua sendo pela planilha: cotação real contra cotação justa."
     )
 
 
@@ -2675,8 +2876,8 @@ with aba_auditoria:
             geral_fmt[col] = geral_fmt[col].map(lambda x: fmt_pct(x, 2))
         st.dataframe(geral_fmt, use_container_width=True, hide_index=True)
 
-        a1, a2, a3 = st.tabs(["Por mercado", "Por liga", "Por faixa de cotação"])
-        for aba_tmp, chave in [(a1, "por_mercado"), (a2, "por_liga"), (a3, "por_faixa_odd")]:
+        a1, a2, a3, a4 = st.tabs(["Por mercado", "Por liga", "Por faixa de cotação", "Por etiqueta operacional"])
+        for aba_tmp, chave in [(a1, "por_mercado"), (a2, "por_liga"), (a3, "por_faixa_odd"), (a4, "por_etiqueta")]:
             with aba_tmp:
                 t = resumo_adv[chave].copy()
                 for col in ["Apostado", "Resultado"]:
