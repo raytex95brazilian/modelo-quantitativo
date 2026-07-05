@@ -16,7 +16,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.4.7 — TELA LIMPA FINAL
+# TEX STATISTICS V19.5 — VISUAL PREMIUM
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -25,7 +25,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.4.6 Tela Limpa", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.5 Visual Premium", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -34,44 +34,53 @@ st.set_page_config(page_title="TEX STATISTICS — V19.4.6 Tela Limpa", layout="w
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Space+Grotesk:wght@600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700;800&display=swap');
 
     :root {
         color-scheme: light;
-        --bg: #f6f7fb;
-        --card: #ffffff;
-        --text: #111827;
+        --bg: #eef1f6;
+        --surface: rgba(255, 255, 255, 0.86);
+        --ink: #0b1220;
         --muted: #64748b;
-        --line: #e5e7eb;
-        --accent: #0f766e;
-        --green: #059669;
-        --yellow: #d97706;
-        --red: #dc2626;
-        --blue: #2563eb;
-        --shadow: 0 12px 28px rgba(15, 23, 42, 0.075);
+        --line: rgba(148, 163, 184, 0.28);
+        --navy: #0f172a;
+        --teal: #0f766e;
+        --gold: #c08a2c;
+        --green: #047857;
+        --amber: #b45309;
+        --red: #b91c1c;
+        --blue: #1d4ed8;
+        --shadow: 0 20px 55px rgba(15, 23, 42, 0.10);
+        --shadow-soft: 0 10px 25px rgba(15, 23, 42, 0.075);
     }
 
     html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
-        background: var(--bg) !important;
-        color: var(--text) !important;
+        background:
+            radial-gradient(circle at top left, rgba(20, 184, 166, 0.13), transparent 34rem),
+            radial-gradient(circle at top right, rgba(192, 138, 44, 0.14), transparent 36rem),
+            linear-gradient(180deg, #f8fafc 0%, var(--bg) 52%, #e8edf5 100%) !important;
+        color: var(--ink) !important;
         font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+        letter-spacing: -0.01em;
     }
 
+    .block-container { padding-top: 1.4rem !important; max-width: 1460px !important; }
+
     [data-testid="stHeader"] {
-        background: rgba(246, 247, 251, 0.92) !important;
-        backdrop-filter: blur(10px);
-        border-bottom: 1px solid rgba(229, 231, 235, 0.85);
+        background: rgba(248, 250, 252, 0.78) !important;
+        backdrop-filter: blur(18px);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.22);
     }
 
     [data-testid="stSidebar"], [data-testid="stSidebarContent"] {
-        background: #ffffff !important;
-        color: var(--text) !important;
-        border-right: 1px solid var(--line);
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%) !important;
+        color: var(--ink) !important;
+        border-right: 1px solid rgba(148, 163, 184, 0.24);
     }
 
     label, p, span, small, div, [data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"] {
-        color: var(--text) !important;
-        -webkit-text-fill-color: var(--text) !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
     }
 
     .stCaption, [data-testid="stCaptionContainer"], .muted, small {
@@ -79,13 +88,20 @@ st.markdown(
         -webkit-text-fill-color: var(--muted) !important;
     }
 
+    h1, h2, h3, h4 {
+        font-family: "Space Grotesk", "Inter", sans-serif !important;
+        color: var(--ink) !important;
+        letter-spacing: -0.035em !important;
+    }
+
     input, textarea, [data-baseweb="input"], [data-baseweb="input"] input,
     [data-baseweb="textarea"] textarea, [data-baseweb="select"], [data-baseweb="select"] div,
     [role="listbox"], [role="option"], [data-baseweb="popover"], [data-baseweb="menu"] {
         background-color: #ffffff !important;
-        color: #111827 !important;
-        -webkit-text-fill-color: #111827 !important;
-        border-color: #cbd5e1 !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        border-color: rgba(148, 163, 184, 0.42) !important;
+        border-radius: 14px !important;
     }
 
     input::placeholder, textarea::placeholder,
@@ -97,251 +113,124 @@ st.markdown(
         font-weight: 500 !important;
     }
 
-    .stat-card {
-        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-        border: 1px solid #e2e8f0;
-        border-radius: 18px;
-        padding: 16px 17px;
-        box-shadow: 0 12px 26px rgba(15, 23, 42, 0.075);
-        min-height: 92px;
-    }
-
-    .stat-label {
-        font-family: "Inter", system-ui, sans-serif;
-        font-size: 0.76rem;
-        font-weight: 850;
-        letter-spacing: .02em;
-        text-transform: uppercase;
-        color: #64748b !important;
-        -webkit-text-fill-color: #64748b !important;
-        margin-bottom: 6px;
-    }
-
-    .stat-value {
-        font-family: "Space Grotesk", "Inter", sans-serif;
-        font-size: 2.05rem;
-        line-height: 1;
-        letter-spacing: -0.04em;
-        font-weight: 800;
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
-    }
-
-    .stat-hint {
-        margin-top: 8px;
-        font-size: 0.76rem;
-        font-weight: 700;
-        color: #64748b !important;
-        -webkit-text-fill-color: #64748b !important;
-    }
-
-    .base-info {
-        background: #f8fafc;
-        border: 1px dashed #cbd5e1;
-        border-radius: 16px;
-        padding: 12px 14px;
-        margin: 10px 0 16px;
-        font-size: .88rem;
-        font-weight: 700;
-        color: #334155 !important;
-        -webkit-text-fill-color: #334155 !important;
-    }
-
-    .confidence-button {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        border-radius: 999px;
-        padding: 10px 15px;
-        font-family: "Space Grotesk", "Inter", sans-serif;
-        font-weight: 800;
-        letter-spacing: -0.01em;
-        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
-        margin: 5px 0 12px;
-        border: 1px solid transparent;
-    }
-    .confidence-good { background: #dcfce7; border-color: #86efac; color: #166534 !important; -webkit-text-fill-color: #166534 !important; }
-    .confidence-mid { background: #ffedd5; border-color: #fdba74; color: #9a3412 !important; -webkit-text-fill-color: #9a3412 !important; }
-    .confidence-low { background: #fee2e2; border-color: #fca5a5; color: #991b1b !important; -webkit-text-fill-color: #991b1b !important; }
-
-    .priority-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-        padding: 7px 11px;
-        border-radius: 999px;
-        font-weight: 900;
-        font-size: .78rem;
-        margin-bottom: 8px;
-        border: 1px solid transparent;
-    }
-    .priority-high { background: #dcfce7; border-color: #86efac; color: #166534 !important; -webkit-text-fill-color: #166534 !important; }
-    .priority-medium { background: #ffedd5; border-color: #fdba74; color: #9a3412 !important; -webkit-text-fill-color: #9a3412 !important; }
-    .priority-low { background: #fee2e2; border-color: #fca5a5; color: #991b1b !important; -webkit-text-fill-color: #991b1b !important; }
-
-    [role="option"]:hover, [role="option"][aria-selected="true"] {
-        background: #f1f5f9 !important;
-    }
-
     .hero {
-        background: #ffffff;
-        border: 1px solid var(--line);
-        border-radius: 24px;
-        padding: 24px 22px;
-        margin-bottom: 16px;
-        box-shadow: var(--shadow);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.98) 0%, rgba(15, 118, 110, 0.96) 54%, rgba(192, 138, 44, 0.92) 130%);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 30px;
+        padding: 30px 30px 26px;
+        margin-bottom: 18px;
+        box-shadow: 0 28px 70px rgba(15, 23, 42, 0.20);
         position: relative;
         overflow: hidden;
     }
-
-    .hero:before {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 16%;
-        height: 68%;
-        width: 7px;
-        border-radius: 999px;
-        background: var(--accent);
-    }
-
+    .hero:before { content: ""; position: absolute; inset: -70px auto auto -80px; width: 250px; height: 250px; background: radial-gradient(circle, rgba(255, 255, 255, 0.22), transparent 62%); opacity: 0.65; }
+    .hero:after { content: ""; position: absolute; right: -120px; bottom: -140px; width: 360px; height: 360px; background: radial-gradient(circle, rgba(255, 255, 255, 0.16), transparent 58%); }
     .hero-title {
+        position: relative; z-index: 1;
         font-family: "Space Grotesk", "Inter", sans-serif;
-        font-size: 2.2rem;
-        line-height: 1.05;
-        font-weight: 700;
-        letter-spacing: -0.8px;
-        margin: 6px 0 8px;
+        font-size: clamp(2rem, 4vw, 3.25rem);
+        line-height: 0.96; font-weight: 800; letter-spacing: -0.07em;
+        margin: 8px 0 10px;
+        color: #ffffff !important; -webkit-text-fill-color: #ffffff !important;
     }
-
     .hero-sub {
-        max-width: 980px;
-        color: var(--muted) !important;
-        -webkit-text-fill-color: var(--muted) !important;
-        line-height: 1.55;
-        font-weight: 500;
+        position: relative; z-index: 1; max-width: 1020px;
+        color: rgba(255, 255, 255, 0.78) !important; -webkit-text-fill-color: rgba(255, 255, 255, 0.78) !important;
+        line-height: 1.58; font-weight: 520; font-size: 0.98rem;
     }
-
+    .chip-row { position: relative; z-index: 1; margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
     .chip {
-        display: inline-block;
-        padding: 7px 11px;
-        border-radius: 999px;
-        background: #ecfdf5;
-        border: 1px solid #bbf7d0;
-        color: #166534 !important;
-        -webkit-text-fill-color: #166534 !important;
-        font-weight: 800;
-        font-size: 0.78rem;
-        margin-right: 7px;
-        margin-top: 10px;
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 8px 12px; border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.20);
+        color: rgba(255, 255, 255, 0.90) !important; -webkit-text-fill-color: rgba(255, 255, 255, 0.90) !important;
+        font-weight: 800; font-size: 0.79rem; backdrop-filter: blur(10px);
     }
 
-    .box, .card-ev, .card-no, .card-info {
-        background: #ffffff;
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        box-shadow: var(--shadow);
-        padding: 16px;
-        margin: 12px 0;
+    .base-info, .premium-panel {
+        background: rgba(255, 255, 255, 0.78); border: 1px solid var(--line);
+        border-radius: 20px; padding: 14px 16px; margin: 10px 0 16px;
+        font-size: .88rem; font-weight: 750; color: #334155 !important; -webkit-text-fill-color: #334155 !important;
+        box-shadow: var(--shadow-soft); backdrop-filter: blur(14px);
     }
 
-    .card-ev { border-left: 8px solid var(--green); }
+    .analysis-head {
+        background: rgba(255, 255, 255, 0.82); border: 1px solid var(--line);
+        border-radius: 28px; padding: 20px 22px; margin: 8px 0 16px;
+        box-shadow: var(--shadow-soft); backdrop-filter: blur(16px);
+    }
+    .analysis-kicker { font-size: .78rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; color: var(--teal) !important; -webkit-text-fill-color: var(--teal) !important; margin-bottom: 7px; }
+    .analysis-title { font-family: "Space Grotesk", "Inter", sans-serif; font-size: clamp(1.65rem, 3vw, 2.6rem); line-height: 1.02; font-weight: 800; letter-spacing: -0.055em; color: var(--navy) !important; -webkit-text-fill-color: var(--navy) !important; }
+    .version-pill { display: inline-flex; margin-top: 12px; padding: 8px 11px; border-radius: 999px; background: #ecfeff; border: 1px solid #99f6e4; color: #0f766e !important; -webkit-text-fill-color: #0f766e !important; font-weight: 850; font-size: .80rem; }
 
+    .stat-card {
+        background: rgba(255, 255, 255, 0.82); border: 1px solid var(--line); border-radius: 24px;
+        padding: 17px 18px 16px; box-shadow: var(--shadow-soft); min-height: 104px;
+        backdrop-filter: blur(14px); position: relative; overflow: hidden;
+    }
+    .stat-card:after { content: ""; position: absolute; right: -44px; top: -44px; width: 100px; height: 100px; border-radius: 999px; background: radial-gradient(circle, rgba(20, 184, 166, 0.13), transparent 65%); }
+    .stat-label { position: relative; z-index: 1; font-size: 0.72rem; font-weight: 900; letter-spacing: .055em; text-transform: uppercase; color: var(--muted) !important; -webkit-text-fill-color: var(--muted) !important; margin-bottom: 9px; }
+    .stat-value { position: relative; z-index: 1; font-family: "Space Grotesk", "Inter", sans-serif; font-size: 2.05rem; line-height: 1; letter-spacing: -0.055em; font-weight: 800; color: var(--navy) !important; -webkit-text-fill-color: var(--navy) !important; }
+    .stat-hint { position: relative; z-index: 1; margin-top: 8px; font-size: 0.76rem; font-weight: 750; color: var(--muted) !important; -webkit-text-fill-color: var(--muted) !important; }
 
-    .warn-list-box {
-        background: #fff7ed;
-        border: 1px solid #fed7aa;
-        border-left: 8px solid #f97316;
-        border-radius: 16px;
-        padding: 14px 16px;
-        margin: 10px 0 14px 0;
-        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.045);
-    }
-    .warn-list-box strong {
-        color: #9a3412 !important;
-        -webkit-text-fill-color: #9a3412 !important;
-        font-weight: 900;
-    }
-    .warn-list-box ul {
-        margin: 8px 0 0 18px;
-        padding: 0;
-    }
-    .warn-list-box li {
-        margin: 5px 0;
-        color: #7c2d12 !important;
-        -webkit-text-fill-color: #7c2d12 !important;
-        font-weight: 650;
-    }
-    .text-report {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 16px;
-        padding: 14px 16px;
-        margin: 10px 0;
-        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.045);
-    }
-    .text-report-title {
-        font-weight: 900;
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
-        margin-bottom: 8px;
-    }
-    .text-report ul {
-        margin: 7px 0 0 18px;
-        padding: 0;
-    }
-    .text-report li {
-        margin: 4px 0;
-        color: #334155 !important;
-        -webkit-text-fill-color: #334155 !important;
-    }
-    .card-no { border-left: 8px solid var(--red); }
-    .card-info { border-left: 8px solid var(--blue); }
+    .confidence-button { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 9px 13px; font-family: "Space Grotesk", "Inter", sans-serif; font-weight: 800; letter-spacing: -0.01em; box-shadow: var(--shadow-soft); margin: 8px 0 8px; border: 1px solid transparent; }
+    .confidence-good { background: #ecfdf5; border-color: #a7f3d0; color: #065f46 !important; -webkit-text-fill-color: #065f46 !important; }
+    .confidence-mid { background: #fff7ed; border-color: #fed7aa; color: #9a3412 !important; -webkit-text-fill-color: #9a3412 !important; }
+    .confidence-low { background: #fef2f2; border-color: #fecaca; color: #991b1b !important; -webkit-text-fill-color: #991b1b !important; }
 
+    .entry-card { background: rgba(255, 255, 255, 0.90); border: 1px solid var(--line); border-radius: 28px; padding: 20px; margin: 16px 0; box-shadow: var(--shadow); backdrop-filter: blur(16px); overflow: hidden; position: relative; }
+    .entry-card:before { content: ""; position: absolute; inset: 0 auto 0 0; width: 7px; background: var(--amber); }
+    .entry-card.high:before { background: linear-gradient(180deg, #10b981, #047857); }
+    .entry-card.mid:before { background: linear-gradient(180deg, #f59e0b, #b45309); }
+    .entry-card.low:before { background: linear-gradient(180deg, #ef4444, #991b1b); }
+    .entry-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-left: 2px; }
+    .entry-badge { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; border-radius: 999px; font-weight: 900; font-size: .78rem; border: 1px solid transparent; white-space: nowrap; }
+    .entry-card.high .entry-badge { background: #ecfdf5; border-color: #a7f3d0; color: #065f46 !important; -webkit-text-fill-color: #065f46 !important; }
+    .entry-card.mid .entry-badge { background: #fff7ed; border-color: #fed7aa; color: #9a3412 !important; -webkit-text-fill-color: #9a3412 !important; }
+    .entry-card.low .entry-badge { background: #fef2f2; border-color: #fecaca; color: #991b1b !important; -webkit-text-fill-color: #991b1b !important; }
+    .entry-type { font-weight: 900; font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--green) !important; -webkit-text-fill-color: var(--green) !important; margin: 16px 0 5px 0; }
+    .entry-market { font-family: "Space Grotesk", "Inter", sans-serif; font-weight: 800; letter-spacing: -0.045em; font-size: clamp(1.35rem, 2.5vw, 2.2rem); line-height: 1.04; color: var(--navy) !important; -webkit-text-fill-color: var(--navy) !important; margin-bottom: 10px; }
+    .entry-meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+    .meta-pill { display: inline-flex; align-items: center; padding: 7px 10px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.28); background: #f8fafc; color: #334155 !important; -webkit-text-fill-color: #334155 !important; font-size: .82rem; font-weight: 750; }
+    .kv-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+    .kv { border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 18px; background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); padding: 12px 13px; }
+    .kv-label { font-size: .72rem; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; color: var(--muted) !important; -webkit-text-fill-color: var(--muted) !important; margin-bottom: 4px; }
+    .kv-value { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 1.32rem; font-weight: 800; line-height: 1; letter-spacing: -0.04em; color: var(--navy) !important; -webkit-text-fill-color: var(--navy) !important; }
+    .entry-alert { margin-top: 14px; border-radius: 18px; border: 1px solid #fed7aa; background: #fff7ed; padding: 12px 14px; }
+    .entry-alert-title { font-weight: 900; color: #9a3412 !important; -webkit-text-fill-color: #9a3412 !important; margin-bottom: 6px; }
+    .entry-alert ul { margin: 0 0 0 19px; padding: 0; }
+    .entry-alert li { margin: 4px 0; color: #7c2d12 !important; -webkit-text-fill-color: #7c2d12 !important; font-weight: 680; }
+    .tag-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+    .tag-pill { display: inline-flex; padding: 6px 9px; border-radius: 999px; background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3 !important; -webkit-text-fill-color: #3730a3 !important; font-size: .76rem; font-weight: 800; }
+    .entry-foot { margin-top: 13px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.22); color: var(--muted) !important; -webkit-text-fill-color: var(--muted) !important; font-size: .86rem; line-height: 1.48; font-weight: 620; }
+
+    .warn-list-box { background: #fff7ed; border: 1px solid #fed7aa; border-left: 7px solid #f97316; border-radius: 20px; padding: 14px 16px; margin: 10px 0 14px 0; box-shadow: var(--shadow-soft); }
+    .market-alert { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; padding: 10px 12px; color: #7c2d12; font-weight: 800; }
     .big-green { color: var(--green) !important; -webkit-text-fill-color: var(--green) !important; font-weight: 900; }
     .big-red { color: var(--red) !important; -webkit-text-fill-color: var(--red) !important; font-weight: 900; }
     .big-blue { color: var(--blue) !important; -webkit-text-fill-color: var(--blue) !important; font-weight: 900; }
-    .big-yellow { color: var(--yellow) !important; -webkit-text-fill-color: var(--yellow) !important; font-weight: 900; }
+    .big-yellow { color: var(--amber) !important; -webkit-text-fill-color: var(--amber) !important; font-weight: 900; }
 
-    .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button,
-    button[kind="primary"], button[kind="secondary"] {
-        background: #ffffff !important;
-        background-color: #ffffff !important;
-        color: #111827 !important;
-        -webkit-text-fill-color: #111827 !important;
-        border: 1px solid #cbd5e1 !important;
-        border-radius: 14px !important;
-        font-weight: 850 !important;
-        box-shadow: none !important;
-    }
+    .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button, button[kind="primary"], button[kind="secondary"] { border-radius: 16px !important; font-weight: 900 !important; border: 1px solid rgba(15, 118, 110, 0.24) !important; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08) !important; }
+    button[kind="primary"] { background: linear-gradient(135deg, #0f766e 0%, #0f172a 120%) !important; color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; }
+    button[kind="secondary"], .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button { background: rgba(255, 255, 255, 0.88) !important; color: var(--ink) !important; -webkit-text-fill-color: var(--ink) !important; }
+    .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover, button[kind="primary"]:hover, button[kind="secondary"]:hover { transform: translateY(-1px); border-color: rgba(15, 118, 110, 0.55) !important; }
 
-    .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover,
-    button[kind="primary"]:hover, button[kind="secondary"]:hover {
-        background: #f8fafc !important;
-        border-color: #94a3b8 !important;
-    }
+    [data-testid="stMetric"], [data-testid="stDataFrame"], [data-testid="stExpander"] { background: rgba(255, 255, 255, 0.82) !important; border: 1px solid var(--line) !important; border-radius: 20px !important; box-shadow: var(--shadow-soft) !important; overflow: hidden !important; }
+    [data-testid="stExpander"] summary { font-weight: 850 !important; }
+    [data-testid="stAlert"] { border-radius: 18px !important; border: 1px solid rgba(148, 163, 184, 0.22) !important; box-shadow: var(--shadow-soft) !important; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] { border-radius: 999px !important; background: rgba(255, 255, 255, 0.72) !important; border: 1px solid rgba(148, 163, 184, 0.24) !important; padding: 8px 14px !important; font-weight: 850 !important; }
+    .stTabs [aria-selected="true"] { background: #0f172a !important; color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; }
 
-    [data-testid="stMetric"], [data-testid="stDataFrame"], [data-testid="stExpander"] {
-        background: #ffffff !important;
-        border: 1px solid var(--line) !important;
-        border-radius: 16px !important;
-        box-shadow: var(--shadow) !important;
+    @media (max-width: 860px) {
+        .hero { padding: 22px 18px; border-radius: 24px; }
+        .kv-grid { grid-template-columns: 1fr; }
+        .entry-top { flex-direction: column; }
+        .entry-badge { white-space: normal; }
+        .stat-card { min-height: 92px; }
     }
-
-    @media (max-width: 768px) {
-        .hero { padding: 19px 16px; border-radius: 20px; }
-        .hero-title { font-size: 1.55rem; }
-    }
-    
-.market-alert {
-    background: #fff7ed;
-    border: 1px solid #fed7aa;
-    border-radius: 10px;
-    padding: 8px 10px;
-    color: #7c2d12;
-    font-weight: 700;
-}
-</style>
+    </style>
     """,
     unsafe_allow_html=True,
 )
@@ -498,6 +387,14 @@ def fmt_dinheiro(valor: float) -> str:
         return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "R$ 0,00"
+
+
+def fmt_dinheiro_texto(valor: float) -> str:
+    """Moeda para textos renderizados em markdown/status/widget, sem cifrão para evitar LaTeX do Streamlit."""
+    try:
+        return f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " reais"
+    except Exception:
+        return "0,00 reais"
 
 
 def fmt_pct(valor: float, casas: int = 2) -> str:
@@ -738,10 +635,67 @@ def _container_visual():
         return st.container()
 
 
+def escape_card_html(valor: object) -> str:
+    """Escapa texto para HTML e blinda cifrão para o Streamlit não interpretar como fórmula."""
+    txt = html.escape(str(valor or ""), quote=True)
+    return txt.replace("$", "&#36;")
+
+
+def render_linha_operacional_card(itens: List[Tuple[str, str]]) -> None:
+    # Linha compacta premium para números do card, sem st.metric e sem markdown com R$.
+    caixas = []
+    for rotulo, valor in itens:
+        caixas.append(
+            f'''<div class="kv">
+                    <div class="kv-label">{escape_card_html(rotulo)}</div>
+                    <div class="kv-value">{escape_card_html(valor)}</div>
+                </div>'''
+        )
+    st.markdown(f'<div class="kv-grid">{"".join(caixas)}</div>', unsafe_allow_html=True)
+
+
+def _classe_card_prioridade(prioridade: str) -> str:
+    txt = str(prioridade or "").strip()
+    if txt.startswith("🟢"):
+        return "high"
+    if txt.startswith("🔴"):
+        return "low"
+    return "mid"
+
+
+def _tag_pills_html(etiquetas: str) -> str:
+    itens = []
+    for parte in str(etiquetas or "").split(";"):
+        parte = texto_limpo_para_tela(parte).strip()
+        if parte:
+            itens.append(f'<span class="tag-pill">{escape_card_html(parte)}</span>')
+    if not itens:
+        return ""
+    return f'<div class="tag-row">{"".join(itens)}</div>'
+
+
+def _alertas_html(alertas: List[str]) -> str:
+    limpos = []
+    for a in alertas:
+        a = texto_limpo_para_tela(a).strip()
+        if a and a not in limpos:
+            limpos.append(a)
+    if not limpos:
+        return ""
+    lis = "".join(f"<li>{escape_card_html(a)}</li>" for a in limpos)
+    return f'''
+        <div class="entry-alert">
+            <div class="entry-alert-title">Atenção de mercado</div>
+            <ul>{lis}</ul>
+        </div>
+    '''
+
+
 def render_card_valor_positivo(r: pd.Series) -> None:
-    """Card operacional 100% nativo do Streamlit, sem HTML cru."""
+    # Card visual premium, sem st.metric gigante e sem risco de quebrar o R$ no markdown.
     prioridade = texto_limpo_para_tela(r.get("Prioridade", "🟠 Média"))
     prioridade_extra = texto_limpo_para_tela(r.get("_prioridade_motivo", "ordem de prioridade"))
+    classe = _classe_card_prioridade(prioridade)
 
     def _num(col, formatter, fallback="-"):
         try:
@@ -763,29 +717,31 @@ def render_card_valor_positivo(r: pd.Series) -> None:
     valor_matematico = texto_limpo_para_tela(r.get("Valor matemático", "SIM"))
     mercado = mercado_exibicao(r.get("Mercado", ""))
 
-    with _container_visual():
-        if str(prioridade).startswith("🔴"):
-            st.error(f"{prioridade} — {prioridade_extra}")
-        elif str(prioridade).startswith("🟢"):
-            st.success(f"{prioridade} — {prioridade_extra}")
-        else:
-            st.warning(f"{prioridade} — {prioridade_extra}")
-
-        st.markdown("**VALOR POSITIVO**")
-        st.subheader(mercado)
-        st.markdown(f"**Status operacional:** {status}  |  **Valor matemático:** {valor_matematico}")
-        st.markdown(f"**Probabilidade:** {prob}  |  **Cotação justa:** {justa}  |  **Cotação real:** {real}")
-        col_margem, col_entrada_pct, col_entrada_rs = st.columns(3)
-        col_margem.metric("Margem", margem)
-        col_entrada_pct.metric("Entrada %", entrada_pct)
-        col_entrada_rs.metric("Entrada em reais", entrada_rs)
-
-        if alertas:
-            st.warning("Atenção de mercado:\n" + "\n".join(f"- {a}" for a in alertas))
-        if etiquetas:
-            st.caption(f"Etiquetas: {etiquetas}")
-        if motivo:
-            st.caption(f"Motivo: {motivo}")
+    html_card = f'''
+    <div class="entry-card {classe}">
+        <div class="entry-top">
+            <span class="entry-badge">{escape_card_html(prioridade)} — {escape_card_html(prioridade_extra)}</span>
+        </div>
+        <div class="entry-type">Valor positivo</div>
+        <div class="entry-market">{escape_card_html(mercado)}</div>
+        <div class="entry-meta">
+            <span class="meta-pill">Status operacional: {escape_card_html(status)}</span>
+            <span class="meta-pill">Valor matemático: {escape_card_html(valor_matematico)}</span>
+        </div>
+        <div class="kv-grid">
+            <div class="kv"><div class="kv-label">Probabilidade</div><div class="kv-value">{escape_card_html(prob)}</div></div>
+            <div class="kv"><div class="kv-label">Cotação justa</div><div class="kv-value">{escape_card_html(justa)}</div></div>
+            <div class="kv"><div class="kv-label">Cotação real</div><div class="kv-value">{escape_card_html(real)}</div></div>
+            <div class="kv"><div class="kv-label">Margem</div><div class="kv-value">{escape_card_html(margem)}</div></div>
+            <div class="kv"><div class="kv-label">Entrada %</div><div class="kv-value">{escape_card_html(entrada_pct)}</div></div>
+            <div class="kv"><div class="kv-label">Entrada em reais</div><div class="kv-value">{escape_card_html(entrada_rs)}</div></div>
+        </div>
+        {_alertas_html(alertas)}
+        {_tag_pills_html(etiquetas)}
+        {f'<div class="entry-foot"><strong>Motivo:</strong> {escape_card_html(motivo)}</div>' if motivo else ''}
+    </div>
+    '''
+    st.markdown(html_card, unsafe_allow_html=True)
 
 
 # ============================================================
@@ -2451,18 +2407,18 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.4.7</div>
+        <div class="hero-title">TEX STATISTICS V19.5</div>
         <div class="hero-sub">
-            Planilha pura manual: ataque/defesa, mando, Poisson, cotação justa, margem positiva e conferência operacional.
-            Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
-            Sem firula subjetiva. Diagnóstico, scout e auditoria informam — não bloqueiam o valor da planilha.
+            Painel operacional limpo: planilha pura, Poisson auditável, cotação justa, margem positiva e gestão de risco sem travas subjetivas.
+            A tela principal mostra só o que importa; o detalhe técnico fica recolhido para conferência.
         </div>
-        <span class="chip">Planilha pura manual</span>
-        <span class="chip">Temporada atual</span>
-        <span class="chip">valor positivo com margem</span>
-        <span class="chip">Poisson auditável</span>
-        <span class="chip">Scout opcional</span>
-        <span class="chip">Sem travas subjetivas</span>
+        <div class="chip-row">
+            <span class="chip">Planilha pura</span>
+            <span class="chip">Visual premium</span>
+            <span class="chip">Valor positivo</span>
+            <span class="chip">Auditoria</span>
+            <span class="chip">Sem firula</span>
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -2598,7 +2554,7 @@ with aba_analisar:
 
     if modo == "Manual":
         st.markdown("### Jogo")
-        st.info("Modo principal recomendado: digite as cotações reais da casa onde você vai apostar. Não misture Pixbet com cotações de outras casas no mesmo jogo.")
+        st.info("Modo manual recomendado: digite as cotações reais da mesma casa onde você vai apostar. Não misture casas no mesmo jogo.")
         c1, c2 = st.columns(2)
         with c1:
             time_casa = st.selectbox("Mandante", times_liga, key="manual_casa")
@@ -2751,8 +2707,16 @@ with aba_analisar:
             valores_matematicos = pd.DataFrame()
 
         st.markdown("---")
-        st.subheader(f"Análise — {analise['jogo']}")
-        st.info("Versão carregada: TEX STATISTICS V19.4.7 — correção R$ markdown. Se esta frase não aparecer no seu app, o arquivo antigo ainda está rodando.")
+        st.markdown(
+            f'''
+            <div class="analysis-head">
+                <div class="analysis-kicker">Análise operacional</div>
+                <div class="analysis-title">{html.escape(str(analise['jogo']))}</div>
+                <div class="version-pill">Versão carregada: TEX STATISTICS V19.5 — visual premium</div>
+            </div>
+            ''',
+            unsafe_allow_html=True,
+        )
 
         politica_atual = str(analise.get("config", {}).get("politica_amostra_baixa", "Avisar e reduzir entrada"))
         fator_amostra_atual = float(analise.get("config", {}).get("fator_reducao_amostra", 0.50))
@@ -2846,14 +2810,14 @@ with aba_analisar:
             st.warning("Nenhum mercado com cotação válida para comparar.")
         else:
             st.markdown("### Resumo operacional")
-            st.caption("Tela principal enxuta. A tabela completa fica recolhida abaixo para auditoria técnica.")
+            st.caption("Tela principal limpa. A tabela completa fica recolhida abaixo para auditoria técnica.")
             st.dataframe(formatar_tabela_resumo_operacional(resultados), use_container_width=True, hide_index=True)
             with st.expander("Tabela técnica completa da planilha", expanded=False):
                 st.dataframe(formatar_tabela_resultados(resultados), use_container_width=True, hide_index=True)
 
             if not aprovadas.empty:
                 total_entrada = float(aprovadas["Entrada R$"].sum())
-                st.success(f"Entradas liberadas pela planilha: {len(aprovadas)} mercado(s) com VALOR POSITIVO. Total sugerido após reduções operacionais: {fmt_dinheiro(total_entrada)}.")
+                st.success(f"Entradas liberadas pela planilha: {len(aprovadas)} mercado(s) com VALOR POSITIVO. Total sugerido após reduções operacionais: {fmt_dinheiro_texto(total_entrada)}.")
 
                 avisos_correlacao = detectar_correlacao_operacional(aprovadas, calc)
                 if avisos_correlacao:
@@ -2912,7 +2876,7 @@ with aba_analisar:
             with st.form(key=f"form_registrar_v19_{analise['id']}"):
                 escolhidas_idx = []
                 for idx, r in aprovadas.iterrows():
-                    label = f"Registrar {mercado_exibicao(r['Mercado'])} — cotação {fmt_num(float(r['Cotação real']), 2)} — {fmt_dinheiro(float(r['Entrada R$']))}"
+                    label = f"Registrar {mercado_exibicao(r['Mercado'])} — cotação {fmt_num(float(r['Cotação real']), 2)} — entrada {fmt_dinheiro_texto(float(r['Entrada R$']))}"
                     if st.checkbox(label, value=True, key=f"check_{analise['id']}_{idx}"):
                         escolhidas_idx.append(idx)
                 obs = st.text_area("Observação", value="", placeholder="Ex: Pixbet, cotação conferida, escalação ok...", key=f"obs_{analise['id']}")
@@ -2939,7 +2903,7 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.4.6 Tela Limpa | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Checklist operacional: {'OK' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
+                            observacao=(obs + f" | V19.4.9 Card Compacto | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Checklist operacional: {'OK' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
                             etiquetas=str(r.get("Etiquetas", "")),
                         )
                     destino = salvar_auditoria(auditoria)
@@ -2973,7 +2937,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "A decisão da V19.4.6 continua sendo pela planilha: cotação real contra cotação justa, com alertas operacionais claros na tela."
+        "A decisão da V19.4.9 continua sendo pela planilha: cotação real contra cotação justa, com alertas operacionais claros na tela."
     )
 
 
@@ -3104,7 +3068,7 @@ with aba_auditoria:
             aud_casa = st.selectbox("Casa", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"], key="aud_casa")
         with c2:
             aud_odd = st.text_input("Cotação", value="", key="aud_odd")
-            aud_entrada = st.text_input("Entrada R$", value="", key="aud_entrada")
+            aud_entrada = st.text_input("Entrada em reais", value="", key="aud_entrada")
             aud_banca = st.number_input("Banca antes", min_value=0.0, value=float(banca_calc), step=10.0, key="aud_banca")
             aud_obs = st.text_input("Observação", value="", key="aud_obs")
         if st.button("SALVAR ENTRADA MANUAL"):
@@ -3135,7 +3099,7 @@ with aba_auditoria:
             labels = []
             mapa = {}
             for idx, row in pendentes.iterrows():
-                label = f"{row['ID']} — {row['Jogo']} — {row['Mercado']} — {fmt_dinheiro(texto_para_float(row['Entrada R$']) or 0)}"
+                label = f"{row['ID']} — {row['Jogo']} — {row['Mercado']} — entrada {fmt_dinheiro_texto(texto_para_float(row['Entrada R$']) or 0)}"
                 labels.append(label)
                 mapa[label] = idx
             escolha = st.selectbox("Entrada", labels)
