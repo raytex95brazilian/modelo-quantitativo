@@ -15,7 +15,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.4 — PRIORIDADE OPERACIONAL REAL + GOOGLE ECONOMY
+# TEX STATISTICS V19.4.2 — CONFERÊNCIA OPERACIONAL + RELATÓRIO LEGÍVEL
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -24,7 +24,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.3.8 Amostra Real", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.4.2 Conferência Operacional", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -245,6 +245,55 @@ st.markdown(
     }
 
     .card-ev { border-left: 8px solid var(--green); }
+
+
+    .warn-list-box {
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        border-left: 8px solid #f97316;
+        border-radius: 16px;
+        padding: 14px 16px;
+        margin: 10px 0 14px 0;
+        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.045);
+    }
+    .warn-list-box strong {
+        color: #9a3412 !important;
+        -webkit-text-fill-color: #9a3412 !important;
+        font-weight: 900;
+    }
+    .warn-list-box ul {
+        margin: 8px 0 0 18px;
+        padding: 0;
+    }
+    .warn-list-box li {
+        margin: 5px 0;
+        color: #7c2d12 !important;
+        -webkit-text-fill-color: #7c2d12 !important;
+        font-weight: 650;
+    }
+    .text-report {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        padding: 14px 16px;
+        margin: 10px 0;
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.045);
+    }
+    .text-report-title {
+        font-weight: 900;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        margin-bottom: 8px;
+    }
+    .text-report ul {
+        margin: 7px 0 0 18px;
+        padding: 0;
+    }
+    .text-report li {
+        margin: 4px 0;
+        color: #334155 !important;
+        -webkit-text-fill-color: #334155 !important;
+    }
     .card-no { border-left: 8px solid var(--red); }
     .card-info { border-left: 8px solid var(--blue); }
 
@@ -608,6 +657,58 @@ def tabela_resumo_jogos_usados(time_casa: str, time_fora: str, jogos_casa: List[
         if col in out.columns:
             out[col] = out[col].map(lambda x: fmt_num(float(x), 2))
     return out
+
+
+def render_resumo_jogos_legivel(time_casa: str, time_fora: str, jogos_casa: List[Dict[str, object]], jogos_fora: List[Dict[str, object]]) -> None:
+    """Mostra os jogos usados também como texto comum, não só como tabela interativa.
+
+    Isso evita a sensação de vazio quando o usuário copia a tela ou quando o dataframe
+    não aparece bem no celular.
+    """
+    def bloco(titulo: str, jogos: List[Dict[str, object]]) -> str:
+        resumo = resumir_jogos_usados(jogos)
+        itens = []
+        itens.append(
+            f"<li><b>Resumo:</b> {resumo['Jogos']} jogo(s), {resumo['Vitórias']} vitória(s), "
+            f"{resumo['Empates']} empate(s), {resumo['Derrotas']} derrota(s), "
+            f"{resumo['Gols feitos']} gol(s) feito(s), {resumo['Gols sofridos']} gol(s) sofrido(s), "
+            f"média feita {fmt_num(float(resumo['Média feitos']), 2)}, média sofrida {fmt_num(float(resumo['Média sofridos']), 2)}.</li>"
+        )
+        if jogos:
+            for j in jogos:
+                itens.append(
+                    "<li>"
+                    f"{html.escape(str(j.get('Data', '-')))} — "
+                    f"{html.escape(str(j.get('Mandante', '-')))} "
+                    f"{html.escape(str(j.get('Placar', '-')))} "
+                    f"{html.escape(str(j.get('Visitante', '-')))} "
+                    f"| Resultado: {html.escape(str(next((v for k, v in j.items() if str(k).startswith('Resultado do ')), '-')))} "
+                    f"| Gols feitos: {html.escape(str(j.get('Gols feitos', '-')))} "
+                    f"| Gols sofridos: {html.escape(str(j.get('Gols sofridos', '-')))}"
+                    "</li>"
+                )
+        else:
+            itens.append("<li>Nenhum jogo entrou nesse recorte.</li>")
+        return f"<div class='text-report'><div class='text-report-title'>{html.escape(titulo)}</div><ul>{''.join(itens)}</ul></div>"
+
+    st.markdown(
+        bloco(f"🏠 {time_casa} em casa — texto conferível", jogos_casa)
+        + bloco(f"🛫 {time_fora} fora — texto conferível", jogos_fora),
+        unsafe_allow_html=True,
+    )
+
+
+def render_alerta_lista(titulo: str, itens: List[str]) -> None:
+    """Renderiza alertas em tópicos visíveis, sem texto grudado dentro do st.warning."""
+    limpos = []
+    for item in itens:
+        item_txt = str(item).strip()
+        if item_txt and item_txt not in limpos:
+            limpos.append(item_txt)
+    if not limpos:
+        return
+    lis = "".join(f"<li>{html.escape(item)}</li>" for item in limpos)
+    st.markdown(f"<div class='warn-list-box'><strong>{html.escape(titulo)}</strong><ul>{lis}</ul></div>", unsafe_allow_html=True)
 
 # ============================================================
 # DADOS HISTÓRICOS
@@ -2567,7 +2668,7 @@ with aba_analisar:
             else:
                 st.warning(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: permitir com entrada reduzida para {fmt_pct(fator_amostra_atual, 0)}.")
         else:
-            st.success("Amostra operacional aprovada. A partir daqui, quem manda é a margem positiva.")
+            st.success("Amostra operacional aprovada. A margem positiva decide o valor matemático; os alertas operacionais continuam valendo.")
 
         periodo_base = analise.get("config", {}).get("periodo_base") or resumo_base_dados(df_liga)
         st.markdown(f'<div class="base-info">{html.escape(texto_base_dados(periodo_base, analise.get("config", {}).get("janela", "-")))}</div>', unsafe_allow_html=True)
@@ -2618,6 +2719,7 @@ with aba_analisar:
 
             resumo_jogos = tabela_resumo_jogos_usados(analise["time_casa"], analise["time_fora"], jogos_casa_usados, jogos_fora_usados)
             st.dataframe(resumo_jogos, use_container_width=True, hide_index=True)
+            render_resumo_jogos_legivel(analise["time_casa"], analise["time_fora"], jogos_casa_usados, jogos_fora_usados)
 
             aba_jc, aba_jf = st.tabs([f"🏠 {analise['time_casa']} em casa", f"🛫 {analise['time_fora']} fora"])
             with aba_jc:
@@ -2665,7 +2767,7 @@ with aba_analisar:
                             if parte not in alertas_mercado_gerais:
                                 alertas_mercado_gerais.append(parte)
                     if alertas_mercado_gerais:
-                        st.warning("⚠️ Divergência com o mercado:\n" + "\n".join([f"- {a}" for a in alertas_mercado_gerais]))
+                        render_alerta_lista("⚠️ Divergência com o mercado", alertas_mercado_gerais)
 
                 etiquetas_gerais = "; ".join(str(x) for x in aprovadas.get("Etiquetas", pd.Series(dtype=str)).dropna().astype(str).tolist())
                 precisa_checklist = any(p in etiquetas_gerais for p in ["Divergência extrema", "Divergência forte", "Contra favorito", "Mercado de gols contrário", "Base distante"])
@@ -2680,9 +2782,11 @@ with aba_analisar:
                             ("mercado", "Entendi quando o mercado de gols/resultado está contra o modelo."),
                             ("exposicao", "Entendi que entradas correlacionadas não são apostas independentes."),
                         ]
+                        st.markdown("**Marque os itens abaixo antes de transformar isto em aposta real:**")
                         valores_check = []
-                        for suf, texto_check in checks:
-                            valores_check.append(st.checkbox(texto_check, value=False, key=f"check_operacional_{analise['id']}_{suf}"))
+                        for i, (suf, texto_check) in enumerate(checks, start=1):
+                            st.markdown(f"{i}. {texto_check}")
+                            valores_check.append(st.checkbox(f"Confirmar item {i}", value=False, key=f"check_operacional_{analise['id']}_{suf}"))
                         checklist_ok = all(valores_check)
                         st.session_state[f"checklist_operacional_ok_{analise['id']}"] = checklist_ok
                         if checklist_ok:
