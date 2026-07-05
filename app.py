@@ -24,7 +24,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.3.6 Amostra Real", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.3.8 Amostra Real", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -282,7 +282,16 @@ st.markdown(
         .hero { padding: 19px 16px; border-radius: 20px; }
         .hero-title { font-size: 1.55rem; }
     }
-    </style>
+    
+.market-alert {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 10px;
+    padding: 8px 10px;
+    color: #7c2d12;
+    font-weight: 700;
+}
+</style>
     """,
     unsafe_allow_html=True,
 )
@@ -496,6 +505,110 @@ def nome_selecao(mercado: str, time_casa: str, time_fora: str) -> str:
     }
     return mapa.get(mercado, mercado)
 
+
+def resultado_perspectiva(gf: float, gs: float) -> str:
+    try:
+        gf = float(gf)
+        gs = float(gs)
+    except Exception:
+        return "-"
+    if gf > gs:
+        return "Vitória"
+    if gf < gs:
+        return "Derrota"
+    return "Empate"
+
+
+def montar_jogos_usados(df_jogos: pd.DataFrame, time: str, perspectiva: str) -> List[Dict[str, object]]:
+    """
+    Monta a lista exata de jogos que entrou nas médias do cálculo da planilha.
+
+    perspectiva='casa': usa Home=time, gols feitos=HG, sofridos=AG.
+    perspectiva='fora': usa Away=time, gols feitos=AG, sofridos=HG.
+    """
+    if df_jogos is None or df_jogos.empty:
+        return []
+
+    base = df_jogos.copy()
+    if "DataTemp" in base.columns:
+        base["DataTemp"] = pd.to_datetime(base["DataTemp"], errors="coerce")
+        base = base.sort_values("DataTemp", kind="mergesort")
+
+    registros: List[Dict[str, object]] = []
+    for _, row in base.iterrows():
+        mandante = str(row.get("Home", ""))
+        visitante = str(row.get("Away", ""))
+        hg = pd.to_numeric(row.get("HG", np.nan), errors="coerce")
+        ag = pd.to_numeric(row.get("AG", np.nan), errors="coerce")
+        if pd.isna(hg) or pd.isna(ag):
+            continue
+        hg_f = float(hg)
+        ag_f = float(ag)
+
+        if perspectiva == "casa":
+            gf = hg_f
+            gs = ag_f
+        else:
+            gf = ag_f
+            gs = hg_f
+
+        data_original = row.get("Date", "")
+        data_temp = row.get("DataTemp", pd.NaT)
+        try:
+            if pd.notna(data_temp):
+                data_txt = pd.to_datetime(data_temp).strftime("%d/%m/%Y")
+            else:
+                data_txt = str(data_original)
+        except Exception:
+            data_txt = str(data_original)
+
+        registros.append({
+            "Data": data_txt,
+            "Mandante": mandante,
+            "Placar": f"{int(hg_f)} x {int(ag_f)}",
+            "Visitante": visitante,
+            f"Resultado do {time}": resultado_perspectiva(gf, gs),
+            "Gols feitos": int(gf),
+            "Gols sofridos": int(gs),
+        })
+
+    return registros
+
+
+def resumir_jogos_usados(jogos: List[Dict[str, object]]) -> Dict[str, object]:
+    if not jogos:
+        return {"Jogos": 0, "Vitórias": 0, "Empates": 0, "Derrotas": 0, "Gols feitos": 0, "Gols sofridos": 0, "Média feitos": 0.0, "Média sofridos": 0.0}
+    df = pd.DataFrame(jogos)
+    col_res = next((c for c in df.columns if str(c).startswith("Resultado do ")), None)
+    resultados = df[col_res].astype(str) if col_res else pd.Series(dtype=str)
+    gf = pd.to_numeric(df.get("Gols feitos", 0), errors="coerce").fillna(0)
+    gs = pd.to_numeric(df.get("Gols sofridos", 0), errors="coerce").fillna(0)
+    n = int(len(df))
+    return {
+        "Jogos": n,
+        "Vitórias": int((resultados == "Vitória").sum()),
+        "Empates": int((resultados == "Empate").sum()),
+        "Derrotas": int((resultados == "Derrota").sum()),
+        "Gols feitos": int(gf.sum()),
+        "Gols sofridos": int(gs.sum()),
+        "Média feitos": float(gf.mean()) if n else 0.0,
+        "Média sofridos": float(gs.mean()) if n else 0.0,
+    }
+
+
+def tabela_resumo_jogos_usados(time_casa: str, time_fora: str, jogos_casa: List[Dict[str, object]], jogos_fora: List[Dict[str, object]]) -> pd.DataFrame:
+    r_casa = resumir_jogos_usados(jogos_casa)
+    r_fora = resumir_jogos_usados(jogos_fora)
+    linhas = [
+        {"Recorte usado": f"{time_casa} em casa", **r_casa},
+        {"Recorte usado": f"{time_fora} fora", **r_fora},
+    ]
+    out = pd.DataFrame(linhas)
+    for col in ["Média feitos", "Média sofridos"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: fmt_num(float(x), 2))
+    return out
+
 # ============================================================
 # DADOS HISTÓRICOS
 # ============================================================
@@ -696,6 +809,91 @@ def prioridade_aposta(
     return prioridade, score, motivo
 
 
+def mercado_exibicao(mercado: object) -> str:
+    """Texto exibido para o usuário, sem mexer na chave interna do cálculo."""
+    return str(mercado).replace("2.5", "2,5")
+
+
+def _odd_numero_segura(odds: Dict[str, float], mercado: str) -> Optional[float]:
+    try:
+        odd = texto_para_float(odds.get(mercado))
+        if odd is not None and odd_valida(odd):
+            return float(odd)
+    except Exception:
+        pass
+    return None
+
+
+def detectar_alertas_mercado(
+    mercado: str,
+    odd_real: float,
+    odd_justa: float,
+    margem: float,
+    odds: Dict[str, float],
+) -> List[str]:
+    """
+    Alerta operacional: mostra quando o modelo está muito contra o mercado.
+    Não bloqueia e não altera o cálculo da planilha; serve para evitar erro de cotação,
+    mandante/visitante invertido, jogo errado ou contexto que a base não sabe.
+    """
+    alertas: List[str] = []
+    mercado = str(mercado)
+    try:
+        razao = float(odd_real) / max(float(odd_justa), 1e-9)
+    except Exception:
+        razao = 0.0
+
+    # Cotação real muito acima da justa é bom matematicamente, mas exige conferência.
+    if margem >= 0.80 or razao >= 1.70:
+        alertas.append(
+            "cotação real muito acima da cotação justa; confira se o mercado, mandante/visitante e cotação foram digitados corretamente"
+        )
+
+    # Resultado final: alerta quando o modelo encontra valor forte contra o favorito do mercado.
+    if mercado in {"Vitória Casa", "Vitória Fora"}:
+        odds_1x2 = {
+            "Vitória Casa": _odd_numero_segura(odds, "Vitória Casa"),
+            "Empate": _odd_numero_segura(odds, "Empate"),
+            "Vitória Fora": _odd_numero_segura(odds, "Vitória Fora"),
+        }
+        odds_validas = {k: v for k, v in odds_1x2.items() if v is not None}
+        if len(odds_validas) >= 2:
+            favorito_mercado = min(odds_validas, key=odds_validas.get)
+            if favorito_mercado != mercado and (margem >= 0.35 or razao >= 1.40):
+                alertas.append(
+                    f"modelo contra o favorito do mercado: a menor cotação do resultado final é {mercado_exibicao(favorito_mercado)}, mas o modelo encontrou valor em {mercado_exibicao(mercado)}"
+                )
+
+    # Mercado de gols: alerta quando a casa favorece o lado contrário.
+    if mercado == "Menos de 2.5 gols":
+        odd_mais = _odd_numero_segura(odds, "Mais de 2.5 gols")
+        if odd_mais is not None and odd_mais < float(odd_real) and margem >= 0.12:
+            alertas.append("mercado de gols favorece Mais de 2,5 gols, mas o modelo encontrou valor em Menos de 2,5 gols")
+    elif mercado == "Mais de 2.5 gols":
+        odd_menos = _odd_numero_segura(odds, "Menos de 2.5 gols")
+        if odd_menos is not None and odd_menos < float(odd_real) and margem >= 0.12:
+            alertas.append("mercado de gols favorece Menos de 2,5 gols, mas o modelo encontrou valor em Mais de 2,5 gols")
+
+    # Ambos marcam: alerta quando a casa favorece o lado contrário.
+    if mercado == "Ambos marcam - Não":
+        odd_sim = _odd_numero_segura(odds, "Ambos marcam - Sim")
+        if odd_sim is not None and odd_sim < float(odd_real) and margem >= 0.12:
+            alertas.append("mercado de ambos marcam favorece Sim, mas o modelo encontrou valor em Não")
+    elif mercado == "Ambos marcam - Sim":
+        odd_nao = _odd_numero_segura(odds, "Ambos marcam - Não")
+        if odd_nao is not None and odd_nao < float(odd_real) and margem >= 0.12:
+            alertas.append("mercado de ambos marcam favorece Não, mas o modelo encontrou valor em Sim")
+
+    # Remove duplicidades preservando ordem.
+    vistos = set()
+    saida = []
+    for a in alertas:
+        if a not in vistos:
+            vistos.add(a)
+            saida.append(a)
+    return saida
+
+
 def detectar_correlacao_operacional(aprovadas: pd.DataFrame, calc: Dict[str, object]) -> List[str]:
     """
     Mostra correlação operacional entre entradas do mesmo jogo.
@@ -709,19 +907,19 @@ def detectar_correlacao_operacional(aprovadas: pd.DataFrame, calc: Dict[str, obj
     avisos: List[str] = []
 
     if {"Menos de 2.5 gols", "Ambos marcam - Não"}.issubset(mercados):
-        avisos.append("Menos de 2.5 e Ambos marcam - Não são altamente correlacionados; não trate como duas entradas independentes.")
+        avisos.append("Menos de 2,5 e Ambos marcam - Não são altamente correlacionados; não trate como duas entradas independentes.")
 
     if {"Mais de 2.5 gols", "Ambos marcam - Sim"}.issubset(mercados):
-        avisos.append("Mais de 2.5 e Ambos marcam - Sim são altamente correlacionados; não trate como duas entradas independentes.")
+        avisos.append("Mais de 2,5 e Ambos marcam - Sim são altamente correlacionados; não trate como duas entradas independentes.")
 
     gols_casa = float(calc.get("gols_esperados_casa", 0.0) or 0.0)
     gols_fora = float(calc.get("gols_esperados_fora", 0.0) or 0.0)
 
     if "Vitória Fora" in mercados and ({"Menos de 2.5 gols", "Ambos marcam - Não"} & mercados) and gols_fora > gols_casa:
-        avisos.append("Vitória Fora junto com Menos de 2.5 gols ou Ambos marcam - Não concentra exposição no roteiro de visitante superior e jogo controlado.")
+        avisos.append("Vitória Fora junto com Menos de 2,5 gols ou Ambos marcam - Não concentra exposição no roteiro de visitante superior e jogo controlado.")
 
     if "Vitória Casa" in mercados and ({"Menos de 2.5 gols", "Ambos marcam - Não"} & mercados) and gols_casa > gols_fora:
-        avisos.append("Vitória Casa junto com Menos de 2.5 gols ou Ambos marcam - Não concentra exposição no roteiro de mandante superior e jogo controlado.")
+        avisos.append("Vitória Casa junto com Menos de 2,5 gols ou Ambos marcam - Não concentra exposição no roteiro de mandante superior e jogo controlado.")
 
     if len(aprovadas) >= 3:
         avisos.append("Há 3 ou mais entradas no mesmo jogo. Para gestão conservadora, escolha a principal ou reduza a exposição total do jogo.")
@@ -794,8 +992,12 @@ def calcular_planilha_pura(df: pd.DataFrame, time_casa: str, time_fora: str) -> 
     }
 
     cantos = calcular_cantos_se_existir(df, time_casa, time_fora)
+    jogos_casa_usados = montar_jogos_usados(jogos_casa, time_casa, "casa")
+    jogos_fora_usados = montar_jogos_usados(jogos_fora, time_fora, "fora")
 
     return {
+        "jogos_casa_usados": jogos_casa_usados,
+        "jogos_fora_usados": jogos_fora_usados,
         "media_gols_casa_liga": media_gols_casa_liga,
         "media_gols_fora_liga": media_gols_fora_liga,
         "jogos_casa": int(len(jogos_casa)),
@@ -942,12 +1144,23 @@ def avaliar_valor_planilha(
             entrada_pct = 0.0
             motivo = "cotação real abaixo ou muito próxima da cotação justa"
 
+        alertas_mercado = detectar_alertas_mercado(mercado, float(odd), float(odd_justa), float(margem), odds) if tem_valor else []
+        alerta_mercado_txt = " | ".join(alertas_mercado)
+        if alerta_mercado_txt and entrada_pct > 0:
+            motivo = motivo + " | atenção de mercado: conferência manual recomendada."
+
         prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(prob, margem, entrada_pct, veredito, status_operacional, amostra_minima_real)
+        if alerta_mercado_txt and prioridade_score > 2:
+            prioridade_txt = "🟠 Média"
+            prioridade_score = 2
+            prioridade_motivo = "valor forte, mas há divergência importante com o mercado; confira antes de apostar"
+
         linhas.append({
             "Mercado": mercado,
             "Prioridade": prioridade_txt,
             "Valor matemático": valor_matematico,
             "Status operacional": status_operacional,
+            "Alerta de mercado": alerta_mercado_txt,
             "Probabilidade": prob,
             "Cotação justa": odd_justa,
             "Cotação real": float(odd),
@@ -981,6 +1194,10 @@ def avaliar_valor_planilha(
                 str(row.get("Status operacional", "")),
                 amostra_minima_real,
             )
+            if str(row.get("Alerta de mercado", "")).strip() and prioridade_score > 2:
+                prioridade_txt = "🟠 Média"
+                prioridade_score = 2
+                prioridade_motivo = "valor forte, mas há divergência importante com o mercado; confira antes de apostar"
             df.at[idx, "Prioridade"] = prioridade_txt
             df.at[idx, "_prioridade_score"] = prioridade_score
             df.at[idx, "_prioridade_motivo"] = prioridade_motivo
@@ -1242,6 +1459,8 @@ def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     out = df.copy()
+    if "Mercado" in out.columns:
+        out["Mercado"] = out["Mercado"].map(mercado_exibicao)
     for col in ["_prioridade_score", "_prioridade_motivo"]:
         if col in out.columns:
             out = out.drop(columns=[col])
@@ -1940,10 +2159,10 @@ with st.sidebar:
     st.divider()
     st.header("Entrada")
     fracao_kelly = st.select_slider(
-        "Fração de Kelly",
+        "Cálculo proporcional da entrada",
         options=[0.10, 0.125, 0.20, 0.25, 0.33, 0.50],
         value=0.25,
-        format_func=lambda x: {0.10: "1/10 Kelly", 0.125: "1/8 Kelly", 0.20: "1/5 Kelly", 0.25: "1/4 Kelly", 0.33: "1/3 Kelly", 0.50: "1/2 Kelly"}.get(x, str(x)),
+        format_func=lambda x: {0.10: "1/10 do cálculo", 0.125: "1/8 do cálculo", 0.20: "1/5 do cálculo", 0.25: "1/4 do cálculo", 0.33: "1/3 do cálculo", 0.50: "1/2 do cálculo"}.get(x, str(x)),
     )
     margem_minima_pct = st.slider(
         "Margem mínima valor positivo",
@@ -1959,7 +2178,7 @@ with st.sidebar:
     teto_por_jogo_pct = st.slider("Teto total no jogo", 1.0, 20.0, 6.0, 0.5, format="%.1f%%")
     teto_por_entrada = teto_por_entrada_pct / 100.0
     teto_por_jogo = teto_por_jogo_pct / 100.0
-    st.caption("Padrão recomendado: 1/4 Kelly, margem mínima 3%, teto de 3% por entrada e 6% por jogo. O recorte padrão agora é temporada atual, não histórico gigante.")
+    st.caption("Padrão recomendado: 1/4 do cálculo, margem mínima 3%, teto de 3% por entrada e 6% por jogo. O recorte padrão agora é temporada atual, não histórico gigante.")
 
     st.divider()
     st.header("Cotações")
@@ -2199,6 +2418,26 @@ with aba_analisar:
             dados_forca["Valor"] = dados_forca["Valor"].map(lambda x: fmt_num(float(x), 3))
             st.dataframe(dados_forca, use_container_width=True, hide_index=True)
 
+        with st.expander("Ver jogos usados no cálculo da planilha", expanded=False):
+            jogos_casa_usados = calc.get("jogos_casa_usados", []) or []
+            jogos_fora_usados = calc.get("jogos_fora_usados", []) or []
+            st.caption("Aqui estão exatamente os jogos que alimentaram as médias de gols feitos/sofridos, as forças e os gols esperados. Não entram copa, amistoso ou jogo fora desse recorte se eles não estiverem na base filtrada acima.")
+
+            resumo_jogos = tabela_resumo_jogos_usados(analise["time_casa"], analise["time_fora"], jogos_casa_usados, jogos_fora_usados)
+            st.dataframe(resumo_jogos, use_container_width=True, hide_index=True)
+
+            aba_jc, aba_jf = st.tabs([f"🏠 {analise['time_casa']} em casa", f"🛫 {analise['time_fora']} fora"])
+            with aba_jc:
+                if jogos_casa_usados:
+                    st.dataframe(pd.DataFrame(jogos_casa_usados), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Nenhum jogo do mandante em casa entrou no cálculo.")
+            with aba_jf:
+                if jogos_fora_usados:
+                    st.dataframe(pd.DataFrame(jogos_fora_usados), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Nenhum jogo do visitante fora entrou no cálculo.")
+
         if calc.get("cantos"):
             with st.expander("Cantos — leitura simples da planilha"):
                 cantos = calc["cantos"]
@@ -2226,6 +2465,15 @@ with aba_analisar:
                 if avisos_correlacao:
                     st.warning("⚠️ Exposição correlacionada no mesmo jogo: " + " ".join(avisos_correlacao))
 
+                if "Alerta de mercado" in aprovadas.columns:
+                    alertas_mercado_gerais = []
+                    for alerta in aprovadas["Alerta de mercado"].dropna().astype(str):
+                        for parte in [p.strip() for p in alerta.split("|") if p.strip()]:
+                            if parte not in alertas_mercado_gerais:
+                                alertas_mercado_gerais.append(parte)
+                    if alertas_mercado_gerais:
+                        st.warning("⚠️ Divergência com o mercado: " + " ".join(alertas_mercado_gerais))
+
                 for _, r in aprovadas.iterrows():
                     prioridade = str(r.get("Prioridade", "🟠 Média"))
                     prioridade_extra = str(r.get("_prioridade_motivo", "ordem de prioridade"))
@@ -2235,10 +2483,11 @@ with aba_analisar:
                         <div class="card-ev">
                             <div class="priority-badge {prioridade_cls}">{html.escape(prioridade)} — {html.escape(prioridade_extra)}</div>
                             <div class="big-green">VALOR POSITIVO</div>
-                            <h3>{html.escape(str(r['Mercado']))}</h3>
+                            <h3>{html.escape(mercado_exibicao(r['Mercado']))}</h3>
                             <p><b>Status operacional:</b> {html.escape(str(r.get('Status operacional', 'LIBERADO')))} | <b>Valor matemático:</b> {html.escape(str(r.get('Valor matemático', 'SIM')))}</p>
                             <p><b>Probabilidade:</b> {fmt_pct(float(r['Probabilidade']), 1)} | <b>Cotação justa:</b> {fmt_num(float(r['Cotação justa']), 2)} | <b>Cotação real:</b> {fmt_num(float(r['Cotação real']), 2)}</p>
                             <p><b>Margem:</b> {fmt_pct(float(r['Margem positiva']), 1)} | <b>Entrada %:</b> {fmt_pct(float(r['Entrada %']), 2)} | <b>Entrada R$:</b> {fmt_dinheiro(float(r['Entrada R$']))}</p>
+                            {('<p class="market-alert"><b>Atenção de mercado:</b> ' + html.escape(str(r.get('Alerta de mercado', ''))) + '</p>') if str(r.get('Alerta de mercado', '')).strip() else ''}
                             <p class="muted"><b>Motivo:</b> {html.escape(str(r['Motivo']))}</p>
                         </div>
                         """,
@@ -2256,7 +2505,7 @@ with aba_analisar:
             with st.form(key=f"form_registrar_v19_{analise['id']}"):
                 escolhidas_idx = []
                 for idx, r in aprovadas.iterrows():
-                    label = f"Registrar {r['Mercado']} — cotação {fmt_num(float(r['Cotação real']), 2)} — {fmt_dinheiro(float(r['Entrada R$']))}"
+                    label = f"Registrar {mercado_exibicao(r['Mercado'])} — cotação {fmt_num(float(r['Cotação real']), 2)} — {fmt_dinheiro(float(r['Entrada R$']))}"
                     if st.checkbox(label, value=True, key=f"check_{analise['id']}_{idx}"):
                         escolhidas_idx.append(idx)
                 obs = st.text_area("Observação", value="", placeholder="Ex: Pixbet, cotação conferida, escalação ok...", key=f"obs_{analise['id']}")
