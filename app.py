@@ -15,7 +15,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.3.3 — PRIORIDADE OPERACIONAL REAL + GOOGLE ECONOMY
+# TEX STATISTICS V19.3.4 — PRIORIDADE OPERACIONAL REAL + GOOGLE ECONOMY
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -710,10 +710,10 @@ def detectar_correlacao_operacional(aprovadas: pd.DataFrame, calc: Dict[str, obj
     gols_fora = float(calc.get("gols_esperados_fora", 0.0) or 0.0)
 
     if "Vitória Fora" in mercados and ({"Menos de 2.5 gols", "Ambos marcam - Não"} & mercados) and gols_fora > gols_casa:
-        avisos.append("Vitória Fora junto com Under/BTTS Não concentra exposição no roteiro de visitante superior e jogo controlado.")
+        avisos.append("Vitória Fora junto com Menos de 2.5 gols ou Ambos marcam - Não concentra exposição no roteiro de visitante superior e jogo controlado.")
 
     if "Vitória Casa" in mercados and ({"Menos de 2.5 gols", "Ambos marcam - Não"} & mercados) and gols_casa > gols_fora:
-        avisos.append("Vitória Casa junto com Under/BTTS Não concentra exposição no roteiro de mandante superior e jogo controlado.")
+        avisos.append("Vitória Casa junto com Menos de 2.5 gols ou Ambos marcam - Não concentra exposição no roteiro de mandante superior e jogo controlado.")
 
     if len(aprovadas) >= 3:
         avisos.append("Há 3 ou mais entradas no mesmo jogo. Para gestão conservadora, escolha a principal ou reduza a exposição total do jogo.")
@@ -1860,7 +1860,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.3.3</div>
+        <div class="hero-title">TEX STATISTICS V19.3.4</div>
         <div class="hero-sub">
             Pure Sheet Manual: ataque/defesa, mando, Poisson, odd justa, margem +EV e Kelly fracionado.
             Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
@@ -2094,7 +2094,7 @@ with aba_analisar:
             amostra_ok = int(calc["amostra_minima"]) >= int(amostra_minima)
             motivo_bloqueio = ""
             if not amostra_ok:
-                motivo_bloqueio = f"amostra baixa: {time_casa} em casa {calc['jogos_casa']} jogo(s), {time_fora} fora {calc['jogos_fora']} jogo(s). Mínimo configurado: {amostra_minima}."
+                motivo_bloqueio = f"{time_casa} em casa {calc['jogos_casa']} jogo(s), {time_fora} fora {calc['jogos_fora']} jogo(s). Mínimo configurado: {amostra_minima}."
 
             resultados = avaliar_valor_planilha(
                 calc["probabilidades"], odds, banca_usada, fracao_kelly, margem_minima,
@@ -2198,9 +2198,9 @@ with aba_analisar:
                 if abs(dif) < 0.75:
                     msg = "RISCO ALTO / linha justa demais"
                 elif dif > 0:
-                    msg = "Tendência Over cantos"
+                    msg = "Tendência de mais cantos"
                 else:
-                    msg = "Tendência Under cantos"
+                    msg = "Tendência de menos cantos"
                 st.write(f"Previsão total: **{fmt_num(cantos['cantos_total'], 2)}** | Linha: **{fmt_num(linha_cantos, 1)}** | Diferença: **{fmt_num(dif, 2)}** | {msg}")
 
         if resultados.empty:
@@ -2274,7 +2274,7 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.3.3 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
+                            observacao=(obs + f" | V19.3.4 Planilha Pura Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
                         )
                     destino = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas. Destino: {destino}.")
