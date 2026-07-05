@@ -799,18 +799,35 @@ def classificar_divergencia_mercado(prob_app: float, odd_real: float, mercado: s
 def aplicar_alerta_base_distante(resultados: pd.DataFrame, dias_distante: Optional[int]) -> pd.DataFrame:
     if resultados is None or resultados.empty or dias_distante is None or dias_distante <= 14:
         return resultados
+
     out = resultados.copy()
+
+    # Garante colunas necessárias antes de usar .at[row, col].
+    # O erro da V19.4 acontecia porque o código tentou usar out.at[idx].get(...),
+    # mas .at sempre precisa de linha E coluna no pandas.
+    for coluna in ["Etiquetas", "Motivo", "Prioridade", "_prioridade_score", "_prioridade_motivo", "Veredito"]:
+        if coluna not in out.columns:
+            out[coluna] = ""
+
     tag = "Base distante da data do jogo"
     detalhe = f"base distante da data do jogo ({dias_distante} dias desde o último jogo da base)"
+
     for idx in out.index:
-        if str(out.at[idx, "Veredito"]) == "VALOR POSITIVO":
-            out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx].get("Etiquetas", ""), tag)
-            out.at[idx, "Motivo"] = str(out.at[idx].get("Motivo", "")) + f" | atenção: {detalhe}."
+        veredito = str(out.at[idx, "Veredito"] or "")
+        if veredito == "VALOR POSITIVO":
+            etiquetas_atuais = str(out.at[idx, "Etiquetas"] or "")
+            motivo_atual = str(out.at[idx, "Motivo"] or "")
+            prioridade_atual = str(out.at[idx, "Prioridade"] or "")
+
+            out.at[idx, "Etiquetas"] = append_tag_texto(etiquetas_atuais, tag)
+            out.at[idx, "Motivo"] = (motivo_atual + f" | atenção: {detalhe}.").strip()
+
             # Base muito distante não transforma valor em lixo, mas impede leitura alta.
-            if str(out.at[idx].get("Prioridade", "")).startswith("🟢"):
+            if prioridade_atual.startswith("🟢"):
                 out.at[idx, "Prioridade"] = "🟠 Média"
                 out.at[idx, "_prioridade_score"] = 2
                 out.at[idx, "_prioridade_motivo"] = "valor positivo, mas a base está distante da data do jogo"
+
     return out
 
 def render_stat_card(label: str, value: object, hint: str = "", icon: str = "") -> None:
