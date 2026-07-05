@@ -24,7 +24,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.3.3 Prioridade Real", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.3.6 Amostra Real", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -637,9 +637,9 @@ def render_stat_card(label: str, value: object, hint: str = "", icon: str = "") 
 
 def classe_confianca(nivel: str) -> str:
     n = str(nivel).lower()
-    if "boa" in n:
+    if "forte" in n or "boa" in n:
         return "confidence-good"
-    if "média" in n or "media" in n:
+    if "mínima" in n or "minima" in n or "média" in n or "media" in n:
         return "confidence-mid"
     return "confidence-low"
 
@@ -648,7 +648,8 @@ def render_botao_confianca(conf: Dict[str, object]) -> None:
     nivel = str(conf.get("nível", "-"))
     motivos = str(conf.get("motivos", ""))
     classe = classe_confianca(nivel)
-    icone = "🟢" if "boa" in nivel.lower() else ("🟠" if "média" in nivel.lower() or "media" in nivel.lower() else "🔴")
+    nl = nivel.lower()
+    icone = "🟢" if ("boa" in nl or "forte" in nl) else ("🟠" if ("mínima" in nl or "minima" in nl or "média" in nl or "media" in nl) else "🔴")
     st.markdown(
         f'''
         <div class="confidence-button {classe}">
@@ -666,12 +667,13 @@ def prioridade_aposta(
     entrada: float,
     veredito: str,
     status_operacional: str = "",
+    amostra_minima: int = 0,
 ) -> Tuple[str, int, str]:
     if str(veredito) != "VALOR POSITIVO" or margem <= 0 or entrada <= 0:
         return "—", 0, "sem prioridade"
 
-    # Prioridade combina valor, chance e tamanho natural do Kelly.
-    # Não bloqueia a entrada; só ordena a leitura.
+    # Prioridade combina valor, chance e tamanho natural da entrada.
+    # Não bloqueia a entrada; só ordena a leitura operacional.
     if entrada >= 0.025 or (margem >= 0.12 and prob >= 0.45):
         prioridade, score, motivo = "🟢 Alta", 3, "melhor equilíbrio entre margem, probabilidade e entrada"
     elif entrada >= 0.010 or (margem >= 0.075 and prob >= 0.40):
@@ -679,11 +681,17 @@ def prioridade_aposta(
     else:
         prioridade, score, motivo = "🔴 Fraca", 1, "valor existe, porém é a mais volátil/fraca da lista"
 
-    # Correção V19.3.3: amostra baixa não pode aparecer como prioridade alta.
-    # O valor matemático continua existindo, mas a leitura operacional fica limitada.
+    # Régua operacional de amostra:
+    # 0 a 4 jogos: baixa; 5 a 7: mínima aprovada; 8 a 12: boa; 13+: forte.
+    # Amostra mínima aprovada não é a mesma coisa que amostra boa.
+    amostra = int(amostra_minima or 0)
     status = str(status_operacional or "").upper()
-    if "AMOSTRA BAIXA" in status and score > 2:
-        return "🟠 Média", 2, "valor forte, mas amostra baixa limita a prioridade operacional"
+
+    if amostra < 5 or "AMOSTRA BAIXA" in status:
+        return "🔴 Fraca", 1, "valor matemático existe, mas a amostra baixa limita a prioridade operacional"
+
+    if 5 <= amostra <= 7 and score > 2:
+        return "🟠 Média", 2, "valor forte, mas amostra mínima aprovada ainda limita a prioridade operacional"
 
     return prioridade, score, motivo
 
@@ -875,6 +883,7 @@ def avaliar_valor_planilha(
     motivo_bloqueio_operacional: str = "",
     politica_amostra_baixa: str = "Avisar e reduzir entrada",
     fator_reducao_amostra: float = 0.50,
+    amostra_minima_real: int = 0,
 ) -> pd.DataFrame:
     """
     Avalia valor como a planilha, mas separa duas coisas que não podem ficar misturadas:
@@ -933,7 +942,7 @@ def avaliar_valor_planilha(
             entrada_pct = 0.0
             motivo = "cotação real abaixo ou muito próxima da cotação justa"
 
-        prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(prob, margem, entrada_pct, veredito, status_operacional)
+        prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(prob, margem, entrada_pct, veredito, status_operacional, amostra_minima_real)
         linhas.append({
             "Mercado": mercado,
             "Prioridade": prioridade_txt,
@@ -970,6 +979,7 @@ def avaliar_valor_planilha(
                 float(df.at[idx, "Entrada %"]),
                 str(row.get("Veredito", "")),
                 str(row.get("Status operacional", "")),
+                amostra_minima_real,
             )
             df.at[idx, "Prioridade"] = prioridade_txt
             df.at[idx, "_prioridade_score"] = prioridade_score
@@ -1070,40 +1080,38 @@ def classificar_confianca_estimativa(modelo: Dict[str, object], resultados: pd.D
         if not evs.empty:
             margem_max = float(evs.max())
 
-    pontos = 0
     motivos = []
 
-    if amostra >= 8:
-        pontos += 2
+    # Régua honesta: passar no mínimo não significa ter amostra boa.
+    if amostra >= 13:
+        nivel = "Forte"
+        pontos = 4
+        motivos.append("amostra casa/fora forte")
+    elif amostra >= 8:
+        nivel = "Boa"
+        pontos = 3
         motivos.append("amostra casa/fora boa")
     elif amostra >= 5:
-        pontos += 1
-        motivos.append("amostra casa/fora mínima")
+        nivel = "Mínima aprovada"
+        pontos = 2
+        motivos.append("amostra mínima aprovada")
     else:
+        nivel = "Baixa"
+        pontos = 1
         motivos.append("amostra baixa")
 
     if margem_max >= 0.15:
-        pontos += 2
         motivos.append("margem positiva forte")
     elif margem_max > 0.00:
-        pontos += 1
-        motivos.append("margem positiva positiva, mas não larga")
+        motivos.append("margem positiva existe, mas não é larga")
     else:
         motivos.append("sem margem positiva relevante")
 
     total_esperado = float(modelo.get("gols_esperados_casa", 0.0)) + float(modelo.get("gols_esperados_fora", 0.0))
     if 1.20 <= total_esperado <= 4.20:
-        pontos += 1
         motivos.append("gols esperados dentro de faixa normal")
     else:
         motivos.append("gols esperados em faixa extrema")
-
-    if pontos >= 4:
-        nivel = "Boa"
-    elif pontos >= 2:
-        nivel = "Média"
-    else:
-        nivel = "Baixa"
 
     return {"nível": nivel, "pontos": pontos, "motivos": "; ".join(motivos)}
 
@@ -2101,6 +2109,7 @@ with aba_analisar:
                 teto_por_entrada, teto_por_jogo, amostra_ok, motivo_bloqueio,
                 politica_amostra_baixa=politica_amostra_baixa,
                 fator_reducao_amostra=fator_reducao_amostra,
+                amostra_minima_real=int(calc.get("amostra_minima", 0)),
             )
 
             st.session_state["ultima_analise_v19"] = {
@@ -2160,9 +2169,9 @@ with aba_analisar:
 
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
-            render_stat_card("Gols esp. casa", fmt_num(calc["gols_esperados_casa"], 2), analise["time_casa"], "⚽")
+            render_stat_card("Gols esperados — casa", fmt_num(calc["gols_esperados_casa"], 2), analise["time_casa"], "⚽")
         with c2:
-            render_stat_card("Gols esp. fora", fmt_num(calc["gols_esperados_fora"], 2), analise["time_fora"], "⚽")
+            render_stat_card("Gols esperados — fora", fmt_num(calc["gols_esperados_fora"], 2), analise["time_fora"], "⚽")
         with c3:
             render_stat_card("Amostra casa", calc["jogos_casa"], "jogos do mandante em casa", "🏠")
         with c4:
@@ -2172,7 +2181,7 @@ with aba_analisar:
 
         conf = classificar_confianca_estimativa(calc, resultados)
         render_botao_confianca(conf)
-        st.info("Confiabilidade é aviso operacional, não bloqueio. A decisão matemática continua sendo margem positiva, cotação justa e Kelly.")
+        st.info("Confiabilidade é aviso operacional, não bloqueio. A decisão matemática continua sendo margem positiva, cotação justa e cálculo proporcional da entrada.")
 
         with st.expander("Ver cálculo de forças da planilha"):
             dados_forca = pd.DataFrame([
@@ -2274,7 +2283,7 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.3.4 Planilha Pura Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
+                            observacao=(obs + f" | V19.3.4 Planilha Pura Manual | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
                         )
                     destino = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas. Destino: {destino}.")
