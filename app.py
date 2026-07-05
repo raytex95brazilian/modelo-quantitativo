@@ -3,6 +3,7 @@ import io
 import json
 import uuid
 import difflib
+import html
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
 
@@ -13,7 +14,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.2.1 — PURE SHEET MANUAL + SCIENTIFIC DIAGNOSTICS
+# TEX STATISTICS V19.3 — PURE SHEET MANUAL + SCIENTIFIC DIAGNOSTICS
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -22,7 +23,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.2.1 Pure Sheet Manual", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.3 Recorte Real", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -84,6 +85,97 @@ st.markdown(
         -webkit-text-fill-color: #111827 !important;
         border-color: #cbd5e1 !important;
     }
+
+    input::placeholder, textarea::placeholder,
+    [data-baseweb="input"] input::placeholder,
+    [data-baseweb="textarea"] textarea::placeholder {
+        color: #a8b1c2 !important;
+        -webkit-text-fill-color: #a8b1c2 !important;
+        opacity: 1 !important;
+        font-weight: 500 !important;
+    }
+
+    .stat-card {
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        border: 1px solid #e2e8f0;
+        border-radius: 18px;
+        padding: 16px 17px;
+        box-shadow: 0 12px 26px rgba(15, 23, 42, 0.075);
+        min-height: 92px;
+    }
+
+    .stat-label {
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 0.76rem;
+        font-weight: 850;
+        letter-spacing: .02em;
+        text-transform: uppercase;
+        color: #64748b !important;
+        -webkit-text-fill-color: #64748b !important;
+        margin-bottom: 6px;
+    }
+
+    .stat-value {
+        font-family: "Space Grotesk", "Inter", sans-serif;
+        font-size: 2.05rem;
+        line-height: 1;
+        letter-spacing: -0.04em;
+        font-weight: 800;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+    }
+
+    .stat-hint {
+        margin-top: 8px;
+        font-size: 0.76rem;
+        font-weight: 700;
+        color: #64748b !important;
+        -webkit-text-fill-color: #64748b !important;
+    }
+
+    .base-info {
+        background: #f8fafc;
+        border: 1px dashed #cbd5e1;
+        border-radius: 16px;
+        padding: 12px 14px;
+        margin: 10px 0 16px;
+        font-size: .88rem;
+        font-weight: 700;
+        color: #334155 !important;
+        -webkit-text-fill-color: #334155 !important;
+    }
+
+    .confidence-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        padding: 10px 15px;
+        font-family: "Space Grotesk", "Inter", sans-serif;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+        margin: 5px 0 12px;
+        border: 1px solid transparent;
+    }
+    .confidence-good { background: #dcfce7; border-color: #86efac; color: #166534 !important; -webkit-text-fill-color: #166534 !important; }
+    .confidence-mid { background: #ffedd5; border-color: #fdba74; color: #9a3412 !important; -webkit-text-fill-color: #9a3412 !important; }
+    .confidence-low { background: #fee2e2; border-color: #fca5a5; color: #991b1b !important; -webkit-text-fill-color: #991b1b !important; }
+
+    .priority-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 7px 11px;
+        border-radius: 999px;
+        font-weight: 900;
+        font-size: .78rem;
+        margin-bottom: 8px;
+        border: 1px solid transparent;
+    }
+    .priority-high { background: #dcfce7; border-color: #86efac; color: #166534 !important; -webkit-text-fill-color: #166534 !important; }
+    .priority-medium { background: #ffedd5; border-color: #fdba74; color: #9a3412 !important; -webkit-text-fill-color: #9a3412 !important; }
+    .priority-low { background: #fee2e2; border-color: #fca5a5; color: #991b1b !important; -webkit-text-fill-color: #991b1b !important; }
 
     [role="option"]:hover, [role="option"][aria-selected="true"] {
         background: #f1f5f9 !important;
@@ -453,6 +545,138 @@ def rotulo_janela(janela: int) -> str:
     return f"Últimos {janela} jogos"
 
 
+def aplicar_recorte_historico(
+    df: pd.DataFrame,
+    modo: str,
+    url: str = "",
+    data_inicio: Optional[date] = None,
+    data_fim: Optional[date] = None,
+) -> pd.DataFrame:
+    """
+    Aplica o recorte histórico sem mexer no motor da planilha.
+
+    - Temporada atual: nos CSVs /new/ do football-data, usa o ano do último jogo disponível.
+      Nos CSVs de temporada específica (ex: /2526/E0.csv), usa o arquivo inteiro.
+    - Histórico completo: usa tudo.
+    - Últimos N jogos: usa tail(N).
+    - Data personalizada: filtra pelo intervalo escolhido.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+    modo = str(modo or "Temporada atual")
+
+    if modo.startswith("Últimos"):
+        try:
+            n = int(modo.split()[1])
+        except Exception:
+            n = 300
+        return out.tail(max(1, n)).reset_index(drop=True)
+
+    if "DataTemp" in out.columns:
+        out["DataTemp"] = pd.to_datetime(out["DataTemp"], errors="coerce")
+        out = out.sort_values("DataTemp", kind="mergesort")
+
+    if modo == "Data personalizada" and "DataTemp" in out.columns:
+        if data_inicio:
+            out = out[out["DataTemp"] >= pd.Timestamp(data_inicio)]
+        if data_fim:
+            out = out[out["DataTemp"] <= pd.Timestamp(data_fim)]
+        return out.reset_index(drop=True)
+
+    if modo == "Histórico completo":
+        return out.reset_index(drop=True)
+
+    # Temporada atual
+    if "DataTemp" in out.columns and out["DataTemp"].notna().any():
+        # Arquivos /new/ costumam acumular histórico. Para eles, ano do último jogo = temporada atual.
+        if "/new/" in str(url):
+            ultimo_ano = int(out["DataTemp"].dropna().max().year)
+            atual = out[out["DataTemp"].dt.year == ultimo_ano].copy()
+            if not atual.empty:
+                return atual.reset_index(drop=True)
+
+    # Arquivos mmz4281/2526 já são de uma temporada específica.
+    return out.reset_index(drop=True)
+
+
+def resumo_base_dados(df: pd.DataFrame) -> Dict[str, object]:
+    if df is None or df.empty:
+        return {"jogos": 0, "inicio": "-", "fim": "-", "times": 0}
+    inicio = fim = "sem data"
+    if "DataTemp" in df.columns and pd.to_datetime(df["DataTemp"], errors="coerce").notna().any():
+        datas = pd.to_datetime(df["DataTemp"], errors="coerce").dropna()
+        inicio = datas.min().strftime("%d/%m/%Y")
+        fim = datas.max().strftime("%d/%m/%Y")
+    home = df.get("Home", pd.Series(dtype=str)).dropna().astype(str)
+    away = df.get("Away", pd.Series(dtype=str)).dropna().astype(str)
+    times = sorted(set(home) | set(away))
+    return {"jogos": int(len(df)), "inicio": inicio, "fim": fim, "times": int(len(times))}
+
+
+def texto_base_dados(resumo: Dict[str, object], modo: str) -> str:
+    return f"Base usada: {html.escape(str(modo))} | Período: {resumo.get('inicio', '-')} até {resumo.get('fim', '-')} | Jogos: {resumo.get('jogos', 0)} | Times: {resumo.get('times', 0)}"
+
+
+def render_stat_card(label: str, value: object, hint: str = "", icon: str = "") -> None:
+    st.markdown(
+        f'''
+        <div class="stat-card">
+            <div class="stat-label">{html.escape(str(icon + " " + label).strip())}</div>
+            <div class="stat-value">{html.escape(str(value))}</div>
+            <div class="stat-hint">{html.escape(str(hint))}</div>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
+
+
+def classe_confianca(nivel: str) -> str:
+    n = str(nivel).lower()
+    if "boa" in n:
+        return "confidence-good"
+    if "média" in n or "media" in n:
+        return "confidence-mid"
+    return "confidence-low"
+
+
+def render_botao_confianca(conf: Dict[str, object]) -> None:
+    nivel = str(conf.get("nível", "-"))
+    motivos = str(conf.get("motivos", ""))
+    classe = classe_confianca(nivel)
+    icone = "🟢" if "boa" in nivel.lower() else ("🟠" if "média" in nivel.lower() or "media" in nivel.lower() else "🔴")
+    st.markdown(
+        f'''
+        <div class="confidence-button {classe}">
+            <span>{icone}</span><span>CONFIABILIDADE DA AMOSTRA: {html.escape(nivel.upper())}</span>
+        </div>
+        <div class="muted" style="margin-top:-6px;margin-bottom:10px;font-weight:700;">{html.escape(motivos)}</div>
+        ''',
+        unsafe_allow_html=True,
+    )
+
+
+def prioridade_aposta(prob: float, margem: float, stake: float, veredito: str) -> Tuple[str, int, str]:
+    if str(veredito) != "VALOR (+EV)" or margem <= 0 or stake <= 0:
+        return "—", 0, "sem prioridade"
+    # Prioridade combina valor, chance e tamanho natural do Kelly. Não bloqueia nada; só ordena leitura.
+    if stake >= 0.025 or (margem >= 0.12 and prob >= 0.45):
+        return "🟢 Alta", 3, "melhor equilíbrio entre margem, probabilidade e stake"
+    if stake >= 0.010 or (margem >= 0.075 and prob >= 0.40):
+        return "🟠 Média", 2, "valor válido, mas não é a melhor da tela"
+    return "🔴 Fraca", 1, "valor existe, porém é a mais volátil/fraca da lista"
+
+
+def prioridade_classe(prioridade: str) -> str:
+    p = str(prioridade).lower()
+    if "alta" in p:
+        return "priority-high"
+    if "média" in p or "media" in p:
+        return "priority-medium"
+    return "priority-low"
+
+
 def matriz_poisson(gols_casa: float, gols_fora: float, tamanho: int = 15) -> np.ndarray:
     matriz = np.zeros((tamanho, tamanho), dtype=float)
     for g_casa in range(tamanho):
@@ -623,8 +847,10 @@ def avaliar_valor_planilha(
             entrada_pct = 0.0
             motivo = "odd real abaixo ou muito próxima da odd justa"
 
+        prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(prob, margem, entrada_pct, veredito)
         linhas.append({
             "Mercado": mercado,
+            "Prioridade": prioridade_txt,
             "Probabilidade": prob,
             "Odd justa": odd_justa,
             "Odd real": float(odd),
@@ -633,6 +859,8 @@ def avaliar_valor_planilha(
             "Stake %": entrada_pct,
             "Entrada R$": float(banca) * entrada_pct if banca > 0 else 0.0,
             "Motivo": motivo,
+            "_prioridade_score": prioridade_score,
+            "_prioridade_motivo": prioridade_motivo,
         })
 
     df = pd.DataFrame(linhas)
@@ -646,10 +874,20 @@ def avaliar_valor_planilha(
         df.loc[mask_ev, "Stake %"] = df.loc[mask_ev, "Stake %"] * fator
         df.loc[mask_ev, "Entrada R$"] = df.loc[mask_ev, "Stake %"] * float(banca)
         df.loc[mask_ev, "Motivo"] = df.loc[mask_ev, "Motivo"] + " | stake ajustada proporcionalmente pelo limite total do jogo"
+        for idx, row in df.loc[mask_ev].iterrows():
+            prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(
+                float(row.get("Probabilidade", 0.0)),
+                float(row.get("Margem +EV", 0.0)),
+                float(df.at[idx, "Stake %"]),
+                str(row.get("Veredito", "")),
+            )
+            df.at[idx, "Prioridade"] = prioridade_txt
+            df.at[idx, "_prioridade_score"] = prioridade_score
+            df.at[idx, "_prioridade_motivo"] = prioridade_motivo
 
     ordem = {"VALOR (+EV)": 0, "SEM VALOR": 1, "BLOQUEADO": 2}
     df["_ordem"] = df["Veredito"].map(ordem).fillna(9)
-    df = df.sort_values(["_ordem", "Margem +EV"], ascending=[True, False]).drop(columns=["_ordem"]).reset_index(drop=True)
+    df = df.sort_values(["_ordem", "_prioridade_score", "Margem +EV"], ascending=[True, False, False]).drop(columns=["_ordem"]).reset_index(drop=True)
     return df
 
 
@@ -898,6 +1136,9 @@ def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     out = df.copy()
+    for col in ["_prioridade_score", "_prioridade_motivo"]:
+        if col in out.columns:
+            out = out.drop(columns=[col])
     out["Probabilidade"] = out["Probabilidade"].map(lambda x: fmt_pct(x, 1))
     out["Odd justa"] = out["Odd justa"].map(lambda x: "-" if not np.isfinite(x) else fmt_num(x, 2))
     out["Odd real"] = out["Odd real"].map(lambda x: fmt_num(x, 2))
@@ -1062,7 +1303,7 @@ def extrair_odds_api(jogo: dict, casa_alvo: Optional[str] = None) -> Tuple[Dict[
     """
     Extrai odds da API.
 
-    Regra V19.2.1:
+    Regra V19.3:
     - se a casa escolhida existir na API, usa somente essa casa;
     - se não existir, usa mediana do mercado só como referência e avisa claramente;
     - no uso real, o modo Manual continua sendo o padrão recomendado.
@@ -1161,7 +1402,7 @@ def conectar_google_sheets():
 def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
     """Obtém ou cria uma aba no Google Sheets de forma segura.
 
-    Correção V19.2.2:
+    Correção V19.3:
     antes o app capturava qualquer erro ao procurar a aba e tentava criar uma nova.
     Se a aba já existia, o Google retornava: "A sheet with the name ... already exists".
     Agora o app só cria a aba quando ela realmente não existe e, se o Google acusar
@@ -1433,7 +1674,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.2.1</div>
+        <div class="hero-title">TEX STATISTICS V19.3</div>
         <div class="hero-sub">
             Pure Sheet Manual: ataque/defesa, mando, Poisson, odd justa, margem +EV e Kelly fracionado.
             Padrão fiel à planilha: temporada inteira, margem mínima prática de 3% e modo manual como prioridade.
@@ -1463,13 +1704,18 @@ with st.sidebar:
     st.divider()
     st.header("Modelo")
     liga_sel = st.selectbox("Liga", list(LIGAS_CSV.keys()))
-    janela = st.selectbox(
-        "Janela histórica",
-        [0, 300, 500, 760, 1500],
+    modo_recorte = st.selectbox(
+        "Recorte histórico",
+        ["Temporada atual", "Últimos 300 jogos", "Últimos 500 jogos", "Últimos 760 jogos", "Últimos 1500 jogos", "Histórico completo", "Data personalizada"],
         index=0,
-        format_func=rotulo_janela,
-        help="Padrão fiel à planilha: usa todos os jogos disponíveis no CSV da liga. Use janelas menores só para estudo.",
+        help="Padrão recomendado: temporada atual. Histórico completo só para estudo, porque pode misturar anos demais.",
     )
+    data_inicio_recorte = None
+    data_fim_recorte = None
+    if modo_recorte == "Data personalizada":
+        ano_atual = date.today().year
+        data_inicio_recorte = st.date_input("Data inicial da base", value=date(ano_atual, 1, 1))
+        data_fim_recorte = st.date_input("Data final da base", value=date.today())
     amostra_minima = st.slider("Amostra mínima casa/fora", 3, 12, 5, 1)
 
     st.divider()
@@ -1494,7 +1740,7 @@ with st.sidebar:
     teto_por_jogo_pct = st.slider("Teto total no jogo", 1.0, 20.0, 6.0, 0.5, format="%.1f%%")
     teto_por_entrada = teto_por_entrada_pct / 100.0
     teto_por_jogo = teto_por_jogo_pct / 100.0
-    st.caption("Padrão recomendado: 1/4 Kelly, margem mínima 3%, teto de 3% por entrada e 6% por jogo.")
+    st.caption("Padrão recomendado: 1/4 Kelly, margem mínima 3%, teto de 3% por entrada e 6% por jogo. O recorte padrão agora é temporada atual, não histórico gigante.")
 
     st.divider()
     st.header("Odds")
@@ -1504,7 +1750,8 @@ with st.sidebar:
 aba_analisar, aba_diagnostico, aba_scout, aba_auditoria, aba_catalogo, aba_calendario = st.tabs(["🎯 Analisar jogo", "🧪 Diagnóstico da liga", "🔎 Scout opcional", "📒 Auditoria", "📊 Catálogo", "🗓️ Ligas"])
 
 with st.spinner("Carregando base da liga..."):
-    df_liga = carregar_dados_liga(LIGAS_CSV[liga_sel], int(janela))
+    df_liga_bruta = carregar_dados_liga(LIGAS_CSV[liga_sel], 0)
+    df_liga = aplicar_recorte_historico(df_liga_bruta, modo_recorte, LIGAS_CSV[liga_sel], data_inicio_recorte, data_fim_recorte)
 
 if df_liga.empty:
     st.error("Não consegui carregar os dados históricos desta liga. Confira conexão, URL ou tente outra liga.")
@@ -1513,11 +1760,17 @@ if df_liga.empty:
 times_liga = sorted(df_liga["Home"].dropna().astype(str).unique().tolist())
 
 with aba_analisar:
+    resumo_base = resumo_base_dados(df_liga)
+    st.markdown(f'<div class="base-info">{html.escape(texto_base_dados(resumo_base, modo_recorte))}</div>', unsafe_allow_html=True)
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Jogos usados", len(df_liga))
-    m2.metric("Times", len(times_liga))
-    m3.metric("Média gols casa", fmt_num(float(df_liga["HG"].mean()), 2))
-    m4.metric("Média gols fora", fmt_num(float(df_liga["AG"].mean()), 2))
+    with m1:
+        render_stat_card("Jogos usados", len(df_liga), "recorte ativo", "📚")
+    with m2:
+        render_stat_card("Times", len(times_liga), "na base filtrada", "🧩")
+    with m3:
+        render_stat_card("Média gols casa", fmt_num(float(df_liga["HG"].mean()), 2), "liga", "🏠")
+    with m4:
+        render_stat_card("Média gols fora", fmt_num(float(df_liga["AG"].mean()), 2), "liga", "🛫")
 
     st.markdown("---")
     modo = st.radio("Modo de análise", ["Manual", "Automático pela API"], horizontal=True)
@@ -1652,7 +1905,8 @@ with aba_analisar:
                 "amostra_ok": amostra_ok,
                 "motivo_bloqueio": motivo_bloqueio,
                 "config": {
-                    "janela": rotulo_janela(janela),
+                    "janela": modo_recorte,
+                    "periodo_base": resumo_base_dados(df_liga),
                     "fracao_kelly": fracao_kelly,
                     "margem_minima": margem_minima,
                     "teto_por_entrada": teto_por_entrada,
@@ -1675,15 +1929,24 @@ with aba_analisar:
         else:
             st.success("Amostra operacional aprovada. A partir daqui, quem manda é a margem +EV.")
 
+        periodo_base = analise.get("config", {}).get("periodo_base") or resumo_base_dados(df_liga)
+        st.markdown(f'<div class="base-info">{html.escape(texto_base_dados(periodo_base, analise.get("config", {}).get("janela", "-")))}</div>', unsafe_allow_html=True)
+
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Gols esp. casa", fmt_num(calc["gols_esperados_casa"], 2))
-        c2.metric("Gols esp. fora", fmt_num(calc["gols_esperados_fora"], 2))
-        c3.metric("Amostra casa", calc["jogos_casa"])
-        c4.metric("Amostra fora", calc["jogos_fora"])
-        c5.metric("Entradas +EV", len(aprovadas))
+        with c1:
+            render_stat_card("Gols esp. casa", fmt_num(calc["gols_esperados_casa"], 2), analise["time_casa"], "⚽")
+        with c2:
+            render_stat_card("Gols esp. fora", fmt_num(calc["gols_esperados_fora"], 2), analise["time_fora"], "⚽")
+        with c3:
+            render_stat_card("Amostra casa", calc["jogos_casa"], "jogos do mandante em casa", "🏠")
+        with c4:
+            render_stat_card("Amostra fora", calc["jogos_fora"], "jogos do visitante fora", "🛫")
+        with c5:
+            render_stat_card("Entradas +EV", len(aprovadas), "pela margem configurada", "✅")
 
         conf = classificar_confianca_estimativa(calc, resultados)
-        st.info(f"Confiança da estimativa: **{conf['nível']}** — {conf['motivos']}. Isto é aviso, não bloqueio.")
+        render_botao_confianca(conf)
+        st.info("Confiabilidade é aviso operacional, não bloqueio. A decisão matemática continua sendo margem +EV, odd justa e Kelly.")
 
         with st.expander("Ver cálculo de forças da planilha"):
             dados_forca = pd.DataFrame([
@@ -1724,14 +1987,18 @@ with aba_analisar:
                 total_entrada = float(aprovadas["Entrada R$"].sum())
                 st.success(f"A planilha encontrou {len(aprovadas)} mercado(s) com VALOR (+EV). Total sugerido: {fmt_dinheiro(total_entrada)}.")
                 for _, r in aprovadas.iterrows():
+                    prioridade = str(r.get("Prioridade", "🟠 Média"))
+                    prioridade_extra = str(r.get("_prioridade_motivo", "ordem de prioridade"))
+                    prioridade_cls = prioridade_classe(prioridade)
                     st.markdown(
                         f"""
                         <div class="card-ev">
+                            <div class="priority-badge {prioridade_cls}">{html.escape(prioridade)} — {html.escape(prioridade_extra)}</div>
                             <div class="big-green">VALOR (+EV)</div>
-                            <h3>{r['Mercado']}</h3>
+                            <h3>{html.escape(str(r['Mercado']))}</h3>
                             <p><b>Probabilidade:</b> {fmt_pct(float(r['Probabilidade']), 1)} | <b>Odd justa:</b> {fmt_num(float(r['Odd justa']), 2)} | <b>Odd real:</b> {fmt_num(float(r['Odd real']), 2)}</p>
                             <p><b>Margem:</b> {fmt_pct(float(r['Margem +EV']), 1)} | <b>Stake:</b> {fmt_pct(float(r['Stake %']), 2)} | <b>Entrada:</b> {fmt_dinheiro(float(r['Entrada R$']))}</p>
-                            <p class="muted"><b>Motivo:</b> {r['Motivo']}</p>
+                            <p class="muted"><b>Motivo:</b> {html.escape(str(r['Motivo']))}</p>
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -1772,7 +2039,7 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.2.1 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']}").strip(),
+                            observacao=(obs + f" | V19.3 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']}").strip(),
                         )
                     destino = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas. Destino: {destino}.")
@@ -1805,7 +2072,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "A decisão da V19.2.1 continua sendo pela planilha: odd real contra odd justa."
+        "A decisão da V19.3 continua sendo pela planilha: odd real contra odd justa."
     )
 
 
