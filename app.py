@@ -16,7 +16,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.4.4 — CONFERÊNCIA OPERACIONAL + CARDS CORRIGIDOS
+# TEX STATISTICS V19.4.6 — TELA LIMPA FINAL
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -25,7 +25,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.4.3 Conferência Operacional", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.4.6 Tela Limpa", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -661,126 +661,128 @@ def tabela_resumo_jogos_usados(time_casa: str, time_fora: str, jogos_casa: List[
 
 
 def render_resumo_jogos_legivel(time_casa: str, time_fora: str, jogos_casa: List[Dict[str, object]], jogos_fora: List[Dict[str, object]]) -> None:
-    """Mostra os jogos usados também como texto comum, não só como tabela interativa.
+    """Mostra os jogos usados em texto normal, sem HTML."""
 
-    Isso evita a sensação de vazio quando o usuário copia a tela ou quando o dataframe
-    não aparece bem no celular.
-    """
-    def bloco(titulo: str, jogos: List[Dict[str, object]]) -> str:
+    def linhas(titulo: str, jogos: List[Dict[str, object]]) -> List[str]:
         resumo = resumir_jogos_usados(jogos)
-        itens = []
-        itens.append(
-            f"<li><b>Resumo:</b> {resumo['Jogos']} jogo(s), {resumo['Vitórias']} vitória(s), "
-            f"{resumo['Empates']} empate(s), {resumo['Derrotas']} derrota(s), "
-            f"{resumo['Gols feitos']} gol(s) feito(s), {resumo['Gols sofridos']} gol(s) sofrido(s), "
-            f"média feita {fmt_num(float(resumo['Média feitos']), 2)}, média sofrida {fmt_num(float(resumo['Média sofridos']), 2)}.</li>"
-        )
+        out = [
+            f"**{titulo}**",
+            (
+                f"- Resumo: {resumo['Jogos']} jogo(s), {resumo['Vitórias']} vitória(s), "
+                f"{resumo['Empates']} empate(s), {resumo['Derrotas']} derrota(s), "
+                f"{resumo['Gols feitos']} gol(s) feito(s), {resumo['Gols sofridos']} gol(s) sofrido(s), "
+                f"média feita {fmt_num(float(resumo['Média feitos']), 2)}, "
+                f"média sofrida {fmt_num(float(resumo['Média sofridos']), 2)}."
+            ),
+        ]
         if jogos:
             for j in jogos:
-                itens.append(
-                    "<li>"
-                    f"{html.escape(str(j.get('Data', '-')))} — "
-                    f"{html.escape(str(j.get('Mandante', '-')))} "
-                    f"{html.escape(str(j.get('Placar', '-')))} "
-                    f"{html.escape(str(j.get('Visitante', '-')))} "
-                    f"| Resultado: {html.escape(str(next((v for k, v in j.items() if str(k).startswith('Resultado do ')), '-')))} "
-                    f"| Gols feitos: {html.escape(str(j.get('Gols feitos', '-')))} "
-                    f"| Gols sofridos: {html.escape(str(j.get('Gols sofridos', '-')))}"
-                    "</li>"
+                resultado = next((v for k, v in j.items() if str(k).startswith("Resultado do ")), "-")
+                out.append(
+                    f"- {j.get('Data', '-')} — {j.get('Mandante', '-')} {j.get('Placar', '-')} {j.get('Visitante', '-')} "
+                    f"| Resultado: {resultado} | Gols feitos: {j.get('Gols feitos', '-')} | Gols sofridos: {j.get('Gols sofridos', '-')}"
                 )
         else:
-            itens.append("<li>Nenhum jogo entrou nesse recorte.</li>")
-        return f"<div class='text-report'><div class='text-report-title'>{html.escape(titulo)}</div><ul>{''.join(itens)}</ul></div>"
+            out.append("- Nenhum jogo entrou nesse recorte.")
+        return out
 
-    st.markdown(
-        bloco(f"🏠 {time_casa} em casa — texto conferível", jogos_casa)
-        + bloco(f"🛫 {time_fora} fora — texto conferível", jogos_fora),
-        unsafe_allow_html=True,
-    )
+    st.markdown("\n".join(linhas(f"🏠 {time_casa} em casa — texto conferível", jogos_casa)))
+    st.markdown("\n".join(linhas(f"🛫 {time_fora} fora — texto conferível", jogos_fora)))
 
 
 def render_alerta_lista(titulo: str, itens: List[str]) -> None:
-    """Renderiza alertas em tópicos visíveis, sem texto grudado dentro do st.warning."""
-    limpos = []
+    """Renderiza alertas em tópicos nativos, sem HTML."""
+    limpos: List[str] = []
     for item in itens:
-        item_txt = str(item).strip()
+        item_txt = texto_limpo_para_tela(item)
         if item_txt and item_txt not in limpos:
             limpos.append(item_txt)
     if not limpos:
         return
-    lis = "".join(f"<li>{html.escape(item)}</li>" for item in limpos)
-    st.markdown(f"<div class='warn-list-box'><strong>{html.escape(titulo)}</strong><ul>{lis}</ul></div>", unsafe_allow_html=True)
-
+    st.warning(f"{titulo}\n" + "\n".join(f"- {item}" for item in limpos))
 
 
 def texto_limpo_para_tela(valor: object) -> str:
-    """Remove HTML cru/acidental antes de mostrar em cards."""
+    """Remove HTML cru/acidental e frases duplicadas antes de mostrar/salvar."""
     txt = html.unescape(str(valor or ""))
     txt = re.sub(r"</p>\s*<p[^>]*>", " | ", txt, flags=re.IGNORECASE)
     txt = re.sub(r"<br\s*/?>", " | ", txt, flags=re.IGNORECASE)
     txt = re.sub(r"<[^>]+>", "", txt)
     txt = re.sub(r"\s+", " ", txt).strip()
-    # Limpeza final para motivos antigos/copiados de versões anteriores.
     txt = re.sub(r"valor matemático\s+valor positivo", "valor matemático positivo", txt, flags=re.IGNORECASE)
     txt = txt.replace("valor matemático Valor positivo", "valor matemático positivo")
-    return txt
+    txt = txt.replace("atenção: base distante da data do jogo", "base distante da data do jogo")
+    return txt.strip(" |")
+
+
+def limpar_dataframe_operacional(df: pd.DataFrame) -> pd.DataFrame:
+    """Limpa textos operacionais antes de exibir, salvar no estado ou mandar para auditoria."""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    colunas_texto = [
+        "Mercado", "Prioridade", "Valor matemático", "Status operacional", "Alerta de mercado",
+        "Divergência mercado", "Etiquetas", "Veredito", "Motivo", "_prioridade_motivo",
+    ]
+    for col in colunas_texto:
+        if col in out.columns:
+            out[col] = out[col].map(texto_limpo_para_tela)
+    return out
+
+
+def _container_visual():
+    """Usa card nativo quando o Streamlit suportar; cai para container comum se não suportar."""
+    try:
+        return st.container(border=True)
+    except TypeError:
+        return st.container()
 
 
 def render_card_valor_positivo(r: pd.Series) -> None:
-    """Renderiza o card sem deixar o Markdown transformar HTML indentado em texto cru."""
+    """Card operacional 100% nativo do Streamlit, sem HTML cru."""
     prioridade = texto_limpo_para_tela(r.get("Prioridade", "🟠 Média"))
     prioridade_extra = texto_limpo_para_tela(r.get("_prioridade_motivo", "ordem de prioridade"))
-    prioridade_cls = prioridade_classe(prioridade)
 
-    try:
-        prob = fmt_pct(float(r["Probabilidade"]), 1)
-    except Exception:
-        prob = "-"
-    try:
-        justa = fmt_num(float(r["Cotação justa"]), 2)
-    except Exception:
-        justa = "-"
-    try:
-        real = fmt_num(float(r["Cotação real"]), 2)
-    except Exception:
-        real = "-"
-    try:
-        margem = fmt_pct(float(r["Margem positiva"]), 1)
-    except Exception:
-        margem = "-"
-    try:
-        entrada_pct = fmt_pct(float(r["Entrada %"]), 2)
-    except Exception:
-        entrada_pct = "-"
-    try:
-        entrada_rs = fmt_dinheiro(float(r["Entrada R$"]))
-    except Exception:
-        entrada_rs = "-"
+    def _num(col, formatter, fallback="-"):
+        try:
+            return formatter(float(r[col]))
+        except Exception:
+            return fallback
+
+    prob = _num("Probabilidade", lambda x: fmt_pct(x, 1))
+    justa = _num("Cotação justa", lambda x: fmt_num(x, 2))
+    real = _num("Cotação real", lambda x: fmt_num(x, 2))
+    margem = _num("Margem positiva", lambda x: fmt_pct(x, 1))
+    entrada_pct = _num("Entrada %", lambda x: fmt_pct(x, 2))
+    entrada_rs = _num("Entrada R$", fmt_dinheiro)
 
     alertas = [p.strip() for p in texto_limpo_para_tela(r.get("Alerta de mercado", "")).split("|") if p.strip()]
     etiquetas = texto_limpo_para_tela(r.get("Etiquetas", ""))
     motivo = texto_limpo_para_tela(r.get("Motivo", ""))
+    status = texto_limpo_para_tela(r.get("Status operacional", "LIBERADO"))
+    valor_matematico = texto_limpo_para_tela(r.get("Valor matemático", "SIM"))
+    mercado = mercado_exibicao(r.get("Mercado", ""))
 
-    partes = [
-        '<div class="card-ev">',
-        f'<div class="priority-badge {prioridade_cls}">{html.escape(prioridade)} — {html.escape(prioridade_extra)}</div>',
-        '<div class="big-green">VALOR POSITIVO</div>',
-        f'<h3>{html.escape(mercado_exibicao(r.get("Mercado", "")))}</h3>',
-        f'<p><b>Status operacional:</b> {html.escape(texto_limpo_para_tela(r.get("Status operacional", "LIBERADO")))} | <b>Valor matemático:</b> {html.escape(texto_limpo_para_tela(r.get("Valor matemático", "SIM")))}</p>',
-        f'<p><b>Probabilidade:</b> {prob} | <b>Cotação justa:</b> {justa} | <b>Cotação real:</b> {real}</p>',
-        f'<p><b>Margem:</b> {margem} | <b>Entrada %:</b> {entrada_pct} | <b>Entrada R$:</b> {entrada_rs}</p>',
-    ]
+    with _container_visual():
+        if str(prioridade).startswith("🔴"):
+            st.error(f"{prioridade} — {prioridade_extra}")
+        elif str(prioridade).startswith("🟢"):
+            st.success(f"{prioridade} — {prioridade_extra}")
+        else:
+            st.warning(f"{prioridade} — {prioridade_extra}")
 
-    if alertas:
-        itens = ''.join(f'<li>{html.escape(a)}</li>' for a in alertas)
-        partes.append(f'<div class="market-alert"><b>Atenção de mercado:</b><ul style="margin:6px 0 0 18px; padding:0;">{itens}</ul></div>')
-    if etiquetas:
-        partes.append(f'<p class="muted"><b>Etiquetas:</b> {html.escape(etiquetas)}</p>')
-    if motivo:
-        partes.append(f'<p class="muted"><b>Motivo:</b> {html.escape(motivo)}</p>')
+        st.markdown("**VALOR POSITIVO**")
+        st.subheader(mercado)
+        st.markdown(f"**Status operacional:** {status}  |  **Valor matemático:** {valor_matematico}")
+        st.markdown(f"**Probabilidade:** {prob}  |  **Cotação justa:** {justa}  |  **Cotação real:** {real}")
+        st.markdown(f"**Margem:** {margem}  |  **Entrada %:** {entrada_pct}  |  **Entrada R$:** {entrada_rs}")
 
-    partes.append('</div>')
-    st.markdown("\n".join(partes), unsafe_allow_html=True)
+        if alertas:
+            st.warning("Atenção de mercado:\n" + "\n".join(f"- {a}" for a in alertas))
+        if etiquetas:
+            st.caption(f"Etiquetas: {etiquetas}")
+        if motivo:
+            st.caption(f"Motivo: {motivo}")
 
 
 # ============================================================
@@ -1799,12 +1801,15 @@ def resumo_auditoria_avancado(auditoria: pd.DataFrame) -> Dict[str, pd.DataFrame
 def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    out = df.copy()
+    out = limpar_dataframe_operacional(df)
     if "Mercado" in out.columns:
         out["Mercado"] = out["Mercado"].map(mercado_exibicao)
     for col in ["_prioridade_score", "_prioridade_motivo"]:
         if col in out.columns:
             out = out.drop(columns=[col])
+    for col in ["Alerta de mercado", "Etiquetas", "Motivo", "Status operacional", "Prioridade"]:
+        if col in out.columns:
+            out[col] = out[col].map(texto_limpo_para_tela)
     out["Probabilidade"] = out["Probabilidade"].map(lambda x: fmt_pct(x, 1))
     out["Cotação justa"] = out["Cotação justa"].map(lambda x: "-" if not np.isfinite(x) else fmt_num(x, 2))
     out["Cotação real"] = out["Cotação real"].map(lambda x: fmt_num(x, 2))
@@ -1812,6 +1817,19 @@ def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
     out["Entrada %"] = out["Entrada %"].map(lambda x: fmt_pct(x, 2))
     out["Entrada R$"] = out["Entrada R$"].map(fmt_dinheiro)
     return out
+
+
+def formatar_tabela_resumo_operacional(df: pd.DataFrame) -> pd.DataFrame:
+    """Tabela curta para a tela principal; a tabela completa fica no expander técnico."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = formatar_tabela_resultados(df)
+    cols = [
+        "Mercado", "Prioridade", "Valor matemático", "Status operacional",
+        "Divergência mercado", "Probabilidade", "Cotação justa", "Cotação real",
+        "Margem positiva", "Entrada %", "Entrada R$", "Etiquetas",
+    ]
+    return out[[c for c in cols if c in out.columns]].copy()
 
 # ============================================================
 # ODDS MANUAIS E API
@@ -2430,7 +2448,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.4.4</div>
+        <div class="hero-title">TEX STATISTICS V19.4.6</div>
         <div class="hero-sub">
             Planilha pura manual: ataque/defesa, mando, Poisson, cotação justa, margem positiva e conferência operacional.
             Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
@@ -2687,6 +2705,7 @@ with aba_analisar:
             periodo_usado = resumo_base_dados(df_liga)
             dias_base_jogo = dias_base_ate_jogo(periodo_usado, data_jogo_catalogo)
             resultados = aplicar_alerta_base_distante(resultados, dias_base_jogo)
+            resultados = limpar_dataframe_operacional(resultados)
 
             st.session_state["ultima_analise_v19"] = {
                 "id": str(pd.Timestamp.now().value),
@@ -2721,7 +2740,7 @@ with aba_analisar:
     analise = st.session_state.get("ultima_analise_v19")
     if analise:
         calc = analise["calc"]
-        resultados = pd.DataFrame(analise["resultados"])
+        resultados = limpar_dataframe_operacional(pd.DataFrame(analise["resultados"]))
         aprovadas = resultados[(resultados["Veredito"].eq("VALOR POSITIVO")) & (pd.to_numeric(resultados["Entrada %"], errors="coerce").fillna(0.0) > 0)].copy() if not resultados.empty else pd.DataFrame()
         if not resultados.empty and "Valor matemático" in resultados.columns:
             valores_matematicos = resultados[resultados["Valor matemático"].astype(str).eq("SIM")].copy()
@@ -2730,6 +2749,7 @@ with aba_analisar:
 
         st.markdown("---")
         st.subheader(f"Análise — {analise['jogo']}")
+        st.info("Versão carregada: TEX STATISTICS V19.4.6 — tela limpa final. Se esta frase não aparecer no seu app, o arquivo antigo ainda está rodando.")
 
         politica_atual = str(analise.get("config", {}).get("politica_amostra_baixa", "Avisar e reduzir entrada"))
         fator_amostra_atual = float(analise.get("config", {}).get("fator_reducao_amostra", 0.50))
@@ -2741,7 +2761,7 @@ with aba_analisar:
             else:
                 st.warning(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: permitir com entrada reduzida para {fmt_pct(fator_amostra_atual, 0)}.")
         else:
-            st.success("Amostra operacional aprovada. A margem positiva decide o valor matemático; os alertas operacionais continuam valendo.")
+            st.success("Amostra operacional aprovada. A margem positiva define o valor matemático; os alertas operacionais definem cautela, redução ou conferência manual.")
 
         periodo_base = analise.get("config", {}).get("periodo_base") or resumo_base_dados(df_liga)
         st.markdown(f'<div class="base-info">{html.escape(texto_base_dados(periodo_base, analise.get("config", {}).get("janela", "-")))}</div>', unsafe_allow_html=True)
@@ -2767,7 +2787,7 @@ with aba_analisar:
 
         conf = classificar_confianca_estimativa(calc, resultados)
         render_botao_confianca(conf)
-        st.info("Confiabilidade é aviso operacional, não bloqueio. O valor matemático continua sendo margem positiva, cotação justa e cálculo proporcional da entrada; os alertas operacionais servem para reduzir, pausar ou exigir conferência antes de usar banca real.")
+        st.info("Confiabilidade da amostra é leitura operacional. Valor matemático vem da margem positiva; uso com banca real depende de amostra, divergência de mercado, base atualizada e checklist.")
 
         with st.expander("Ver cálculo de forças da planilha"):
             dados_forca = pd.DataFrame([
@@ -2822,16 +2842,19 @@ with aba_analisar:
         if resultados.empty:
             st.warning("Nenhum mercado com cotação válida para comparar.")
         else:
-            st.markdown("### Tabela da planilha")
-            st.dataframe(formatar_tabela_resultados(resultados), use_container_width=True, hide_index=True)
+            st.markdown("### Resumo operacional")
+            st.caption("Tela principal enxuta. A tabela completa fica recolhida abaixo para auditoria técnica.")
+            st.dataframe(formatar_tabela_resumo_operacional(resultados), use_container_width=True, hide_index=True)
+            with st.expander("Tabela técnica completa da planilha", expanded=False):
+                st.dataframe(formatar_tabela_resultados(resultados), use_container_width=True, hide_index=True)
 
             if not aprovadas.empty:
                 total_entrada = float(aprovadas["Entrada R$"].sum())
-                st.success(f"A planilha encontrou {len(aprovadas)} mercado(s) com VALOR POSITIVO. Total sugerido: {fmt_dinheiro(total_entrada)}.")
+                st.success(f"Entradas liberadas pela planilha: {len(aprovadas)} mercado(s) com VALOR POSITIVO. Total sugerido após reduções operacionais: {fmt_dinheiro(total_entrada)}.")
 
                 avisos_correlacao = detectar_correlacao_operacional(aprovadas, calc)
                 if avisos_correlacao:
-                    st.warning("⚠️ Exposição correlacionada no mesmo jogo: " + " ".join(avisos_correlacao))
+                    st.warning("⚠️ Exposição correlacionada no mesmo jogo:\n" + "\n".join(f"- {texto_limpo_para_tela(a)}" for a in avisos_correlacao))
 
                 if "Alerta de mercado" in aprovadas.columns:
                     alertas_mercado_gerais = []
@@ -2845,7 +2868,7 @@ with aba_analisar:
                 etiquetas_gerais = "; ".join(str(x) for x in aprovadas.get("Etiquetas", pd.Series(dtype=str)).dropna().astype(str).tolist())
                 precisa_checklist = any(p in etiquetas_gerais for p in ["Divergência extrema", "Divergência forte", "Contra favorito", "Mercado de gols contrário", "Base distante"])
                 if precisa_checklist:
-                    with st.expander("✅ Checklist de conferência manual antes de apostar", expanded=True):
+                    with st.expander("✅ Checklist de conferência manual antes de apostar", expanded=False):
                         st.warning("Há valor matemático, mas existe alerta operacional. Marque isto como conferência humana; o app não consegue saber notícia, escalação, lesão ou movimento real da cotação.")
                         checks = [
                             ("cotacao", "Conferi a cotação na mesma casa onde vou apostar."),
@@ -2858,12 +2881,13 @@ with aba_analisar:
                         st.markdown("**Marque os itens abaixo antes de transformar isto em aposta real:**")
                         valores_check = []
                         for i, (suf, texto_check) in enumerate(checks, start=1):
-                            # Mostra o item como texto normal para não sumir visualmente/cópia da tela.
-                            c_txt, c_box = st.columns([8, 1])
-                            with c_txt:
-                                st.markdown(f"**{i}.** {texto_check}")
-                            with c_box:
-                                valores_check.append(st.checkbox("OK", value=False, key=f"check_operacional_{analise['id']}_{suf}"))
+                            valores_check.append(
+                                st.checkbox(
+                                    f"{i}. {texto_check}",
+                                    value=False,
+                                    key=f"check_operacional_{analise['id']}_{suf}",
+                                )
+                            )
                         checklist_ok = all(valores_check)
                         st.session_state[f"checklist_operacional_ok_{analise['id']}"] = checklist_ok
                         if checklist_ok:
@@ -2912,7 +2936,7 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.4 Conferência Operacional | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Checklist operacional: {'OK' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
+                            observacao=(obs + f" | V19.4.6 Tela Limpa | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Checklist operacional: {'OK' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
                             etiquetas=str(r.get("Etiquetas", "")),
                         )
                     destino = salvar_auditoria(auditoria)
@@ -2946,7 +2970,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "A decisão da V19.4 continua sendo pela planilha: cotação real contra cotação justa."
+        "A decisão da V19.4.6 continua sendo pela planilha: cotação real contra cotação justa, com alertas operacionais claros na tela."
     )
 
 
