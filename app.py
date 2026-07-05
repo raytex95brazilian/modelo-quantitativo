@@ -16,7 +16,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.4.3 — CONFERÊNCIA OPERACIONAL + CARDS CORRIGIDOS
+# TEX STATISTICS V19.4.4 — CONFERÊNCIA OPERACIONAL + CARDS CORRIGIDOS
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -720,6 +720,9 @@ def texto_limpo_para_tela(valor: object) -> str:
     txt = re.sub(r"<br\s*/?>", " | ", txt, flags=re.IGNORECASE)
     txt = re.sub(r"<[^>]+>", "", txt)
     txt = re.sub(r"\s+", " ", txt).strip()
+    # Limpeza final para motivos antigos/copiados de versões anteriores.
+    txt = re.sub(r"valor matemático\s+valor positivo", "valor matemático positivo", txt, flags=re.IGNORECASE)
+    txt = txt.replace("valor matemático Valor positivo", "valor matemático positivo")
     return txt
 
 
@@ -2427,7 +2430,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.4</div>
+        <div class="hero-title">TEX STATISTICS V19.4.4</div>
         <div class="hero-sub">
             Planilha pura manual: ataque/defesa, mando, Poisson, cotação justa, margem positiva e conferência operacional.
             Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
@@ -2764,7 +2767,7 @@ with aba_analisar:
 
         conf = classificar_confianca_estimativa(calc, resultados)
         render_botao_confianca(conf)
-        st.info("Confiabilidade é aviso operacional, não bloqueio. A decisão matemática continua sendo margem positiva, cotação justa e cálculo proporcional da entrada.")
+        st.info("Confiabilidade é aviso operacional, não bloqueio. O valor matemático continua sendo margem positiva, cotação justa e cálculo proporcional da entrada; os alertas operacionais servem para reduzir, pausar ou exigir conferência antes de usar banca real.")
 
         with st.expander("Ver cálculo de forças da planilha"):
             dados_forca = pd.DataFrame([
@@ -2855,7 +2858,12 @@ with aba_analisar:
                         st.markdown("**Marque os itens abaixo antes de transformar isto em aposta real:**")
                         valores_check = []
                         for i, (suf, texto_check) in enumerate(checks, start=1):
-                            valores_check.append(st.checkbox(f"{i}. {texto_check}", value=False, key=f"check_operacional_{analise['id']}_{suf}"))
+                            # Mostra o item como texto normal para não sumir visualmente/cópia da tela.
+                            c_txt, c_box = st.columns([8, 1])
+                            with c_txt:
+                                st.markdown(f"**{i}.** {texto_check}")
+                            with c_box:
+                                valores_check.append(st.checkbox("OK", value=False, key=f"check_operacional_{analise['id']}_{suf}"))
                         checklist_ok = all(valores_check)
                         st.session_state[f"checklist_operacional_ok_{analise['id']}"] = checklist_ok
                         if checklist_ok:
