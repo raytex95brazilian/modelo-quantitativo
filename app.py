@@ -15,12 +15,12 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.3.4 — PRIORIDADE OPERACIONAL REAL + GOOGLE ECONOMY
+# TEX STATISTICS V19.3.5 — PRIORIDADE OPERACIONAL REAL + GOOGLE ECONOMY
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
 # - replicar a lógica simples da planilha que funcionou;
-# - calcular forças ataque/defesa, Poisson, odd justa, margem +EV e Kelly fracionado;
+# - calcular forças ataque/defesa, Poisson, cotação justa, margem positiva e Kelly fracionado;
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
@@ -663,18 +663,18 @@ def render_botao_confianca(conf: Dict[str, object]) -> None:
 def prioridade_aposta(
     prob: float,
     margem: float,
-    stake: float,
+    entrada: float,
     veredito: str,
     status_operacional: str = "",
 ) -> Tuple[str, int, str]:
-    if str(veredito) != "VALOR (+EV)" or margem <= 0 or stake <= 0:
+    if str(veredito) != "VALOR POSITIVO" or margem <= 0 or entrada <= 0:
         return "—", 0, "sem prioridade"
 
     # Prioridade combina valor, chance e tamanho natural do Kelly.
     # Não bloqueia a entrada; só ordena a leitura.
-    if stake >= 0.025 or (margem >= 0.12 and prob >= 0.45):
-        prioridade, score, motivo = "🟢 Alta", 3, "melhor equilíbrio entre margem, probabilidade e stake"
-    elif stake >= 0.010 or (margem >= 0.075 and prob >= 0.40):
+    if entrada >= 0.025 or (margem >= 0.12 and prob >= 0.45):
+        prioridade, score, motivo = "🟢 Alta", 3, "melhor equilíbrio entre margem, probabilidade e entrada"
+    elif entrada >= 0.010 or (margem >= 0.075 and prob >= 0.40):
         prioridade, score, motivo = "🟠 Média", 2, "valor válido, mas não é a melhor da tela"
     else:
         prioridade, score, motivo = "🔴 Fraca", 1, "valor existe, porém é a mais volátil/fraca da lista"
@@ -873,19 +873,19 @@ def avaliar_valor_planilha(
     teto_por_jogo: float,
     amostra_ok: bool,
     motivo_bloqueio_operacional: str = "",
-    politica_amostra_baixa: str = "Avisar e reduzir stake",
+    politica_amostra_baixa: str = "Avisar e reduzir entrada",
     fator_reducao_amostra: float = 0.50,
 ) -> pd.DataFrame:
     """
     Avalia valor como a planilha, mas separa duas coisas que não podem ficar misturadas:
-    1) Valor matemático: se a odd real está acima da odd justa com margem mínima.
+    1) Valor matemático: se a cotação real está acima da cotação justa com margem mínima.
     2) Status operacional: se a entrada está liberada, reduzida, apenas estudo ou bloqueada.
 
-    Isso evita a burrice visual de mostrar margem +EV forte e ao mesmo tempo esconder que
+    Isso evita a burrice visual de mostrar margem positiva forte e ao mesmo tempo esconder que
     o motivo do corte foi só amostra baixa.
     """
     linhas = []
-    politica = str(politica_amostra_baixa or "Avisar e reduzir stake").strip()
+    politica = str(politica_amostra_baixa or "Avisar e reduzir entrada").strip()
     politica_lower = politica.lower()
     fator_reducao_amostra = float(max(0.0, min(1.0, fator_reducao_amostra)))
 
@@ -898,15 +898,15 @@ def avaliar_valor_planilha(
         odd_justa = 1.0 / prob if prob > 0 else np.inf
         margem = (prob * odd) - 1.0
         kelly = kelly_fracionado(prob, odd, fracao_kelly)
-        stake_pct_base = min(kelly, teto_por_entrada)
+        entrada_pct_base = min(kelly, teto_por_entrada)
         tem_valor = margem > margem_minima
         valor_matematico = "SIM" if tem_valor else "NÃO"
 
         if tem_valor:
             if amostra_ok:
-                veredito = "VALOR (+EV)"
+                veredito = "VALOR POSITIVO"
                 status_operacional = "LIBERADO"
-                entrada_pct = stake_pct_base
+                entrada_pct = entrada_pct_base
                 motivo = "valor positivo pela lógica da planilha"
             else:
                 if "bloquear" in politica_lower:
@@ -920,18 +920,18 @@ def avaliar_valor_planilha(
                     entrada_pct = 0.0
                     motivo = (motivo_bloqueio_operacional or "amostra mínima insuficiente") + " | valor matemático existe, mas está marcado apenas para estudo."
                 else:
-                    veredito = "VALOR (+EV)"
-                    status_operacional = "AMOSTRA BAIXA — STAKE REDUZIDA"
-                    entrada_pct = stake_pct_base * fator_reducao_amostra
+                    veredito = "VALOR POSITIVO"
+                    status_operacional = "AMOSTRA BAIXA — ENTRADA REDUZIDA"
+                    entrada_pct = entrada_pct_base * fator_reducao_amostra
                     motivo = (
                         (motivo_bloqueio_operacional or "amostra mínima insuficiente")
-                        + f" | valor matemático +EV; stake reduzida para {fmt_pct(fator_reducao_amostra, 0)} da stake original."
+                        + f" | valor matemático valor positivo; entrada reduzida para {fmt_pct(fator_reducao_amostra, 0)} da entrada original."
                     )
         else:
             veredito = "SEM VALOR"
             status_operacional = "SEM VALOR"
             entrada_pct = 0.0
-            motivo = "odd real abaixo ou muito próxima da odd justa"
+            motivo = "cotação real abaixo ou muito próxima da cotação justa"
 
         prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(prob, margem, entrada_pct, veredito, status_operacional)
         linhas.append({
@@ -940,11 +940,11 @@ def avaliar_valor_planilha(
             "Valor matemático": valor_matematico,
             "Status operacional": status_operacional,
             "Probabilidade": prob,
-            "Odd justa": odd_justa,
-            "Odd real": float(odd),
-            "Margem +EV": margem,
+            "Cotação justa": odd_justa,
+            "Cotação real": float(odd),
+            "Margem positiva": margem,
             "Veredito": veredito,
-            "Stake %": entrada_pct,
+            "Entrada %": entrada_pct,
             "Entrada R$": float(banca) * entrada_pct if banca > 0 else 0.0,
             "Motivo": motivo,
             "_prioridade_score": prioridade_score,
@@ -955,19 +955,19 @@ def avaliar_valor_planilha(
     if df.empty:
         return df
 
-    # O limite total do jogo só vale para entradas com stake efetiva.
-    mask_ev = df["Veredito"].eq("VALOR (+EV)") & (pd.to_numeric(df["Stake %"], errors="coerce").fillna(0.0) > 0)
-    total_pct = float(df.loc[mask_ev, "Stake %"].sum())
+    # O limite total do jogo só vale para entradas com entrada efetiva.
+    mask_ev = df["Veredito"].eq("VALOR POSITIVO") & (pd.to_numeric(df["Entrada %"], errors="coerce").fillna(0.0) > 0)
+    total_pct = float(df.loc[mask_ev, "Entrada %"].sum())
     if total_pct > teto_por_jogo > 0:
         fator = teto_por_jogo / total_pct
-        df.loc[mask_ev, "Stake %"] = df.loc[mask_ev, "Stake %"] * fator
-        df.loc[mask_ev, "Entrada R$"] = df.loc[mask_ev, "Stake %"] * float(banca)
-        df.loc[mask_ev, "Motivo"] = df.loc[mask_ev, "Motivo"] + " | stake ajustada proporcionalmente pelo limite total do jogo"
+        df.loc[mask_ev, "Entrada %"] = df.loc[mask_ev, "Entrada %"] * fator
+        df.loc[mask_ev, "Entrada R$"] = df.loc[mask_ev, "Entrada %"] * float(banca)
+        df.loc[mask_ev, "Motivo"] = df.loc[mask_ev, "Motivo"] + " | entrada ajustada proporcionalmente pelo limite total do jogo"
         for idx, row in df.loc[mask_ev].iterrows():
             prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(
                 float(row.get("Probabilidade", 0.0)),
-                float(row.get("Margem +EV", 0.0)),
-                float(df.at[idx, "Stake %"]),
+                float(row.get("Margem positiva", 0.0)),
+                float(df.at[idx, "Entrada %"]),
                 str(row.get("Veredito", "")),
                 str(row.get("Status operacional", "")),
             )
@@ -977,14 +977,14 @@ def avaliar_valor_planilha(
 
     ordem_status = {
         "LIBERADO": 0,
-        "AMOSTRA BAIXA — STAKE REDUZIDA": 1,
+        "AMOSTRA BAIXA — ENTRADA REDUZIDA": 1,
         "AMOSTRA BAIXA — ESTUDO": 2,
         "SEM VALOR": 3,
         "AMOSTRA BAIXA — BLOQUEADO": 4,
     }
     df["_ordem_status"] = df["Status operacional"].map(ordem_status).fillna(9)
     df = (
-        df.sort_values(["_ordem_status", "_prioridade_score", "Margem +EV"], ascending=[True, False, False])
+        df.sort_values(["_ordem_status", "_prioridade_score", "Margem positiva"], ascending=[True, False, False])
         .drop(columns=["_ordem_status"])
         .reset_index(drop=True)
     )
@@ -1065,8 +1065,8 @@ def diagnostico_poisson_liga(df: pd.DataFrame) -> Dict[str, object]:
 def classificar_confianca_estimativa(modelo: Dict[str, object], resultados: pd.DataFrame) -> Dict[str, object]:
     amostra = int(modelo.get("amostra_minima", 0))
     margem_max = 0.0
-    if resultados is not None and not resultados.empty and "Margem +EV" in resultados.columns:
-        evs = pd.to_numeric(resultados["Margem +EV"], errors="coerce").dropna()
+    if resultados is not None and not resultados.empty and "Margem positiva" in resultados.columns:
+        evs = pd.to_numeric(resultados["Margem positiva"], errors="coerce").dropna()
         if not evs.empty:
             margem_max = float(evs.max())
 
@@ -1084,10 +1084,10 @@ def classificar_confianca_estimativa(modelo: Dict[str, object], resultados: pd.D
 
     if margem_max >= 0.15:
         pontos += 2
-        motivos.append("margem +EV forte")
+        motivos.append("margem positiva forte")
     elif margem_max > 0.00:
         pontos += 1
-        motivos.append("margem +EV positiva, mas não larga")
+        motivos.append("margem positiva positiva, mas não larga")
     else:
         motivos.append("sem margem positiva relevante")
 
@@ -1238,10 +1238,10 @@ def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
         if col in out.columns:
             out = out.drop(columns=[col])
     out["Probabilidade"] = out["Probabilidade"].map(lambda x: fmt_pct(x, 1))
-    out["Odd justa"] = out["Odd justa"].map(lambda x: "-" if not np.isfinite(x) else fmt_num(x, 2))
-    out["Odd real"] = out["Odd real"].map(lambda x: fmt_num(x, 2))
-    out["Margem +EV"] = out["Margem +EV"].map(lambda x: fmt_pct(x, 1))
-    out["Stake %"] = out["Stake %"].map(lambda x: fmt_pct(x, 2))
+    out["Cotação justa"] = out["Cotação justa"].map(lambda x: "-" if not np.isfinite(x) else fmt_num(x, 2))
+    out["Cotação real"] = out["Cotação real"].map(lambda x: fmt_num(x, 2))
+    out["Margem positiva"] = out["Margem positiva"].map(lambda x: fmt_pct(x, 1))
+    out["Entrada %"] = out["Entrada %"].map(lambda x: fmt_pct(x, 2))
     out["Entrada R$"] = out["Entrada R$"].map(fmt_dinheiro)
     return out
 
@@ -1421,7 +1421,7 @@ def extrair_odds_api(jogo: dict, casa_alvo: Optional[str] = None) -> Tuple[Dict[
                 _popular_pools_com_bookmaker(pools_alvo, book, casa_api, fora_api)
             odds_alvo = _pools_para_odds(pools_alvo)
             if odds_alvo:
-                return odds_alvo, f"✅ Odds extraídas da casa selecionada na API: {casa_alvo_txt}. Ainda assim, confira antes de apostar."
+                return odds_alvo, f"✅ Cotações extraídas da casa selecionada na API: {casa_alvo_txt}. Ainda assim, confira antes de apostar."
 
     pools = {m: [] for m in MERCADOS_NUCLEO}
     for book in bookmakers:
@@ -1430,12 +1430,12 @@ def extrair_odds_api(jogo: dict, casa_alvo: Optional[str] = None) -> Tuple[Dict[
 
     if deve_priorizar_casa:
         aviso = (
-            f"⚠️ A API não encontrou odds da casa selecionada ({casa_alvo_txt}). "
+            f"⚠️ A API não encontrou cotações da casa selecionada ({casa_alvo_txt}). "
             "Estou mostrando a mediana do mercado apenas como referência. "
-            "Para apostar, confira e digite manualmente a odd da sua casa."
+            "Para apostar, confira e digite manualmente a cotação da sua casa."
         )
     else:
-        aviso = "ℹ️ Casa 'Outra' selecionada: a API mostra mediana do mercado. Para aposta real, prefira digitar a odd manualmente."
+        aviso = "ℹ️ Casa 'Outra' selecionada: a API mostra mediana do mercado. Para aposta real, prefira digitar a cotação manualmente."
 
     return odds_mediana, aviso
 
@@ -1860,18 +1860,18 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.3.4</div>
+        <div class="hero-title">TEX STATISTICS V19.3.5</div>
         <div class="hero-sub">
-            Pure Sheet Manual: ataque/defesa, mando, Poisson, odd justa, margem +EV e Kelly fracionado.
+            Planilha pura manual: ataque/defesa, mando, Poisson, cotação justa, margem positiva e Kelly fracionado.
             Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
             Sem firula subjetiva. Diagnóstico, scout e auditoria informam — não bloqueiam o valor da planilha.
         </div>
-        <span class="chip">Pure Sheet Manual</span>
+        <span class="chip">Planilha pura manual</span>
         <span class="chip">Temporada atual</span>
-        <span class="chip">+EV com margem</span>
+        <span class="chip">valor positivo com margem</span>
         <span class="chip">Poisson auditável</span>
         <span class="chip">Scout opcional</span>
-        <span class="chip">Sem hard blocks subjetivos</span>
+        <span class="chip">Sem travas subjetivas</span>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1914,23 +1914,23 @@ with st.sidebar:
     amostra_minima = st.slider("Amostra mínima casa/fora", 3, 12, 5, 1)
     politica_amostra_baixa = st.selectbox(
         "Política para amostra baixa",
-        ["Avisar e reduzir stake", "Bloquear entrada", "Mostrar só para estudo"],
+        ["Avisar e reduzir entrada", "Bloquear entrada", "Mostrar só para estudo"],
         index=0,
-        help="Quando a amostra casa/fora fica abaixo do mínimo. Padrão: não zera o valor matemático; só reduz stake e avisa.",
+        help="Quando a amostra casa/fora fica abaixo do mínimo. Padrão: não zera o valor matemático; só reduz entrada e avisa.",
     )
     fator_reducao_amostra_pct = st.slider(
-        "Stake em amostra baixa",
+        "Entrada em amostra baixa",
         min_value=10.0,
         max_value=100.0,
         value=50.0,
         step=5.0,
         format="%.0f%%",
-        help="Usado apenas quando a política é 'Avisar e reduzir stake'. Ex: 50% = metade da stake sugerida.",
+        help="Usado apenas quando a política é 'Avisar e reduzir entrada'. Ex: 50% = metade da entrada sugerida.",
     )
     fator_reducao_amostra = fator_reducao_amostra_pct / 100.0
 
     st.divider()
-    st.header("Stake")
+    st.header("Entrada")
     fracao_kelly = st.select_slider(
         "Fração de Kelly",
         options=[0.10, 0.125, 0.20, 0.25, 0.33, 0.50],
@@ -1938,7 +1938,7 @@ with st.sidebar:
         format_func=lambda x: {0.10: "1/10 Kelly", 0.125: "1/8 Kelly", 0.20: "1/5 Kelly", 0.25: "1/4 Kelly", 0.33: "1/3 Kelly", 0.50: "1/2 Kelly"}.get(x, str(x)),
     )
     margem_minima_pct = st.slider(
-        "Margem mínima +EV",
+        "Margem mínima valor positivo",
         min_value=0.0,
         max_value=10.0,
         value=3.0,
@@ -1954,7 +1954,7 @@ with st.sidebar:
     st.caption("Padrão recomendado: 1/4 Kelly, margem mínima 3%, teto de 3% por entrada e 6% por jogo. O recorte padrão agora é temporada atual, não histórico gigante.")
 
     st.divider()
-    st.header("Odds")
+    st.header("Cotações")
     casa_apostas = st.selectbox("Casa de apostas", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"])
     chave_api = st.text_input("Chave The Odds API", value=os.getenv("ODDS_API_KEY", ""), type="password")
 
@@ -1997,7 +1997,7 @@ with aba_analisar:
 
     if modo == "Manual":
         st.markdown("### Jogo")
-        st.info("Modo principal recomendado: digite as odds reais da casa onde você vai apostar. Não misture Pixbet com odds de outras casas no mesmo jogo.")
+        st.info("Modo principal recomendado: digite as cotações reais da casa onde você vai apostar. Não misture Pixbet com cotações de outras casas no mesmo jogo.")
         c1, c2 = st.columns(2)
         with c1:
             time_casa = st.selectbox("Mandante", times_liga, key="manual_casa")
@@ -2021,16 +2021,16 @@ with aba_analisar:
             with c2:
                 if st.button("SALVAR ODDS NO CATÁLOGO"):
                     if not odds:
-                        st.error("Nenhuma odd válida para salvar.")
+                        st.error("Nenhuma cotação válida para salvar.")
                     else:
                         catalogo = carregar_catalogo()
                         catalogo = registrar_odds_catalogo(
                             catalogo, liga_sel, jogo_nome, time_casa, time_fora, casa_apostas, odds,
                             banca_usada, "Planilha Pura", data_jogo_catalogo, hora_jogo_catalogo,
-                            "Manual", "Odds salvas sem obrigação de aposta",
+                            "Manual", "Cotações salvas sem obrigação de aposta",
                         )
                         destino = salvar_catalogo(catalogo)
-                        st.success(f"Odds salvas. Destino: {destino}.")
+                        st.success(f"Cotações salvas. Destino: {destino}.")
 
     else:
         if not chave_api:
@@ -2040,7 +2040,7 @@ with aba_analisar:
         else:
             jogos_api = buscar_odds_api(chave_api, LIGAS_API[liga_sel])
             if not jogos_api:
-                st.warning("A API não retornou jogos/odds agora. Use Manual.")
+                st.warning("A API não retornou jogos/cotações agora. Use Manual.")
             else:
                 agora = pd.Timestamp.now(tz="UTC")
                 opcoes = {}
@@ -2081,12 +2081,12 @@ with aba_analisar:
                                 st.warning(aviso_api)
                             else:
                                 st.info(aviso_api)
-                        st.info(f"Mercados com odd encontrados: {len(odds)}")
+                        st.info(f"Mercados com cotação encontrados: {len(odds)}")
                         botao_analisar = st.button("ANALISAR PELA PLANILHA", type="primary")
 
     if botao_analisar:
         if not odds:
-            st.error("Nenhuma odd válida foi informada/encontrada.")
+            st.error("Nenhuma cotação válida foi informada/encontrada.")
         elif time_casa == time_fora:
             st.error("Mandante e visitante não podem ser iguais.")
         else:
@@ -2134,7 +2134,7 @@ with aba_analisar:
     if analise:
         calc = analise["calc"]
         resultados = pd.DataFrame(analise["resultados"])
-        aprovadas = resultados[(resultados["Veredito"].eq("VALOR (+EV)")) & (pd.to_numeric(resultados["Stake %"], errors="coerce").fillna(0.0) > 0)].copy() if not resultados.empty else pd.DataFrame()
+        aprovadas = resultados[(resultados["Veredito"].eq("VALOR POSITIVO")) & (pd.to_numeric(resultados["Entrada %"], errors="coerce").fillna(0.0) > 0)].copy() if not resultados.empty else pd.DataFrame()
         if not resultados.empty and "Valor matemático" in resultados.columns:
             valores_matematicos = resultados[resultados["Valor matemático"].astype(str).eq("SIM")].copy()
         else:
@@ -2143,7 +2143,7 @@ with aba_analisar:
         st.markdown("---")
         st.subheader(f"Análise — {analise['jogo']}")
 
-        politica_atual = str(analise.get("config", {}).get("politica_amostra_baixa", "Avisar e reduzir stake"))
+        politica_atual = str(analise.get("config", {}).get("politica_amostra_baixa", "Avisar e reduzir entrada"))
         fator_amostra_atual = float(analise.get("config", {}).get("fator_reducao_amostra", 0.50))
         if not analise.get("amostra_ok", False):
             if "Bloquear" in politica_atual:
@@ -2151,9 +2151,9 @@ with aba_analisar:
             elif "estudo" in politica_atual.lower():
                 st.warning(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: mostrar só para estudo.")
             else:
-                st.warning(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: permitir com stake reduzida para {fmt_pct(fator_amostra_atual, 0)}.")
+                st.warning(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: permitir com entrada reduzida para {fmt_pct(fator_amostra_atual, 0)}.")
         else:
-            st.success("Amostra operacional aprovada. A partir daqui, quem manda é a margem +EV.")
+            st.success("Amostra operacional aprovada. A partir daqui, quem manda é a margem positiva.")
 
         periodo_base = analise.get("config", {}).get("periodo_base") or resumo_base_dados(df_liga)
         st.markdown(f'<div class="base-info">{html.escape(texto_base_dados(periodo_base, analise.get("config", {}).get("janela", "-")))}</div>', unsafe_allow_html=True)
@@ -2168,11 +2168,11 @@ with aba_analisar:
         with c4:
             render_stat_card("Amostra fora", calc["jogos_fora"], "jogos do visitante fora", "🛫")
         with c5:
-            render_stat_card("Entradas +EV", len(aprovadas), "pela margem configurada", "✅")
+            render_stat_card("Entradas com valor", len(aprovadas), "pela margem configurada", "✅")
 
         conf = classificar_confianca_estimativa(calc, resultados)
         render_botao_confianca(conf)
-        st.info("Confiabilidade é aviso operacional, não bloqueio. A decisão matemática continua sendo margem +EV, odd justa e Kelly.")
+        st.info("Confiabilidade é aviso operacional, não bloqueio. A decisão matemática continua sendo margem positiva, cotação justa e Kelly.")
 
         with st.expander("Ver cálculo de forças da planilha"):
             dados_forca = pd.DataFrame([
@@ -2204,14 +2204,14 @@ with aba_analisar:
                 st.write(f"Previsão total: **{fmt_num(cantos['cantos_total'], 2)}** | Linha: **{fmt_num(linha_cantos, 1)}** | Diferença: **{fmt_num(dif, 2)}** | {msg}")
 
         if resultados.empty:
-            st.warning("Nenhum mercado com odd válida para comparar.")
+            st.warning("Nenhum mercado com cotação válida para comparar.")
         else:
             st.markdown("### Tabela da planilha")
             st.dataframe(formatar_tabela_resultados(resultados), use_container_width=True, hide_index=True)
 
             if not aprovadas.empty:
                 total_entrada = float(aprovadas["Entrada R$"].sum())
-                st.success(f"A planilha encontrou {len(aprovadas)} mercado(s) com VALOR (+EV). Total sugerido: {fmt_dinheiro(total_entrada)}.")
+                st.success(f"A planilha encontrou {len(aprovadas)} mercado(s) com VALOR POSITIVO. Total sugerido: {fmt_dinheiro(total_entrada)}.")
 
                 avisos_correlacao = detectar_correlacao_operacional(aprovadas, calc)
                 if avisos_correlacao:
@@ -2225,11 +2225,11 @@ with aba_analisar:
                         f"""
                         <div class="card-ev">
                             <div class="priority-badge {prioridade_cls}">{html.escape(prioridade)} — {html.escape(prioridade_extra)}</div>
-                            <div class="big-green">VALOR (+EV)</div>
+                            <div class="big-green">VALOR POSITIVO</div>
                             <h3>{html.escape(str(r['Mercado']))}</h3>
                             <p><b>Status operacional:</b> {html.escape(str(r.get('Status operacional', 'LIBERADO')))} | <b>Valor matemático:</b> {html.escape(str(r.get('Valor matemático', 'SIM')))}</p>
-                            <p><b>Probabilidade:</b> {fmt_pct(float(r['Probabilidade']), 1)} | <b>Odd justa:</b> {fmt_num(float(r['Odd justa']), 2)} | <b>Odd real:</b> {fmt_num(float(r['Odd real']), 2)}</p>
-                            <p><b>Margem:</b> {fmt_pct(float(r['Margem +EV']), 1)} | <b>Stake:</b> {fmt_pct(float(r['Stake %']), 2)} | <b>Entrada:</b> {fmt_dinheiro(float(r['Entrada R$']))}</p>
+                            <p><b>Probabilidade:</b> {fmt_pct(float(r['Probabilidade']), 1)} | <b>Cotação justa:</b> {fmt_num(float(r['Cotação justa']), 2)} | <b>Cotação real:</b> {fmt_num(float(r['Cotação real']), 2)}</p>
+                            <p><b>Margem:</b> {fmt_pct(float(r['Margem positiva']), 1)} | <b>Entrada %:</b> {fmt_pct(float(r['Entrada %']), 2)} | <b>Entrada R$:</b> {fmt_dinheiro(float(r['Entrada R$']))}</p>
                             <p class="muted"><b>Motivo:</b> {html.escape(str(r['Motivo']))}</p>
                         </div>
                         """,
@@ -2237,20 +2237,20 @@ with aba_analisar:
                     )
             else:
                 if not valores_matematicos.empty:
-                    st.warning("Existe valor matemático (+EV) na tabela, mas a política operacional atual não liberou entrada com stake. Veja as colunas 'Valor matemático' e 'Status operacional'.")
+                    st.warning("Existe valor matemático positivo na tabela, mas a política operacional atual não liberou entrada real. Veja as colunas 'Valor matemático' e 'Status operacional'.")
                 else:
-                    st.info("Nenhum mercado ficou +EV com as odds informadas.")
+                    st.info("Nenhum mercado ficou valor positivo com as cotações informadas.")
 
         if not aprovadas.empty:
             st.markdown("---")
-            st.markdown("### Registrar entradas +EV na auditoria")
+            st.markdown("### Registrar entradas com valor positivo na auditoria")
             with st.form(key=f"form_registrar_v19_{analise['id']}"):
                 escolhidas_idx = []
                 for idx, r in aprovadas.iterrows():
-                    label = f"Registrar {r['Mercado']} — odd {fmt_num(float(r['Odd real']), 2)} — {fmt_dinheiro(float(r['Entrada R$']))}"
+                    label = f"Registrar {r['Mercado']} — cotação {fmt_num(float(r['Cotação real']), 2)} — {fmt_dinheiro(float(r['Entrada R$']))}"
                     if st.checkbox(label, value=True, key=f"check_{analise['id']}_{idx}"):
                         escolhidas_idx.append(idx)
-                obs = st.text_area("Observação", value="", placeholder="Ex: Pixbet, odd conferida, escalação ok...", key=f"obs_{analise['id']}")
+                obs = st.text_area("Observação", value="", placeholder="Ex: Pixbet, cotação conferida, escalação ok...", key=f"obs_{analise['id']}")
                 salvar = st.form_submit_button("SALVAR MARCADAS NA AUDITORIA", type="primary")
 
             if salvar:
@@ -2266,11 +2266,11 @@ with aba_analisar:
                             jogo=analise["jogo"],
                             casa_apostas=analise["casa_apostas"],
                             mercado=str(r["Mercado"]),
-                            odd=float(r["Odd real"]),
+                            odd=float(r["Cotação real"]),
                             prob=float(r["Probabilidade"]),
-                            odd_justa=float(r["Odd justa"]),
-                            margem=float(r["Margem +EV"]),
-                            entrada_pct=float(r["Stake %"]),
+                            odd_justa=float(r["Cotação justa"]),
+                            margem=float(r["Margem positiva"]),
+                            entrada_pct=float(r["Entrada %"]),
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
@@ -2307,7 +2307,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "A decisão da V19.3.3 continua sendo pela planilha: odd real contra odd justa."
+        "A decisão da V19.3.3 continua sendo pela planilha: cotação real contra cotação justa."
     )
 
 
@@ -2344,7 +2344,7 @@ with aba_scout:
             cc3.metric("Total cantos", fmt_num(cantos["cantos_total"], 2))
 
 with aba_catalogo:
-    st.subheader("Catálogo de odds")
+    st.subheader("Catálogo de cotações")
     cfg = obter_config_google()
     if cfg.get("configurado"):
         st.success(f"Google Sheets ativo. Aba: {cfg['worksheet_catalogo']}.")
@@ -2359,7 +2359,7 @@ with aba_catalogo:
 
     catalogo = carregar_catalogo(force_google=force_sync_catalogo)
     if catalogo.empty:
-        st.info("Ainda não há odds salvas.")
+        st.info("Ainda não há cotações salvas.")
     else:
         f1, f2, f3 = st.columns(3)
         with f1:
@@ -2417,7 +2417,7 @@ with aba_auditoria:
             geral_fmt[col] = geral_fmt[col].map(lambda x: fmt_pct(x, 2))
         st.dataframe(geral_fmt, use_container_width=True, hide_index=True)
 
-        a1, a2, a3 = st.tabs(["Por mercado", "Por liga", "Por faixa de odd"])
+        a1, a2, a3 = st.tabs(["Por mercado", "Por liga", "Por faixa de cotação"])
         for aba_tmp, chave in [(a1, "por_mercado"), (a2, "por_liga"), (a3, "por_faixa_odd")]:
             with aba_tmp:
                 t = resumo_adv[chave].copy()
@@ -2437,7 +2437,7 @@ with aba_auditoria:
             aud_mercado = st.selectbox("Mercado", MERCADOS_NUCLEO, key="aud_mercado")
             aud_casa = st.selectbox("Casa", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"], key="aud_casa")
         with c2:
-            aud_odd = st.text_input("Odd", value="", key="aud_odd")
+            aud_odd = st.text_input("Cotação", value="", key="aud_odd")
             aud_entrada = st.text_input("Entrada R$", value="", key="aud_entrada")
             aud_banca = st.number_input("Banca antes", min_value=0.0, value=float(banca_calc), step=10.0, key="aud_banca")
             aud_obs = st.text_input("Observação", value="", key="aud_obs")
@@ -2445,7 +2445,7 @@ with aba_auditoria:
             odd = texto_para_float(aud_odd)
             entrada = texto_para_float(aud_entrada)
             if not odd_valida(odd) or entrada is None or entrada <= 0 or not aud_jogo.strip():
-                st.error("Preencha jogo, odd válida e entrada.")
+                st.error("Preencha jogo, cotação válida e entrada.")
             else:
                 percentual = float(entrada) / float(aud_banca) if aud_banca > 0 else 0.0
                 auditoria = registrar_entrada(
@@ -2479,7 +2479,7 @@ with aba_auditoria:
             with c1:
                 status = st.selectbox("Resultado", ["Green", "Red", "Void", "Cashout"], key="status_fechar")
             with c2:
-                odd_fechamento_txt = st.text_input("Odd fechamento", value="", key="odd_fechamento")
+                odd_fechamento_txt = st.text_input("Cotação de fechamento", value="", key="odd_fechamento")
             with c3:
                 cashout = st.number_input("Valor cashout recebido", min_value=0.0, value=0.0, step=1.0, key="cashout")
             obs_fechamento = st.text_input("Observação fechamento", value="", key="obs_fechamento")
