@@ -2,25 +2,27 @@ import os
 import io
 import json
 import uuid
-import math
+import difflib
 from datetime import datetime, date
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-from scipy.stats import poisson
-
+from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS PRO V18 — REWRITE TOTAL
-# Núcleo novo: primeiro bloqueia risco, depois calcula valor.
-# Foco: não deixar Under/BTTS Não passarem em jogo com fogo/goleada.
+# TEX STATISTICS V19.2 — PURE SHEET MANUAL + SCIENTIFIC DIAGNOSTICS
+# ============================================================
+# Objetivo desta versão:
+# - parar de empilhar filtros subjetivos;
+# - replicar a lógica simples da planilha que funcionou;
+# - calcular forças ataque/defesa, Poisson, odd justa, margem +EV e Kelly fracionado;
+# - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V18 Anti-Goleada", layout="wide")
-
+st.set_page_config(page_title="TEX STATISTICS — V19.2 Pure Sheet Manual", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -29,25 +31,21 @@ st.set_page_config(page_title="TEX STATISTICS — V18 Anti-Goleada", layout="wid
 st.markdown(
     """
     <style>
-    @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700&display=swap");
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Space+Grotesk:wght@600;700&display=swap');
 
     :root {
-        color-scheme: light !important;
+        color-scheme: light;
         --bg: #f6f7fb;
         --card: #ffffff;
         --text: #111827;
         --muted: #64748b;
         --line: #e5e7eb;
+        --accent: #0f766e;
         --green: #059669;
         --yellow: #d97706;
-        --blue: #2563eb;
         --red: #dc2626;
-        --black: #0f172a;
-        --soft-green: #ecfdf5;
-        --soft-red: #fef2f2;
-        --soft-blue: #eff6ff;
-        --soft-yellow: #fffbeb;
-        --shadow: 0 10px 28px rgba(15,23,42,.08);
+        --blue: #2563eb;
+        --shadow: 0 12px 28px rgba(15, 23, 42, 0.075);
     }
 
     html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
@@ -56,125 +54,145 @@ st.markdown(
         font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
     }
 
-    .block-container { max-width: 1180px; padding-top: 1rem; }
-
-    .block-container *, [data-testid="stSidebar"] * {
-        color: var(--text) !important;
-        -webkit-text-fill-color: var(--text) !important;
+    [data-testid="stHeader"] {
+        background: rgba(246, 247, 251, 0.92) !important;
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid rgba(229, 231, 235, 0.85);
     }
 
     [data-testid="stSidebar"], [data-testid="stSidebarContent"] {
         background: #ffffff !important;
+        color: var(--text) !important;
         border-right: 1px solid var(--line);
     }
 
-    .mini, .muted, [data-testid="stCaptionContainer"], .stCaption, small {
+    label, p, span, small, div, [data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"] {
+        color: var(--text) !important;
+        -webkit-text-fill-color: var(--text) !important;
+    }
+
+    .stCaption, [data-testid="stCaptionContainer"], .muted, small {
         color: var(--muted) !important;
         -webkit-text-fill-color: var(--muted) !important;
     }
 
-    input, textarea, [data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="select"] > div {
-        background: #ffffff !important;
-        color: var(--text) !important;
-        -webkit-text-fill-color: var(--text) !important;
+    input, textarea, [data-baseweb="input"], [data-baseweb="input"] input,
+    [data-baseweb="textarea"] textarea, [data-baseweb="select"], [data-baseweb="select"] div,
+    [role="listbox"], [role="option"], [data-baseweb="popover"], [data-baseweb="menu"] {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
         border-color: #cbd5e1 !important;
-        border-radius: 12px !important;
     }
 
-    [data-baseweb="popover"], [data-baseweb="menu"], [role="listbox"],
-    [data-baseweb="popover"] *, [data-baseweb="menu"] *, [role="listbox"] * {
-        background: #ffffff !important;
-        color: var(--text) !important;
-        -webkit-text-fill-color: var(--text) !important;
+    [role="option"]:hover, [role="option"][aria-selected="true"] {
+        background: #f1f5f9 !important;
     }
 
     .hero {
         background: #ffffff;
         border: 1px solid var(--line);
-        border-left: 8px solid var(--black);
-        border-radius: 22px;
+        border-radius: 24px;
+        padding: 24px 22px;
+        margin-bottom: 16px;
         box-shadow: var(--shadow);
-        padding: 22px;
-        margin-bottom: 14px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .hero:before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 16%;
+        height: 68%;
+        width: 7px;
+        border-radius: 999px;
+        background: var(--accent);
     }
 
     .hero-title {
         font-family: "Space Grotesk", "Inter", sans-serif;
-        font-size: 2.0rem;
-        font-weight: 800;
-        letter-spacing: -0.6px;
-        margin-bottom: 6px;
+        font-size: 2.2rem;
+        line-height: 1.05;
+        font-weight: 700;
+        letter-spacing: -0.8px;
+        margin: 6px 0 8px;
     }
 
-    .hero-sub { color: var(--muted) !important; line-height: 1.55; font-weight: 500; }
+    .hero-sub {
+        max-width: 980px;
+        color: var(--muted) !important;
+        -webkit-text-fill-color: var(--muted) !important;
+        line-height: 1.55;
+        font-weight: 500;
+    }
 
     .chip {
         display: inline-block;
-        padding: 7px 10px;
+        padding: 7px 11px;
         border-radius: 999px;
-        border: 1px solid #d1d5db;
-        background: #f8fafc;
-        font-size: .78rem;
+        background: #ecfdf5;
+        border: 1px solid #bbf7d0;
+        color: #166534 !important;
+        -webkit-text-fill-color: #166534 !important;
         font-weight: 800;
-        margin: 8px 6px 0 0;
+        font-size: 0.78rem;
+        margin-right: 7px;
+        margin-top: 10px;
     }
 
-    .decision-card {
+    .box, .card-ev, .card-no, .card-info {
         background: #ffffff;
         border: 1px solid var(--line);
         border-radius: 18px;
-        padding: 16px 18px;
-        margin: 12px 0;
         box-shadow: var(--shadow);
+        padding: 16px;
+        margin: 12px 0;
     }
 
-    .decision-green { border-left: 8px solid var(--green); }
-    .decision-yellow { border-left: 8px solid var(--yellow); }
-    .decision-blue { border-left: 8px solid var(--blue); }
-    .decision-red { border-left: 8px solid var(--red); }
+    .card-ev { border-left: 8px solid var(--green); }
+    .card-no { border-left: 8px solid var(--red); }
+    .card-info { border-left: 8px solid var(--blue); }
 
-    .big-ok { color: var(--green) !important; -webkit-text-fill-color: var(--green) !important; font-weight: 900; }
-    .big-warn { color: var(--yellow) !important; -webkit-text-fill-color: var(--yellow) !important; font-weight: 900; }
+    .big-green { color: var(--green) !important; -webkit-text-fill-color: var(--green) !important; font-weight: 900; }
+    .big-red { color: var(--red) !important; -webkit-text-fill-color: var(--red) !important; font-weight: 900; }
     .big-blue { color: var(--blue) !important; -webkit-text-fill-color: var(--blue) !important; font-weight: 900; }
-    .big-bad { color: var(--red) !important; -webkit-text-fill-color: var(--red) !important; font-weight: 900; }
+    .big-yellow { color: var(--yellow) !important; -webkit-text-fill-color: var(--yellow) !important; font-weight: 900; }
 
-    .market-title { font-size: 1.18rem; font-weight: 900; margin: 6px 0 8px 0; }
-    .line { line-height: 1.65; font-size: .95rem; }
-    .explain { color: var(--muted) !important; font-size: .9rem; line-height: 1.55; }
-
-    .risk-box {
-        background: #fff;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        padding: 14px;
-        box-shadow: 0 6px 20px rgba(15,23,42,.05);
-        margin: 8px 0 12px;
-    }
-
-    .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
+    .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button,
+    button[kind="primary"], button[kind="secondary"] {
         background: #ffffff !important;
+        background-color: #ffffff !important;
         color: #111827 !important;
         -webkit-text-fill-color: #111827 !important;
         border: 1px solid #cbd5e1 !important;
-        border-radius: 12px !important;
+        border-radius: 14px !important;
         font-weight: 850 !important;
         box-shadow: none !important;
     }
 
-    .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
+    .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover,
+    button[kind="primary"]:hover, button[kind="secondary"]:hover {
         background: #f8fafc !important;
         border-color: #94a3b8 !important;
     }
 
+    [data-testid="stMetric"], [data-testid="stDataFrame"], [data-testid="stExpander"] {
+        background: #ffffff !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 16px !important;
+        box-shadow: var(--shadow) !important;
+    }
+
     @media (max-width: 768px) {
-        .hero-title { font-size: 1.45rem; }
-        .block-container { padding-left: .8rem; padding-right: .8rem; }
+        .hero { padding: 19px 16px; border-radius: 20px; }
+        .hero-title { font-size: 1.55rem; }
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
-
 
 # ============================================================
 # CONFIGURAÇÕES
@@ -234,7 +252,7 @@ LIGAS_API = {
     "Grécia - Super League": "soccer_greece_super_league",
 }
 
-MERCADOS = [
+MERCADOS_NUCLEO = [
     "Vitória Casa",
     "Empate",
     "Vitória Fora",
@@ -242,91 +260,66 @@ MERCADOS = [
     "Menos de 2.5 gols",
     "Ambos marcam - Sim",
     "Ambos marcam - Não",
-    "Casa ou Empate",
-    "Fora ou Empate",
-    "Empate Anula Casa",
-    "Empate Anula Fora",
 ]
 
-MERCADOS_NUCLEO = {
-    "Vitória Casa",
-    "Empate",
-    "Vitória Fora",
-    "Mais de 2.5 gols",
-    "Menos de 2.5 gols",
-    "Ambos marcam - Sim",
-    "Ambos marcam - Não",
-}
-
-MERCADOS_RESULTADO = {"Vitória Casa", "Empate", "Vitória Fora"}
-MERCADOS_GOLS_BAIXOS = {"Menos de 2.5 gols", "Ambos marcam - Não"}
-MERCADOS_GOLS_ALTOS = {"Mais de 2.5 gols", "Ambos marcam - Sim"}
-
-ARQUIVO_AUDITORIA = "logs/auditoria_tex_v18.csv"
-ARQUIVO_CATALOGO = "logs/catalogo_odds_tex_v18.csv"
-
 COLUNAS_AUDITORIA = [
-    "ID", "Registrado em", "Data do jogo", "Liga", "Jogo", "Casa de apostas",
-    "Mercado", "Seleção", "Cotação de entrada", "Cotação justa",
-    "Chance pelo sistema %", "Valor esperado %", "Entrada %", "Entrada R$",
-    "Banca antes", "Status", "Resultado R$", "Banca depois",
-    "Cotação de fechamento", "Vantagem no fechamento %", "Origem", "Observação",
+    "ID", "Registrado em", "Liga", "Jogo", "Casa de apostas", "Mercado",
+    "Cotação de entrada", "Cotação justa", "Chance pelo sistema %", "Valor esperado %",
+    "Entrada %", "Entrada R$", "Banca antes", "Cotação de fechamento",
+    "Vantagem no fechamento %", "Status", "Resultado R$", "Banca depois", "Origem", "Observação",
 ]
 
 COLUNAS_CATALOGO = [
-    "ID Coleta", "Registrado em", "Data do jogo", "Hora do jogo", "Casa de apostas",
-    "Liga", "Jogo", "Mandante", "Visitante", "Mercado", "Seleção", "Cotação",
-    "Banca no momento", "Perfil", "Origem", "Observação",
+    "ID Coleta", "Registrado em", "Casa de apostas", "Liga", "Jogo", "Mandante", "Visitante",
+    "Data do jogo", "Hora do jogo", "Mercado", "Seleção", "Cotação", "Banca no momento",
+    "Perfil", "Origem", "Observação",
 ]
+
+ARQUIVO_AUDITORIA = "logs/auditoria_tex_v19_1.csv"  # mantém histórico da V19
+ARQUIVO_CATALOGO = "logs/catalogo_odds_tex_v19_1.csv"  # mantém histórico da V19
+GOOGLE_SHEETS_WORKSHEET_CATALOGO = "catalogo_odds"
+GOOGLE_SHEETS_WORKSHEET_AUDITORIA = "auditoria_entradas"
 
 CALENDARIO_LIGAS = [
-    {"Liga": "Brasileirão Série A", "Jan": "fora/consultar", "Fev": "fora/consultar", "Mar": "início", "Abr": "jogos", "Mai": "jogos", "Jun": "pausa/consultar", "Jul": "retoma/consultar", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "encerra/consultar"},
-    {"Liga": "Argentina - Primera Division", "Jan": "jogos", "Fev": "jogos", "Mar": "jogos", "Abr": "jogos", "Mai": "jogos", "Jun": "consultar", "Jul": "consultar", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "encerra/consultar"},
-    {"Liga": "EUA - MLS", "Jan": "fora", "Fev": "início", "Mar": "jogos", "Abr": "jogos", "Mai": "jogos", "Jun": "consultar", "Jul": "consultar", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "playoffs", "Dez": "playoffs/consultar"},
-    {"Liga": "México - Liga MX", "Jan": "jogos", "Fev": "jogos", "Mar": "jogos", "Abr": "jogos", "Mai": "fase final", "Jun": "pausa", "Jul": "início", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "fase final", "Dez": "fase final/pausa"},
-    {"Liga": "Japão - J1 League", "Jan": "fora", "Fev": "início", "Mar": "jogos", "Abr": "jogos", "Mai": "jogos", "Jun": "consultar", "Jul": "jogos", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "encerra"},
-    {"Liga": "Suécia - Allsvenskan", "Jan": "fora", "Fev": "fora", "Mar": "fora/início", "Abr": "jogos", "Mai": "jogos", "Jun": "jogos", "Jul": "jogos", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "encerra", "Dez": "fora"},
-    {"Liga": "Noruega - Eliteserien", "Jan": "fora", "Fev": "fora", "Mar": "início", "Abr": "jogos", "Mai": "jogos", "Jun": "jogos", "Jul": "jogos", "Ago": "jogos", "Set": "jogos", "Out": "jogos", "Nov": "encerra", "Dez": "fora"},
-    {"Liga": "Finlândia - Veikkausliiga", "Jan": "fora", "Fev": "fora", "Mar": "fora", "Abr": "início", "Mai": "jogos", "Jun": "jogos", "Jul": "jogos", "Ago": "jogos", "Set": "fase final", "Out": "fase final", "Nov": "fora", "Dez": "fora"},
-    {"Liga": "Irlanda - Premier Division", "Jan": "fora", "Fev": "início", "Mar": "jogos", "Abr": "jogos", "Mai": "jogos", "Jun": "jogos", "Jul": "jogos", "Ago": "jogos", "Set": "jogos", "Out": "encerra", "Nov": "fora", "Dez": "fora"},
-    {"Liga": "Inglaterra - Premier League", "Jan": "jogos", "Fev": "jogos", "Mar": "jogos", "Abr": "jogos", "Mai": "encerra", "Jun": "fora", "Jul": "fora", "Ago": "início", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos"},
-    {"Liga": "Espanha - La Liga", "Jan": "jogos", "Fev": "jogos", "Mar": "jogos", "Abr": "jogos", "Mai": "encerra", "Jun": "fora", "Jul": "fora", "Ago": "início", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos"},
-    {"Liga": "Itália - Série A", "Jan": "jogos", "Fev": "jogos", "Mar": "jogos", "Abr": "jogos", "Mai": "encerra", "Jun": "fora", "Jul": "fora", "Ago": "início", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos"},
-    {"Liga": "Alemanha - Bundesliga", "Jan": "jogos", "Fev": "jogos", "Mar": "jogos", "Abr": "jogos", "Mai": "encerra", "Jun": "fora", "Jul": "fora", "Ago": "início", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos"},
-    {"Liga": "França - Ligue 1", "Jan": "jogos", "Fev": "jogos", "Mar": "jogos", "Abr": "jogos", "Mai": "encerra", "Jun": "fora", "Jul": "fora", "Ago": "início", "Set": "jogos", "Out": "jogos", "Nov": "jogos", "Dez": "jogos"},
+    {"Liga": "Brasileirão Série A", "Observação": "Use somente Série A. Não misture estaduais, Copa do Brasil, Série B, Sub-20 ou feminino."},
+    {"Liga": "Argentina - Primera Division", "Observação": "Use somente Primera División/Liga Profesional principal. Não misture Primera Nacional, copa ou reservas."},
+    {"Liga": "EUA - MLS", "Observação": "Use somente MLS principal. Não use MLS Next Pro, times II ou reservas."},
+    {"Liga": "México - Liga MX", "Observação": "Use somente Liga MX principal. Não misture Expansión, Sub-23 ou feminino."},
+    {"Liga": "Japão - J1 League", "Observação": "Use somente J1. Não misture J2, J3, Copa da Liga ou Copa do Imperador."},
+    {"Liga": "China - Super League", "Observação": "Use somente Super League principal."},
+    {"Liga": "Suécia - Allsvenskan", "Observação": "Use somente Allsvenskan. Não usar Ettan/Division 1."},
+    {"Liga": "Noruega - Eliteserien", "Observação": "Use somente Eliteserien. Não usar OBOS-ligaen."},
+    {"Liga": "Finlândia - Veikkausliiga", "Observação": "Use somente Veikkausliiga. Não usar Ykkösliiga/Ykkönen."},
+    {"Liga": "Irlanda - Premier Division", "Observação": "Use somente Premier Division. Não usar First Division ou copas."},
+    {"Liga": "Inglaterra - Premier League", "Observação": "Use somente Premier League. Não usar copas ou Championship."},
+    {"Liga": "Inglaterra - Championship", "Observação": "Use somente Championship."},
+    {"Liga": "Espanha - La Liga", "Observação": "Use somente La Liga."},
+    {"Liga": "Espanha - Segunda Divisão", "Observação": "Use somente Segunda División."},
+    {"Liga": "Itália - Série A", "Observação": "Use somente Serie A."},
+    {"Liga": "Itália - Série B", "Observação": "Use somente Serie B."},
+    {"Liga": "Alemanha - Bundesliga", "Observação": "Use somente Bundesliga."},
+    {"Liga": "Alemanha - 2. Bundesliga", "Observação": "Use somente 2. Bundesliga."},
+    {"Liga": "França - Ligue 1", "Observação": "Use somente Ligue 1."},
+    {"Liga": "Portugal - Primeira Liga", "Observação": "Use somente Primeira Liga."},
+    {"Liga": "Holanda - Eredivisie", "Observação": "Use somente Eredivisie."},
+    {"Liga": "Bélgica - Pro League", "Observação": "Use somente Pro League principal."},
+    {"Liga": "Turquia - Super Lig", "Observação": "Use somente Süper Lig."},
+    {"Liga": "Grécia - Super League", "Observação": "Use somente Super League Greece principal."},
 ]
-
 
 # ============================================================
 # UTILITÁRIOS
 # ============================================================
 
-def dinheiro(valor: float) -> str:
-    try:
-        return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except Exception:
-        return "R$ 0,00"
+def garantir_logs() -> None:
+    os.makedirs("logs", exist_ok=True)
 
 
-def numero(valor: float, casas: int = 2) -> str:
-    try:
-        return f"{float(valor):.{casas}f}".replace(".", ",")
-    except Exception:
-        return "0,00"
-
-
-def porcentagem(valor: float, casas: int = 1) -> str:
-    try:
-        return f"{float(valor) * 100:.{casas}f}%".replace(".", ",")
-    except Exception:
-        return "0,0%"
-
-
-def texto_para_float(valor: Any) -> Optional[float]:
+def texto_para_float(valor) -> Optional[float]:
     if valor is None:
         return None
-    txt = str(valor).strip().replace("R$", "").replace(" ", "")
-    if not txt:
+    txt = str(valor).strip().replace("R$", "").replace("%", "").replace(" ", "")
+    if txt == "":
         return None
     try:
         if "," in txt and "." in txt:
@@ -341,322 +334,584 @@ def texto_para_float(valor: Any) -> Optional[float]:
         return None
 
 
-def odd_valida(odd: Optional[float]) -> bool:
-    return odd is not None and np.isfinite(float(odd)) and float(odd) > 1.01
+def odd_valida(odd) -> bool:
+    x = texto_para_float(odd)
+    return x is not None and x > 1.01 and np.isfinite(x)
 
 
-def safe_div(a: float, b: float, default: float = 0.0) -> float:
+def fmt_dinheiro(valor: float) -> str:
     try:
-        if b == 0 or not np.isfinite(b):
-            return default
-        return float(a) / float(b)
+        return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
-        return default
+        return "R$ 0,00"
 
 
-def media(serie: pd.Series, default: float = 0.0) -> float:
+def fmt_pct(valor: float, casas: int = 2) -> str:
+    try:
+        return f"{float(valor) * 100:.{casas}f}%".replace(".", ",")
+    except Exception:
+        return "0,00%"
+
+
+def fmt_num(valor: float, casas: int = 2) -> str:
+    try:
+        return f"{float(valor):.{casas}f}".replace(".", ",")
+    except Exception:
+        return "0,00"
+
+
+def remover_colunas_duplicadas(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    base = df.copy()
+    base.columns = [str(c).strip() for c in base.columns]
+    base = base.loc[:, ~pd.Index(base.columns).duplicated(keep="first")]
+    return base
+
+
+def normalizar_colunas(df: pd.DataFrame, colunas: List[str]) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=colunas)
+    base = remover_colunas_duplicadas(df)
+    for col in colunas:
+        if col not in base.columns:
+            base[col] = ""
+    return base[colunas].fillna("")
+
+
+def media_simples(serie: pd.Series, padrao: float) -> float:
     try:
         s = pd.to_numeric(serie, errors="coerce").dropna()
-        if len(s) == 0:
-            return float(default)
+        if s.empty:
+            return float(padrao)
         return float(s.mean())
     except Exception:
-        return float(default)
+        return float(padrao)
 
 
-def taxa(condicao: pd.Series) -> float:
-    try:
-        if len(condicao) == 0:
-            return 0.0
-        return float(pd.Series(condicao).astype(bool).mean())
-    except Exception:
-        return 0.0
-
-
-def clamp(x: float, a: float, b: float) -> float:
-    try:
-        return float(np.clip(float(x), float(a), float(b)))
-    except Exception:
-        return float(a)
-
-
-def now_str() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def garantir_logs() -> None:
-    os.makedirs("logs", exist_ok=True)
-
+def nome_selecao(mercado: str, time_casa: str, time_fora: str) -> str:
+    mapa = {
+        "Vitória Casa": time_casa,
+        "Empate": "Empate",
+        "Vitória Fora": time_fora,
+        "Mais de 2.5 gols": "Mais de 2.5 gols",
+        "Menos de 2.5 gols": "Menos de 2.5 gols",
+        "Ambos marcam - Sim": "Sim",
+        "Ambos marcam - Não": "Não",
+    }
+    return mapa.get(mercado, mercado)
 
 # ============================================================
-# DADOS
+# DADOS HISTÓRICOS
 # ============================================================
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def carregar_base(url: str, janela: int) -> pd.DataFrame:
+@st.cache_data(ttl=3600, show_spinner=False)
+def carregar_dados_liga(url: str, janela: int = 0) -> pd.DataFrame:
+    """
+    Carrega a base da liga.
+
+    janela = 0 significa: usa todos os jogos disponíveis no CSV,
+    que é o comportamento mais fiel à planilha original.
+    """
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
         r.raise_for_status()
         df = pd.read_csv(io.StringIO(r.text))
         df = df.rename(columns={"HomeTeam": "Home", "AwayTeam": "Away", "FTHG": "HG", "FTAG": "AG"})
-        if not all(c in df.columns for c in ["Home", "Away", "HG", "AG"]):
+        obrigatorias = ["Home", "Away", "HG", "AG"]
+        if not all(c in df.columns for c in obrigatorias):
             return pd.DataFrame()
-        df = df.dropna(subset=["Home", "Away", "HG", "AG"]).copy()
+        df = df.dropna(subset=obrigatorias).copy()
         df["HG"] = pd.to_numeric(df["HG"], errors="coerce")
         df["AG"] = pd.to_numeric(df["AG"], errors="coerce")
-        df = df.dropna(subset=["HG", "AG"]).copy()
+        df = df.dropna(subset=["HG", "AG"])
         if "Date" in df.columns:
             df["DataTemp"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
-            df = df.sort_values(["DataTemp"], kind="mergesort")
-        df = df.reset_index(drop=True)
-        df["JogoID"] = np.arange(len(df))
-        janela = int(np.clip(int(janela), 80, 1500))
-        return df.tail(janela).reset_index(drop=True)
+            df = df.sort_values("DataTemp", kind="mergesort")
+
+        try:
+            janela_int = int(janela)
+        except Exception:
+            janela_int = 0
+
+        if janela_int and janela_int > 0:
+            janela_int = int(np.clip(janela_int, 40, 1500))
+            df = df.tail(janela_int)
+
+        return df.reset_index(drop=True)
     except Exception:
         return pd.DataFrame()
 
 
-def jogos_do_time(df: pd.DataFrame, time: str, mando: str = "geral") -> pd.DataFrame:
-    if mando == "casa":
-        out = df[df["Home"] == time].copy()
-        out["GF"] = out["HG"]
-        out["GA"] = out["AG"]
-        out["Local"] = "Casa"
-    elif mando == "fora":
-        out = df[df["Away"] == time].copy()
-        out["GF"] = out["AG"]
-        out["GA"] = out["HG"]
-        out["Local"] = "Fora"
-    else:
-        casa = df[df["Home"] == time].copy()
-        casa["GF"] = casa["HG"]
-        casa["GA"] = casa["AG"]
-        casa["Local"] = "Casa"
-        fora = df[df["Away"] == time].copy()
-        fora["GF"] = fora["AG"]
-        fora["GA"] = fora["HG"]
-        fora["Local"] = "Fora"
-        out = pd.concat([casa, fora], ignore_index=True)
-    if out.empty:
-        return out
-    if "DataTemp" in out.columns:
-        out = out.sort_values(["DataTemp", "JogoID"], kind="mergesort")
-    else:
-        out = out.sort_values("JogoID", kind="mergesort")
-    return out.reset_index(drop=True)
+def rotulo_janela(janela: int) -> str:
+    try:
+        janela = int(janela)
+    except Exception:
+        janela = 0
+    if janela <= 0:
+        return "Temporada inteira / todos os jogos do CSV"
+    return f"Últimos {janela} jogos"
 
 
-def perfil_time(jogos: pd.DataFrame, n: int = 10) -> Dict[str, float]:
-    base = jogos.tail(n).copy()
-    if base.empty:
-        return {
-            "jogos": 0, "gf_med": 0.0, "ga_med": 0.0, "total_med": 0.0,
-            "over25": 0.0, "btts": 0.0,
-            "marcou": 0.0, "zerou": 0.0, "clean": 0.0,
-            "fez2": 0.0, "fez3": 0.0, "sofreu2": 0.0, "sofreu3": 0.0,
-            "saldo_med": 0.0,
-        }
-    gf = pd.to_numeric(base["GF"], errors="coerce").fillna(0)
-    ga = pd.to_numeric(base["GA"], errors="coerce").fillna(0)
-    total = gf + ga
-    return {
-        "jogos": int(len(base)),
-        "gf_med": float(gf.mean()),
-        "ga_med": float(ga.mean()),
-        "total_med": float(total.mean()),
-        "over25": taxa(total >= 3),
-        "btts": taxa((gf >= 1) & (ga >= 1)),
-        "marcou": taxa(gf >= 1),
-        "zerou": taxa(gf == 0),
-        "clean": taxa(ga == 0),
-        "fez2": taxa(gf >= 2),
-        "fez3": taxa(gf >= 3),
-        "sofreu2": taxa(ga >= 2),
-        "sofreu3": taxa(ga >= 3),
-        "saldo_med": float((gf - ga).mean()),
-    }
-
-
-def metricas_liga(df: pd.DataFrame) -> Dict[str, float]:
-    hg = pd.to_numeric(df["HG"], errors="coerce").fillna(0)
-    ag = pd.to_numeric(df["AG"], errors="coerce").fillna(0)
-    total = hg + ag
-    return {
-        "home_avg": max(0.20, float(hg.mean())),
-        "away_avg": max(0.20, float(ag.mean())),
-        "total_avg": max(0.40, float(total.mean())),
-        "over25": taxa(total >= 3),
-        "btts": taxa((hg >= 1) & (ag >= 1)),
-    }
-
-
-def calcular_contexto(df: pd.DataFrame, time_casa: str, time_fora: str) -> Dict[str, Any]:
-    liga = metricas_liga(df)
-
-    casa_home = jogos_do_time(df, time_casa, "casa")
-    fora_away = jogos_do_time(df, time_fora, "fora")
-    casa_all = jogos_do_time(df, time_casa, "geral")
-    fora_all = jogos_do_time(df, time_fora, "geral")
-
-    ph5 = perfil_time(casa_all, 5)
-    pa5 = perfil_time(fora_all, 5)
-    ph10 = perfil_time(casa_all, 10)
-    pa10 = perfil_time(fora_all, 10)
-    ph_mando = perfil_time(casa_home, 10)
-    pa_mando = perfil_time(fora_away, 10)
-
-    gf_home = media(casa_home["HG"], liga["home_avg"])
-    ga_home = media(casa_home["AG"], liga["away_avg"])
-    gf_away = media(fora_away["AG"], liga["away_avg"])
-    ga_away = media(fora_away["HG"], liga["home_avg"])
-
-    atk_home = safe_div(gf_home, liga["home_avg"], 1.0)
-    def_home = safe_div(ga_home, liga["away_avg"], 1.0)
-    atk_away = safe_div(gf_away, liga["away_avg"], 1.0)
-    def_away = safe_div(ga_away, liga["home_avg"], 1.0)
-
-    exp_home_base = liga["home_avg"] * atk_home * def_away
-    exp_away_base = liga["away_avg"] * atk_away * def_home
-
-    # Recorte recente cruzado: ataque recente do time + defesa recente do adversário
-    # Sem inventar milagre: se tem pouca amostra, o peso recente cai.
-    amostra_min = min(len(casa_home), len(fora_away))
-    confianca_amostra = clamp(amostra_min / 8.0, 0.25, 1.0)
-
-    rec_home = 0.42 * ph5["gf_med"] + 0.28 * ph_mando["gf_med"] + 0.30 * pa_mando["ga_med"]
-    rec_away = 0.42 * pa5["gf_med"] + 0.28 * pa_mando["gf_med"] + 0.30 * ph_mando["ga_med"]
-
-    peso_recente = 0.42 * confianca_amostra
-    exp_home = (1.0 - peso_recente) * exp_home_base + peso_recente * rec_home
-    exp_away = (1.0 - peso_recente) * exp_away_base + peso_recente * rec_away
-
-    exp_home = clamp(exp_home, 0.05, 5.50)
-    exp_away = clamp(exp_away, 0.05, 5.50)
-
-    total = exp_home + exp_away
-    maior = max(exp_home, exp_away)
-    menor = min(exp_home, exp_away)
-
-    # Índices simples, transparentes e auditáveis.
-    fogo_casa = (
-        0.28 * ph5["fez2"] +
-        0.18 * ph5["fez3"] +
-        0.20 * pa_mando["sofreu2"] +
-        0.14 * pa_mando["sofreu3"] +
-        0.20 * clamp(exp_home / 2.20, 0, 1)
-    )
-    fogo_fora = (
-        0.28 * pa5["fez2"] +
-        0.18 * pa5["fez3"] +
-        0.20 * ph_mando["sofreu2"] +
-        0.14 * ph_mando["sofreu3"] +
-        0.20 * clamp(exp_away / 2.20, 0, 1)
-    )
-
-    fogo_jogo = clamp(
-        0.30 * clamp(total / 3.20, 0, 1)
-        + 0.20 * ((ph5["over25"] + pa5["over25"]) / 2)
-        + 0.15 * ((ph10["over25"] + pa10["over25"]) / 2)
-        + 0.20 * max(fogo_casa, fogo_fora)
-        + 0.15 * liga["over25"],
-        0,
-        1,
-    )
-
-    risco_goleada = clamp(
-        0.33 * clamp(maior / 2.35, 0, 1)
-        + 0.17 * clamp((maior - menor) / 1.55, 0, 1)
-        + 0.18 * max(ph5["fez3"], pa5["fez3"])
-        + 0.17 * max(ph_mando["fez2"], pa_mando["fez2"])
-        + 0.15 * max(pa_mando["sofreu3"], ph_mando["sofreu3"]),
-        0,
-        1,
-    )
-
-    under_perigo = clamp(
-        0.28 * clamp((total - 2.05) / 1.15, 0, 1)
-        + 0.25 * fogo_jogo
-        + 0.24 * risco_goleada
-        + 0.13 * max(fogo_casa, fogo_fora)
-        + 0.10 * max(pa_mando["sofreu2"], ph_mando["sofreu2"]),
-        0,
-        1,
-    )
-
-    return {
-        "liga": liga,
-        "amostra_casa_home": int(len(casa_home)),
-        "amostra_fora_away": int(len(fora_away)),
-        "amostra_min": int(amostra_min),
-        "confianca_amostra": float(confianca_amostra),
-        "gols_casa": float(exp_home),
-        "gols_fora": float(exp_away),
-        "total_gols": float(total),
-        "maior_gols": float(maior),
-        "menor_gols": float(menor),
-        "casa_5": ph5,
-        "fora_5": pa5,
-        "casa_10": ph10,
-        "fora_10": pa10,
-        "casa_mando": ph_mando,
-        "fora_mando": pa_mando,
-        "fogo_casa": float(fogo_casa),
-        "fogo_fora": float(fogo_fora),
-        "fogo_jogo": float(fogo_jogo),
-        "risco_goleada": float(risco_goleada),
-        "under_perigo": float(under_perigo),
-    }
-
-
-def matriz_poisson(exp_home: float, exp_away: float, tamanho: int = 15) -> np.ndarray:
+def matriz_poisson(gols_casa: float, gols_fora: float, tamanho: int = 15) -> np.ndarray:
     matriz = np.zeros((tamanho, tamanho), dtype=float)
-    for h in range(tamanho):
-        ph = poisson.pmf(h, exp_home)
-        for a in range(tamanho):
-            matriz[h, a] = ph * poisson.pmf(a, exp_away)
-    soma = matriz.sum()
+    for g_casa in range(tamanho):
+        for g_fora in range(tamanho):
+            matriz[g_casa, g_fora] = poisson.pmf(g_casa, gols_casa) * poisson.pmf(g_fora, gols_fora)
+    soma = float(matriz.sum())
     if soma > 0:
-        matriz = matriz / soma
+        matriz /= soma
     return matriz
 
 
-def calcular_probabilidades(contexto: Dict[str, Any]) -> Dict[str, float]:
-    gh = float(contexto["gols_casa"])
-    ga = float(contexto["gols_fora"])
-    m = matriz_poisson(gh, ga, tamanho=15)
-    idx = np.arange(m.shape[0])
-    total_grid = np.add.outer(idx, idx)
+def calcular_planilha_pura(df: pd.DataFrame, time_casa: str, time_fora: str) -> Dict[str, object]:
+    media_gols_casa_liga = max(0.20, float(pd.to_numeric(df["HG"], errors="coerce").mean()))
+    media_gols_fora_liga = max(0.20, float(pd.to_numeric(df["AG"], errors="coerce").mean()))
 
-    p_home = float(np.tril(m, -1).sum())
-    p_draw = float(np.diag(m).sum())
-    p_away = float(np.triu(m, 1).sum())
-    p_over = float(m[total_grid >= 3].sum())
-    p_under = float(m[total_grid <= 2].sum())
-    p_btts = float(m[1:, 1:].sum())
-    p_btts_no = max(0.0, 1.0 - p_btts)
+    jogos_casa = df[df["Home"].astype(str) == str(time_casa)].copy()
+    jogos_fora = df[df["Away"].astype(str) == str(time_fora)].copy()
 
-    total_sem_empate = p_home + p_away
+    gols_feitos_casa = media_simples(jogos_casa["HG"], media_gols_casa_liga)
+    gols_sofridos_casa = media_simples(jogos_casa["AG"], media_gols_fora_liga)
+    gols_feitos_fora = media_simples(jogos_fora["AG"], media_gols_fora_liga)
+    gols_sofridos_fora = media_simples(jogos_fora["HG"], media_gols_casa_liga)
+
+    forca_ataque_casa = gols_feitos_casa / media_gols_casa_liga if media_gols_casa_liga else 1.0
+    forca_defesa_casa = gols_sofridos_casa / media_gols_fora_liga if media_gols_fora_liga else 1.0
+    forca_ataque_fora = gols_feitos_fora / media_gols_fora_liga if media_gols_fora_liga else 1.0
+    forca_defesa_fora = gols_sofridos_fora / media_gols_casa_liga if media_gols_casa_liga else 1.0
+
+    gols_esperados_casa = media_gols_casa_liga * forca_ataque_casa * forca_defesa_fora
+    gols_esperados_fora = media_gols_fora_liga * forca_ataque_fora * forca_defesa_casa
+    gols_esperados_casa = float(np.clip(gols_esperados_casa, 0.05, 5.00))
+    gols_esperados_fora = float(np.clip(gols_esperados_fora, 0.05, 5.00))
+
+    matriz = matriz_poisson(gols_esperados_casa, gols_esperados_fora, tamanho=15)
+    idx = np.arange(matriz.shape[0])
+    soma_gols = np.add.outer(idx, idx)
+
+    prob_casa = float(np.tril(matriz, -1).sum())
+    prob_empate = float(np.diag(matriz).sum())
+    prob_fora = float(np.triu(matriz, 1).sum())
+    prob_over25 = float(matriz[soma_gols >= 3].sum())
+    prob_under25 = float(matriz[soma_gols <= 2].sum())
+    prob_btts_sim = float(matriz[1:, 1:].sum())
+    prob_btts_nao = float(1.0 - prob_btts_sim)
+
+    probabilidades = {
+        "Vitória Casa": prob_casa,
+        "Empate": prob_empate,
+        "Vitória Fora": prob_fora,
+        "Mais de 2.5 gols": prob_over25,
+        "Menos de 2.5 gols": prob_under25,
+        "Ambos marcam - Sim": prob_btts_sim,
+        "Ambos marcam - Não": prob_btts_nao,
+    }
+
+    cantos = calcular_cantos_se_existir(df, time_casa, time_fora)
+
     return {
-        "Vitória Casa": p_home,
-        "Empate": p_draw,
-        "Vitória Fora": p_away,
-        "Casa ou Empate": p_home + p_draw,
-        "Fora ou Empate": p_away + p_draw,
-        "Empate Anula Casa": safe_div(p_home, total_sem_empate, 0.0),
-        "Empate Anula Fora": safe_div(p_away, total_sem_empate, 0.0),
-        "Mais de 2.5 gols": p_over,
-        "Menos de 2.5 gols": p_under,
-        "Ambos marcam - Sim": p_btts,
-        "Ambos marcam - Não": p_btts_no,
+        "media_gols_casa_liga": media_gols_casa_liga,
+        "media_gols_fora_liga": media_gols_fora_liga,
+        "jogos_casa": int(len(jogos_casa)),
+        "jogos_fora": int(len(jogos_fora)),
+        "amostra_minima": int(min(len(jogos_casa), len(jogos_fora))),
+        "gols_feitos_casa": gols_feitos_casa,
+        "gols_sofridos_casa": gols_sofridos_casa,
+        "gols_feitos_fora": gols_feitos_fora,
+        "gols_sofridos_fora": gols_sofridos_fora,
+        "forca_ataque_casa": forca_ataque_casa,
+        "forca_defesa_casa": forca_defesa_casa,
+        "forca_ataque_fora": forca_ataque_fora,
+        "forca_defesa_fora": forca_defesa_fora,
+        "gols_esperados_casa": gols_esperados_casa,
+        "gols_esperados_fora": gols_esperados_fora,
+        "probabilidades": probabilidades,
+        "cantos": cantos,
     }
 
 
+def calcular_cantos_se_existir(df: pd.DataFrame, time_casa: str, time_fora: str) -> Optional[Dict[str, float]]:
+    if not all(c in df.columns for c in ["HC", "AC"]):
+        return None
+    try:
+        base = df.dropna(subset=["HC", "AC"]).copy()
+        if base.empty:
+            return None
+        base["HC"] = pd.to_numeric(base["HC"], errors="coerce")
+        base["AC"] = pd.to_numeric(base["AC"], errors="coerce")
+        base = base.dropna(subset=["HC", "AC"])
+        if base.empty:
+            return None
+
+        media_hc = max(0.20, float(base["HC"].mean()))
+        media_ac = max(0.20, float(base["AC"].mean()))
+        jogos_casa = base[base["Home"].astype(str) == str(time_casa)].copy()
+        jogos_fora = base[base["Away"].astype(str) == str(time_fora)].copy()
+
+        cantos_feitos_casa = media_simples(jogos_casa["HC"], media_hc)
+        cantos_sofridos_casa = media_simples(jogos_casa["AC"], media_ac)
+        cantos_feitos_fora = media_simples(jogos_fora["AC"], media_ac)
+        cantos_sofridos_fora = media_simples(jogos_fora["HC"], media_hc)
+
+        forca_cantos_casa = cantos_feitos_casa / media_hc if media_hc else 1.0
+        defesa_cantos_fora = cantos_sofridos_fora / media_hc if media_hc else 1.0
+        forca_cantos_fora = cantos_feitos_fora / media_ac if media_ac else 1.0
+        defesa_cantos_casa = cantos_sofridos_casa / media_ac if media_ac else 1.0
+
+        prev_cantos_casa = media_hc * forca_cantos_casa * defesa_cantos_fora
+        prev_cantos_fora = media_ac * forca_cantos_fora * defesa_cantos_casa
+        return {
+            "cantos_casa": float(prev_cantos_casa),
+            "cantos_fora": float(prev_cantos_fora),
+            "cantos_total": float(prev_cantos_casa + prev_cantos_fora),
+        }
+    except Exception:
+        return None
+
 # ============================================================
-# ODDS
+# STAKE E VALOR
+# ============================================================
+
+def kelly_fracionado(prob: float, odd: float, fracao: float) -> float:
+    try:
+        prob = float(prob)
+        odd = float(odd)
+        ev = prob * odd - 1.0
+        if prob <= 0 or odd <= 1.01 or ev <= 0:
+            return 0.0
+        kelly_cheio = ev / (odd - 1.0)
+        return float(max(0.0, kelly_cheio * fracao))
+    except Exception:
+        return 0.0
+
+
+def avaliar_valor_planilha(
+    probabilidades: Dict[str, float],
+    odds: Dict[str, float],
+    banca: float,
+    fracao_kelly: float,
+    margem_minima: float,
+    teto_por_entrada: float,
+    teto_por_jogo: float,
+    amostra_ok: bool,
+    motivo_bloqueio_operacional: str = "",
+) -> pd.DataFrame:
+    linhas = []
+    for mercado in MERCADOS_NUCLEO:
+        prob = float(probabilidades.get(mercado, 0.0))
+        odd = texto_para_float(odds.get(mercado))
+        if odd is None or not odd_valida(odd) or prob <= 0:
+            continue
+
+        odd_justa = 1.0 / prob if prob > 0 else np.inf
+        margem = (prob * odd) - 1.0
+        kelly = kelly_fracionado(prob, odd, fracao_kelly)
+        stake_pct_original = min(kelly, teto_por_entrada)
+        tem_valor = margem > margem_minima
+
+        if not amostra_ok:
+            veredito = "BLOQUEADO"
+            entrada_pct = 0.0
+            motivo = motivo_bloqueio_operacional or "amostra mínima insuficiente"
+        elif tem_valor:
+            veredito = "VALOR (+EV)"
+            entrada_pct = stake_pct_original
+            motivo = "valor positivo pela lógica da planilha"
+        else:
+            veredito = "SEM VALOR"
+            entrada_pct = 0.0
+            motivo = "odd real abaixo ou muito próxima da odd justa"
+
+        linhas.append({
+            "Mercado": mercado,
+            "Probabilidade": prob,
+            "Odd justa": odd_justa,
+            "Odd real": float(odd),
+            "Margem +EV": margem,
+            "Veredito": veredito,
+            "Stake %": entrada_pct,
+            "Entrada R$": float(banca) * entrada_pct if banca > 0 else 0.0,
+            "Motivo": motivo,
+        })
+
+    df = pd.DataFrame(linhas)
+    if df.empty:
+        return df
+
+    mask_ev = df["Veredito"].eq("VALOR (+EV)")
+    total_pct = float(df.loc[mask_ev, "Stake %"].sum())
+    if total_pct > teto_por_jogo > 0:
+        fator = teto_por_jogo / total_pct
+        df.loc[mask_ev, "Stake %"] = df.loc[mask_ev, "Stake %"] * fator
+        df.loc[mask_ev, "Entrada R$"] = df.loc[mask_ev, "Stake %"] * float(banca)
+        df.loc[mask_ev, "Motivo"] = df.loc[mask_ev, "Motivo"] + " | stake ajustada proporcionalmente pelo limite total do jogo"
+
+    ordem = {"VALOR (+EV)": 0, "SEM VALOR": 1, "BLOQUEADO": 2}
+    df["_ordem"] = df["Veredito"].map(ordem).fillna(9)
+    df = df.sort_values(["_ordem", "Margem +EV"], ascending=[True, False]).drop(columns=["_ordem"]).reset_index(drop=True)
+    return df
+
+
+
+def faixa_odd(odd: float) -> str:
+    try:
+        o = float(odd)
+    except Exception:
+        return "-"
+    if o < 1.50:
+        return "1.01–1.49"
+    if o < 2.00:
+        return "1.50–1.99"
+    if o < 3.00:
+        return "2.00–2.99"
+    if o < 5.00:
+        return "3.00–4.99"
+    return "5.00+"
+
+
+def tabela_chi_poisson(serie: pd.Series, rotulo: str) -> Tuple[pd.DataFrame, Dict[str, object]]:
+    gols = pd.to_numeric(serie, errors="coerce").dropna().astype(int)
+    if gols.empty:
+        return pd.DataFrame(), {"rotulo": rotulo, "n": 0, "media": np.nan, "estatistica": np.nan, "p_valor": np.nan, "aderencia": "sem dados"}
+
+    n = int(len(gols))
+    media = float(gols.mean())
+    categorias = [0, 1, 2, 3, 4, 5, "6+"]
+    observados = [int((gols == k).sum()) for k in range(6)] + [int((gols >= 6).sum())]
+    esperados = [float(poisson.pmf(k, media) * n) for k in range(6)]
+    esperados.append(float((1.0 - poisson.cdf(5, media)) * n))
+
+    # Ajuste numérico para as somas baterem exatamente.
+    soma_esp = sum(esperados)
+    if soma_esp > 0:
+        esperados = [e * n / soma_esp for e in esperados]
+
+    tabela = pd.DataFrame({
+        "Categoria de gols": categorias,
+        "Observado": observados,
+        "Esperado Poisson": esperados,
+        "Diferença": [o - e for o, e in zip(observados, esperados)],
+    })
+
+    try:
+        stat = float(sum(((o - e) ** 2) / e for o, e in zip(observados, esperados) if e > 0))
+        # Como a média foi estimada pela amostra, usamos k - 1 - 1 graus de liberdade.
+        gl = max(1, len(categorias) - 2)
+        p_valor = float(chi2.sf(stat, gl))
+    except Exception:
+        stat, p_valor = np.nan, np.nan
+
+    if n < 80:
+        aderencia = "amostra pequena"
+    elif not np.isfinite(p_valor):
+        aderencia = "indefinido"
+    elif p_valor >= 0.05:
+        aderencia = "Poisson aceitável"
+    else:
+        aderencia = "Poisson ruim/instável"
+
+    stats = {"rotulo": rotulo, "n": n, "media": media, "estatistica": stat, "p_valor": p_valor, "aderencia": aderencia}
+    return tabela, stats
+
+
+def diagnostico_poisson_liga(df: pd.DataFrame) -> Dict[str, object]:
+    casa_tab, casa_stats = tabela_chi_poisson(df["HG"], "Gols do mandante")
+    fora_tab, fora_stats = tabela_chi_poisson(df["AG"], "Gols do visitante")
+    return {
+        "casa_tabela": casa_tab,
+        "fora_tabela": fora_tab,
+        "casa_stats": casa_stats,
+        "fora_stats": fora_stats,
+    }
+
+
+def classificar_confianca_estimativa(modelo: Dict[str, object], resultados: pd.DataFrame) -> Dict[str, object]:
+    amostra = int(modelo.get("amostra_minima", 0))
+    margem_max = 0.0
+    if resultados is not None and not resultados.empty and "Margem +EV" in resultados.columns:
+        evs = pd.to_numeric(resultados["Margem +EV"], errors="coerce").dropna()
+        if not evs.empty:
+            margem_max = float(evs.max())
+
+    pontos = 0
+    motivos = []
+
+    if amostra >= 8:
+        pontos += 2
+        motivos.append("amostra casa/fora boa")
+    elif amostra >= 5:
+        pontos += 1
+        motivos.append("amostra casa/fora mínima")
+    else:
+        motivos.append("amostra baixa")
+
+    if margem_max >= 0.15:
+        pontos += 2
+        motivos.append("margem +EV forte")
+    elif margem_max > 0.00:
+        pontos += 1
+        motivos.append("margem +EV positiva, mas não larga")
+    else:
+        motivos.append("sem margem positiva relevante")
+
+    total_esperado = float(modelo.get("gols_esperados_casa", 0.0)) + float(modelo.get("gols_esperados_fora", 0.0))
+    if 1.20 <= total_esperado <= 4.20:
+        pontos += 1
+        motivos.append("gols esperados dentro de faixa normal")
+    else:
+        motivos.append("gols esperados em faixa extrema")
+
+    if pontos >= 4:
+        nivel = "Boa"
+    elif pontos >= 2:
+        nivel = "Média"
+    else:
+        nivel = "Baixa"
+
+    return {"nível": nivel, "pontos": pontos, "motivos": "; ".join(motivos)}
+
+
+def coluna_se_existir(df: pd.DataFrame, *candidatas: str) -> Optional[str]:
+    for col in candidatas:
+        if col in df.columns:
+            return col
+    return None
+
+
+def media_col(df: pd.DataFrame, col: Optional[str], padrao: float = 0.0) -> float:
+    if not col or col not in df.columns or df.empty:
+        return float(padrao)
+    s = pd.to_numeric(df[col], errors="coerce").dropna()
+    if s.empty:
+        return float(padrao)
+    return float(s.mean())
+
+
+def calcular_scout_opcional(df: pd.DataFrame, time_casa: str, time_fora: str) -> Tuple[pd.DataFrame, List[str]]:
+    avisos: List[str] = []
+    base = df.copy()
+    jogos_casa = base[base["Home"].astype(str) == str(time_casa)].copy()
+    jogos_fora = base[base["Away"].astype(str) == str(time_fora)].copy()
+
+    col_hs, col_as = coluna_se_existir(base, "HS"), coluna_se_existir(base, "AS")
+    col_hst, col_ast = coluna_se_existir(base, "HST"), coluna_se_existir(base, "AST")
+    col_hc, col_ac = coluna_se_existir(base, "HC"), coluna_se_existir(base, "AC")
+    col_hf, col_af = coluna_se_existir(base, "HF"), coluna_se_existir(base, "AF")
+    col_hy, col_ay = coluna_se_existir(base, "HY"), coluna_se_existir(base, "AY")
+    col_hr, col_ar = coluna_se_existir(base, "HR"), coluna_se_existir(base, "AR")
+
+    linhas = []
+    def add(nome, casa_val, fora_val):
+        linhas.append({"Indicador": nome, f"{time_casa} em casa": casa_val, f"{time_fora} fora": fora_val})
+
+    add("Jogos na amostra", len(jogos_casa), len(jogos_fora))
+    add("Gols feitos", media_col(jogos_casa, "HG"), media_col(jogos_fora, "AG"))
+    add("Gols sofridos", media_col(jogos_casa, "AG"), media_col(jogos_fora, "HG"))
+
+    if col_hs and col_as:
+        chutes_casa = media_col(jogos_casa, col_hs)
+        chutes_fora = media_col(jogos_fora, col_as)
+        add("Finalizações", chutes_casa, chutes_fora)
+        gf_casa = media_col(jogos_casa, "HG")
+        gf_fora = media_col(jogos_fora, "AG")
+        add("Gols / finalização", gf_casa / chutes_casa if chutes_casa > 0 else 0.0, gf_fora / chutes_fora if chutes_fora > 0 else 0.0)
+    else:
+        avisos.append("A base desta liga não trouxe finalizações HS/AS.")
+
+    if col_hst and col_ast:
+        alvo_casa = media_col(jogos_casa, col_hst)
+        alvo_fora = media_col(jogos_fora, col_ast)
+        add("Finalizações no alvo", alvo_casa, alvo_fora)
+        gf_casa = media_col(jogos_casa, "HG")
+        gf_fora = media_col(jogos_fora, "AG")
+        add("Gols / chute no alvo", gf_casa / alvo_casa if alvo_casa > 0 else 0.0, gf_fora / alvo_fora if alvo_fora > 0 else 0.0)
+    else:
+        avisos.append("A base desta liga não trouxe chutes no alvo HST/AST.")
+
+    if col_hc and col_ac:
+        add("Escanteios", media_col(jogos_casa, col_hc), media_col(jogos_fora, col_ac))
+        add("Escanteios sofridos", media_col(jogos_casa, col_ac), media_col(jogos_fora, col_hc))
+    else:
+        avisos.append("A base desta liga não trouxe escanteios HC/AC.")
+
+    if col_hf and col_af:
+        add("Faltas", media_col(jogos_casa, col_hf), media_col(jogos_fora, col_af))
+    if col_hy and col_ay:
+        add("Cartões amarelos", media_col(jogos_casa, col_hy), media_col(jogos_fora, col_ay))
+    if col_hr and col_ar:
+        add("Cartões vermelhos", media_col(jogos_casa, col_hr), media_col(jogos_fora, col_ar))
+
+    tabela = pd.DataFrame(linhas)
+    for col in tabela.columns[1:]:
+        tabela[col] = pd.to_numeric(tabela[col], errors="ignore")
+    return tabela, avisos
+
+
+def resumo_auditoria_avancado(auditoria: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    if auditoria is None or auditoria.empty:
+        return {}
+    base = normalizar_colunas(auditoria, COLUNAS_AUDITORIA).copy()
+    base["Entrada R$"] = pd.to_numeric(base["Entrada R$"], errors="coerce").fillna(0.0)
+    base["Resultado R$"] = pd.to_numeric(base["Resultado R$"], errors="coerce").fillna(0.0)
+    base["Cotação de entrada"] = pd.to_numeric(base["Cotação de entrada"], errors="coerce")
+    base["Status"] = base["Status"].astype(str)
+    fechadas = base[base["Status"].isin(["Green", "Red", "Void", "Cashout"])].copy()
+    if fechadas.empty:
+        return {}
+
+    fechadas["Green_bin"] = (fechadas["Status"] == "Green").astype(int)
+    fechadas["Red_bin"] = (fechadas["Status"] == "Red").astype(int)
+    fechadas["Faixa odd"] = fechadas["Cotação de entrada"].apply(faixa_odd)
+
+    def agrupar(campo: str) -> pd.DataFrame:
+        g = fechadas.groupby(campo, dropna=False).agg(
+            Entradas=("ID", "count"),
+            Greens=("Green_bin", "sum"),
+            Reds=("Red_bin", "sum"),
+            Apostado=("Entrada R$", "sum"),
+            Resultado=("Resultado R$", "sum"),
+        ).reset_index()
+        g["Taxa acerto"] = np.where((g["Greens"] + g["Reds"]) > 0, g["Greens"] / (g["Greens"] + g["Reds"]), 0.0)
+        g["ROI"] = np.where(g["Apostado"] > 0, g["Resultado"] / g["Apostado"], 0.0)
+        return g.sort_values("Resultado", ascending=False)
+
+    geral = pd.DataFrame([{
+        "Entradas fechadas": len(fechadas),
+        "Greens": int(fechadas["Green_bin"].sum()),
+        "Reds": int(fechadas["Red_bin"].sum()),
+        "Apostado": float(fechadas["Entrada R$"].sum()),
+        "Resultado": float(fechadas["Resultado R$"].sum()),
+        "Taxa acerto": float(fechadas["Green_bin"].sum() / max(1, (fechadas["Green_bin"].sum() + fechadas["Red_bin"].sum()))),
+        "ROI": float(fechadas["Resultado R$"].sum() / max(0.01, fechadas["Entrada R$"].sum())),
+    }])
+
+    return {
+        "geral": geral,
+        "por_mercado": agrupar("Mercado"),
+        "por_liga": agrupar("Liga"),
+        "por_faixa_odd": agrupar("Faixa odd"),
+    }
+
+
+def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    out = df.copy()
+    out["Probabilidade"] = out["Probabilidade"].map(lambda x: fmt_pct(x, 1))
+    out["Odd justa"] = out["Odd justa"].map(lambda x: "-" if not np.isfinite(x) else fmt_num(x, 2))
+    out["Odd real"] = out["Odd real"].map(lambda x: fmt_num(x, 2))
+    out["Margem +EV"] = out["Margem +EV"].map(lambda x: fmt_pct(x, 1))
+    out["Stake %"] = out["Stake %"].map(lambda x: fmt_pct(x, 2))
+    out["Entrada R$"] = out["Entrada R$"].map(fmt_dinheiro)
+    return out
+
+# ============================================================
+# ODDS MANUAIS E API
 # ============================================================
 
 def input_odd(label: str, key: str) -> Optional[float]:
-    txt = st.text_input(label, value="", placeholder="ex: 1,85", key=key)
+    txt = st.text_input(label, value="", placeholder="ex: 2,10", key=key)
     x = texto_para_float(txt)
     return x if odd_valida(x) else None
 
@@ -664,47 +919,38 @@ def input_odd(label: str, key: str) -> Optional[float]:
 def coletar_odds_manuais(prefixo: str) -> Dict[str, float]:
     odds: Dict[str, float] = {}
 
-    st.markdown("### Cotações")
-    st.caption("Preencha só os mercados que você quer analisar. Campo vazio fica fora.")
+    st.markdown("### Cotações da casa")
+    st.caption("Preencha apenas os mercados que você quer avaliar. Campo vazio fica fora da análise.")
 
-    st.markdown("**Resultado seco**")
+    st.markdown("**Resultado final — 1X2**")
     c1, c2, c3 = st.columns(3)
     with c1:
-        odds["Vitória Casa"] = input_odd("Vitória Casa", f"{prefixo}_vc")
+        odds["Vitória Casa"] = input_odd("Vitória Casa", f"{prefixo}_vitoria_casa")
     with c2:
-        odds["Empate"] = input_odd("Empate", f"{prefixo}_emp")
+        odds["Empate"] = input_odd("Empate", f"{prefixo}_empate")
     with c3:
-        odds["Vitória Fora"] = input_odd("Vitória Fora", f"{prefixo}_vf")
+        odds["Vitória Fora"] = input_odd("Vitória Fora", f"{prefixo}_vitoria_fora")
 
     st.markdown("**Gols**")
     c1, c2 = st.columns(2)
     with c1:
-        odds["Mais de 2.5 gols"] = input_odd("Mais de 2.5 gols", f"{prefixo}_over")
+        odds["Mais de 2.5 gols"] = input_odd("Mais de 2.5 gols", f"{prefixo}_over25")
     with c2:
-        odds["Menos de 2.5 gols"] = input_odd("Menos de 2.5 gols", f"{prefixo}_under")
+        odds["Menos de 2.5 gols"] = input_odd("Menos de 2.5 gols", f"{prefixo}_under25")
 
     st.markdown("**Ambos marcam**")
     c1, c2 = st.columns(2)
     with c1:
-        odds["Ambos marcam - Sim"] = input_odd("Ambos marcam - Sim", f"{prefixo}_btts_s")
+        odds["Ambos marcam - Sim"] = input_odd("Ambos marcam - Sim", f"{prefixo}_btts_sim")
     with c2:
-        odds["Ambos marcam - Não"] = input_odd("Ambos marcam - Não", f"{prefixo}_btts_n")
+        odds["Ambos marcam - Não"] = input_odd("Ambos marcam - Não", f"{prefixo}_btts_nao")
 
-    st.markdown("**Proteções — só auditoria/manual, não recomendação automática**")
-    c1, c2 = st.columns(2)
-    with c1:
-        odds["Casa ou Empate"] = input_odd("Casa ou Empate", f"{prefixo}_dc_c")
-        odds["Empate Anula Casa"] = input_odd("Empate Anula Casa", f"{prefixo}_dnb_c")
-    with c2:
-        odds["Fora ou Empate"] = input_odd("Fora ou Empate", f"{prefixo}_dc_f")
-        odds["Empate Anula Fora"] = input_odd("Empate Anula Fora", f"{prefixo}_dnb_f")
-
-    return {k: float(v) for k, v in odds.items() if odd_valida(v)}
+    return {m: float(o) for m, o in odds.items() if odd_valida(o)}
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def buscar_odds_api(chave: str, liga_api: str) -> Optional[List[dict]]:
-    if not chave or not liga_api:
+    if not chave:
         return None
     try:
         url = f"https://api.the-odds-api.com/v4/sports/{liga_api}/odds/"
@@ -723,809 +969,438 @@ def buscar_odds_api(chave: str, liga_api: str) -> Optional[List[dict]]:
         return None
 
 
-def mediana_odds(vals: List[float]) -> Optional[float]:
-    limpos = [float(v) for v in vals if odd_valida(v)]
+def limpar_nome_time(nome: str) -> str:
+    nome = str(nome or "").lower().strip()
+    for termo in [" fc", " cf", " ec", " ac", " sc", " afc", "football club", "soccer club"]:
+        nome = nome.replace(termo, "")
+    return " ".join(nome.split())
+
+
+def casar_time_seguro(nome_api: str, times_csv: List[str], cutoff: float = 0.72) -> Tuple[Optional[str], float]:
+    alvo = limpar_nome_time(nome_api)
+    if not alvo:
+        return None, 0.0
+    candidatos_limpos = {limpar_nome_time(t): t for t in times_csv}
+    if alvo in candidatos_limpos:
+        return candidatos_limpos[alvo], 1.0
+    melhores = difflib.get_close_matches(alvo, list(candidatos_limpos.keys()), n=1, cutoff=cutoff)
+    if not melhores:
+        return None, 0.0
+    score = difflib.SequenceMatcher(None, alvo, melhores[0]).ratio()
+    return candidatos_limpos[melhores[0]], float(score)
+
+
+def mediana(valores: List[float]) -> Optional[float]:
+    limpos = [float(v) for v in valores if odd_valida(v)]
     if not limpos:
         return None
     return float(np.median(limpos))
 
 
-def extrair_odds_api(jogo: dict) -> Dict[str, float]:
-    pools = {
-        "Vitória Casa": [],
-        "Empate": [],
-        "Vitória Fora": [],
-        "Mais de 2.5 gols": [],
-        "Menos de 2.5 gols": [],
-        "Ambos marcam - Sim": [],
-        "Ambos marcam - Não": [],
-    }
-    casa = jogo.get("home_team")
-    fora = jogo.get("away_team")
-
-    for book in jogo.get("bookmakers", []):
-        for market in book.get("markets", []):
-            key = market.get("key")
-            for out in market.get("outcomes", []):
-                nome = out.get("name")
-                odd = texto_para_float(out.get("price"))
-                if not odd_valida(odd):
-                    continue
-                if key == "h2h":
-                    if nome == casa:
-                        pools["Vitória Casa"].append(float(odd))
-                    elif nome == "Draw":
-                        pools["Empate"].append(float(odd))
-                    elif nome == fora:
-                        pools["Vitória Fora"].append(float(odd))
-                elif key == "totals":
-                    try:
-                        point = float(out.get("point", 0))
-                    except Exception:
-                        point = 0
-                    if abs(point - 2.5) < 0.001:
-                        if nome == "Over":
-                            pools["Mais de 2.5 gols"].append(float(odd))
-                        elif nome == "Under":
-                            pools["Menos de 2.5 gols"].append(float(odd))
-                elif key == "btts":
-                    if nome == "Yes":
-                        pools["Ambos marcam - Sim"].append(float(odd))
-                    elif nome == "No":
-                        pools["Ambos marcam - Não"].append(float(odd))
-
-    out: Dict[str, float] = {}
-    for mercado, vals in pools.items():
-        m = mediana_odds(vals)
-        if m is not None:
-            out[mercado] = m
-    return out
+MAPA_BOOKMAKERS = {
+    "Pixbet": ["pixbet", "pix bet"],
+    "Pinnacle": ["pinnacle"],
+    "Bet365": ["bet365", "bet 365"],
+    "Betano": ["betano"],
+    "Superbet": ["superbet", "super bet"],
+    "KTO": ["kto"],
+}
 
 
-def normalizar_nome_time(nome: str) -> str:
-    s = str(nome or "").lower()
-    for token in [" fc", " afc", " cf", " ec", " ac", ".", "-", "_"]:
-        s = s.replace(token, " ")
-    return " ".join(s.split()).strip()
+def bookmaker_corresponde(book: dict, casa_alvo: str) -> bool:
+    aliases = MAPA_BOOKMAKERS.get(str(casa_alvo), [])
+    if not aliases:
+        return False
+    key = str(book.get("key", "")).lower().strip()
+    title = str(book.get("title", "")).lower().strip()
+    texto = f"{key} {title}"
+    return any(alias.lower() in texto for alias in aliases)
 
 
-def casar_time_api(nome_api: str, times_csv: List[str]) -> Optional[str]:
-    # NUNCA retorna o primeiro time da lista por chute.
-    import difflib
-    alvo = normalizar_nome_time(nome_api)
-    mapa = {normalizar_nome_time(t): t for t in times_csv}
-    if alvo in mapa:
-        return mapa[alvo]
-    candidatos = list(mapa.keys())
-    achados = difflib.get_close_matches(alvo, candidatos, n=1, cutoff=0.73)
-    if not achados:
-        return None
-    return mapa[achados[0]]
-
-
-# ============================================================
-# DECISÃO
-# ============================================================
-
-def prob_implicita(odd: float) -> float:
-    return 1.0 / float(odd) if odd_valida(odd) else 0.0
-
-
-def probs_mercado_1x2(odds: Dict[str, float]) -> Dict[str, float]:
-    brutas = {m: prob_implicita(odds[m]) for m in MERCADOS_RESULTADO if odd_valida(odds.get(m))}
-    soma = sum(brutas.values())
-    if soma <= 0:
-        return {}
-    return {m: v / soma for m, v in brutas.items()}
-
-
-def menor_odd_resultado(odds: Dict[str, float]) -> Optional[float]:
-    vals = [float(odds[m]) for m in MERCADOS_RESULTADO if odd_valida(odds.get(m))]
-    return min(vals) if vals else None
-
-
-def stake_quarto_kelly(prob: float, odd: float) -> float:
-    try:
-        if not odd_valida(odd) or prob <= 0:
-            return 0.0
-        ev = prob * odd - 1.0
-        if ev <= 0:
-            return 0.0
-        kelly = ev / (odd - 1.0)
-        return clamp(kelly / 4.0, 0.0, 0.05)
-    except Exception:
-        return 0.0
-
-
-def hard_blocks(mercado: str, prob: float, odd: float, odds: Dict[str, float], contexto: Dict[str, Any]) -> List[str]:
-    motivos: List[str] = []
-    total = contexto["total_gols"]
-    maior = contexto["maior_gols"]
-    menor = contexto["menor_gols"]
-    fogo = contexto["fogo_jogo"]
-    goleada = contexto["risco_goleada"]
-    under_perigo = contexto["under_perigo"]
-    liga = contexto["liga"]
-    ph5 = contexto["casa_5"]
-    pa5 = contexto["fora_5"]
-    phm = contexto["casa_mando"]
-    pam = contexto["fora_mando"]
-    amostra_min = contexto["amostra_min"]
-
-    if amostra_min < 5:
-        motivos.append("amostra casa/fora abaixo de 5 jogos; não usar dinheiro real")
-
-    if mercado not in MERCADOS_NUCLEO:
-        motivos.append("fora do núcleo automático da planilha; use apenas para auditoria manual")
-
-    # Resultado seco: corta discordância absurda com mercado.
-    if mercado in {"Vitória Casa", "Vitória Fora"}:
-        if odd >= 6.00:
-            motivos.append("odd seca muito alta; mercado pode estar vendo informação que a base não vê")
-        probs_mkt = probs_mercado_1x2(odds)
-        pm = probs_mkt.get(mercado)
-        if pm is not None and odd >= 3.50 and (prob - pm) >= 0.15:
-            motivos.append("modelo discordou demais do mercado em odd alta")
-        menor_odd = menor_odd_resultado(odds)
-        if menor_odd is not None and menor_odd <= 1.35 and odd >= 4.50:
-            motivos.append("existe favorito fortíssimo no mercado contra essa vitória seca")
-
-    if mercado == "Empate":
-        if odd >= 4.40:
-            motivos.append("empate em odd alta é variância pesada demais")
-        if prob < 0.265:
-            motivos.append("probabilidade de empate baixa para entrada automática")
-        menor_odd = menor_odd_resultado(odds)
-        if menor_odd is not None and menor_odd <= 1.48:
-            motivos.append("favorito forte no 1x2 reduz qualidade do empate")
-
-    # O coração da V18: Under só entra se o jogo for realmente frio.
-    if mercado == "Menos de 2.5 gols":
-        odd_over = odds.get("Mais de 2.5 gols")
-
-        if total >= 2.38:
-            motivos.append("Under bloqueado: total esperado acima do limite conservador")
-        if maior >= 1.62:
-            motivos.append("Under bloqueado: um lado tem capacidade de marcar 2 ou 3 gols")
-        if fogo >= 0.48:
-            motivos.append("Under bloqueado: índice de fogo do jogo alto")
-        if goleada >= 0.45:
-            motivos.append("Under bloqueado: risco de goleada unilateral alto")
-        if under_perigo >= 0.44:
-            motivos.append("Under bloqueado: combinação de forma recente + goleada + total esperado é perigosa")
-        if liga["over25"] >= 0.58 and total >= 2.25:
-            motivos.append("Under bloqueado: liga/janela com frequência alta de Over 2.5")
-        if (ph5["fez2"] >= 0.40 and pam["sofreu2"] >= 0.40) or (pa5["fez2"] >= 0.40 and phm["sofreu2"] >= 0.40):
-            motivos.append("Under bloqueado: ataque recente cruza com defesa que sofre 2+ gols")
-        if ph5["fez3"] >= 0.20 or pa5["fez3"] >= 0.20 or phm["sofreu3"] >= 0.20 or pam["sofreu3"] >= 0.20:
-            motivos.append("Under bloqueado: existe sinal recente de 3+ gols em um lado")
-        if odd_valida(odd_over) and float(odd_over) <= 1.78:
-            motivos.append("Under bloqueado: mercado precifica Over como caminho principal")
-
-    if mercado == "Mais de 2.5 gols":
-        odd_under = odds.get("Menos de 2.5 gols")
-        if total <= 2.18 and fogo <= 0.40:
-            motivos.append("Over bloqueado: total esperado e fogo recente baixos")
-        if maior < 1.25 and menor < 0.95:
-            motivos.append("Over bloqueado: nenhum lado tem força clara de 2 gols")
-        if odd_valida(odd_under) and float(odd_under) <= 1.72 and odd >= 2.00:
-            motivos.append("Over bloqueado: mercado precifica Under forte")
-
-    # BTTS Não é outro tipo de "segurar gol"; precisa de barreira parecida.
-    if mercado == "Ambos marcam - Não":
-        odd_btts_sim = odds.get("Ambos marcam - Sim")
-        if total >= 2.55 and menor >= 0.90:
-            motivos.append("BTTS Não bloqueado: os dois lados têm caminho real para gol")
-        if (ph5["marcou"] >= 0.70 and pa5["marcou"] >= 0.70) and menor >= 0.80:
-            motivos.append("BTTS Não bloqueado: ambos vêm marcando com frequência")
-        if fogo >= 0.52:
-            motivos.append("BTTS Não bloqueado: jogo com fogo alto não combina com segurar gol")
-        if odd_valida(odd_btts_sim) and float(odd_btts_sim) <= 1.72:
-            motivos.append("BTTS Não bloqueado: mercado favorece Ambos Marcam Sim")
-
-    if mercado == "Ambos marcam - Sim":
-        odd_btts_nao = odds.get("Ambos marcam - Não")
-        if menor <= 0.72:
-            motivos.append("BTTS Sim bloqueado: um lado tem expectativa ofensiva baixa")
-        if ph5["zerou"] >= 0.40 or pa5["zerou"] >= 0.40:
-            motivos.append("BTTS Sim bloqueado: um lado vem passando em branco demais")
-        if odd_valida(odd_btts_nao) and float(odd_btts_nao) <= 1.72 and odd >= 2.00:
-            motivos.append("BTTS Sim bloqueado: mercado favorece Ambos Marcam Não")
-
-    return motivos
-
-
-def ajustar_stake_por_risco(mercado: str, stake: float, valor: float, odd: float, contexto: Dict[str, Any]) -> float:
-    fator = 1.0
-
-    if contexto["amostra_min"] < 8:
-        fator *= 0.55
-
-    if valor < 0.08:
-        fator *= 0.60
-
-    if mercado in {"Vitória Casa", "Vitória Fora"}:
-        if odd >= 3.00:
-            fator *= 0.55
-        elif odd >= 2.50:
-            fator *= 0.75
-
-    if mercado == "Empate":
-        fator *= 0.45
-
-    if mercado in MERCADOS_GOLS_BAIXOS:
-        # depois dos seus reds, mercado de segurar gol tem desconto estrutural
-        fator *= 0.70
-        if contexto["under_perigo"] >= 0.35:
-            fator *= 0.60
-
-    if mercado == "Menos de 2.5 gols":
-        if contexto["total_gols"] >= 2.20:
-            fator *= 0.70
-
-    return clamp(stake * fator, 0.0, 0.05)
-
-
-def classificar_mercado(
-    mercado: str,
-    prob: float,
-    odd: float,
-    odds: Dict[str, float],
-    contexto: Dict[str, Any],
-    perfil: str,
-) -> Dict[str, Any]:
-
-    valor = (prob * odd) - 1.0 if odd_valida(odd) else -1.0
-    odd_justa = 1.0 / prob if prob > 0 else np.inf
-
-    resultado = {
-        "mercado": mercado,
-        "probabilidade": float(prob),
-        "odd": float(odd) if odd_valida(odd) else 0.0,
-        "odd_justa": float(odd_justa) if np.isfinite(odd_justa) else np.inf,
-        "valor": float(valor),
-        "apostar": False,
-        "nivel": "nao",
-        "percentual": 0.0,
-        "percentual_original": 0.0,
-        "entrada_rs": 0.0,
-        "motivo": "",
-        "bloqueios": [],
-    }
-
-    if not odd_valida(odd):
-        resultado["motivo"] = "cotação inválida ou ausente"
-        return resultado
-
-    if perfil == "Conservador":
-        margem_minima = 0.10
-        teto = 0.010
-    elif perfil == "Agressivo com controle":
-        margem_minima = 0.065
-        teto = 0.020
-    else:
-        margem_minima = 0.080
-        teto = 0.015
-
-    # Under precisa de margem maior que outros mercados.
-    if mercado == "Menos de 2.5 gols":
-        margem_minima += 0.035
-
-    bloqueios = hard_blocks(mercado, prob, odd, odds, contexto)
-    resultado["bloqueios"] = bloqueios
-
-    if bloqueios:
-        resultado["motivo"] = " | ".join(bloqueios[:3])
-        return resultado
-
-    if valor <= margem_minima:
-        if valor > 0:
-            resultado["motivo"] = f"valor pequeno demais: exige pelo menos {margem_minima*100:.1f}%".replace(".", ",")
-        else:
-            resultado["motivo"] = "sem valor matemático contra a cotação"
-        return resultado
-
-    stake_base = stake_quarto_kelly(prob, odd)
-    stake_ajustada = ajustar_stake_por_risco(mercado, stake_base, valor, odd, contexto)
-    percentual = min(stake_ajustada, teto)
-
-    if percentual < 0.0025:
-        resultado["motivo"] = "valor existe, mas a stake final ficou pequena demais"
-        return resultado
-
-    resultado["apostar"] = True
-    resultado["percentual"] = float(percentual)
-    resultado["percentual_original"] = float(percentual)
-
-    if valor >= 0.20 and percentual >= 0.010:
-        nivel = "forte"
-    elif valor >= 0.11 and percentual >= 0.006:
-        nivel = "boa"
-    else:
-        nivel = "leve"
-
-    resultado["nivel"] = nivel
-    if stake_ajustada < stake_base * 0.95:
-        resultado["motivo"] = "valor aprovado, mas stake reduzida por risco contextual"
-    else:
-        resultado["motivo"] = "valor aprovado após filtros de contexto, mercado e anti-goleada"
-
-    return resultado
-
-
-def prioridade(r: Dict[str, Any], contexto: Dict[str, Any]) -> float:
-    mercado = str(r.get("mercado", ""))
-    score = float(r.get("valor", 0)) + float(r.get("percentual", 0)) * 2.0 + float(r.get("probabilidade", 0)) * 0.04
-
-    if mercado == "Menos de 2.5 gols":
-        score -= contexto["under_perigo"] * 0.30
-    if mercado == "Ambos marcam - Não":
-        score -= contexto["fogo_jogo"] * 0.16
-    if mercado in {"Vitória Casa", "Vitória Fora"} and float(r.get("probabilidade", 0)) >= 0.48:
-        score += 0.07
-    if mercado == "Empate":
-        score -= 0.08
-    return float(score)
-
-
-def aplicar_correlacao(resultados: List[Dict[str, Any]], contexto: Dict[str, Any]) -> List[Dict[str, Any]]:
-    grupos = [MERCADOS_GOLS_BAIXOS, MERCADOS_GOLS_ALTOS, MERCADOS_RESULTADO]
-    for grupo in grupos:
-        aprovadas = [r for r in resultados if r["apostar"] and r["mercado"] in grupo]
-        if len(aprovadas) <= 1:
-            continue
-        melhor = max(aprovadas, key=lambda x: prioridade(x, contexto))
-        for r in aprovadas:
-            if r is melhor:
+def _popular_pools_com_bookmaker(pools: Dict[str, List[float]], book: dict, casa_api: str, fora_api: str) -> None:
+    for market in book.get("markets", []):
+        key = market.get("key")
+        for outcome in market.get("outcomes", []):
+            nome = outcome.get("name")
+            odd = texto_para_float(outcome.get("price"))
+            if not odd_valida(odd):
                 continue
-            r["apostar"] = False
-            r["nivel"] = "nao"
-            r["percentual"] = 0.0
-            r["percentual_original"] = 0.0
-            r["entrada_rs"] = 0.0
-            r["motivo"] = f"bloqueada por correlação; mantém só a melhor tese do grupo: {melhor['mercado']}"
-    return resultados
+            if key == "h2h":
+                if nome == casa_api:
+                    pools["Vitória Casa"].append(float(odd))
+                elif nome == "Draw":
+                    pools["Empate"].append(float(odd))
+                elif nome == fora_api:
+                    pools["Vitória Fora"].append(float(odd))
+            elif key == "totals":
+                try:
+                    ponto = float(outcome.get("point", 0))
+                except Exception:
+                    ponto = 0.0
+                if abs(ponto - 2.5) < 0.001:
+                    if nome == "Over":
+                        pools["Mais de 2.5 gols"].append(float(odd))
+                    elif nome == "Under":
+                        pools["Menos de 2.5 gols"].append(float(odd))
+            elif key == "btts":
+                if nome == "Yes":
+                    pools["Ambos marcam - Sim"].append(float(odd))
+                elif nome == "No":
+                    pools["Ambos marcam - Não"].append(float(odd))
 
 
-def montar_resultados(probabilidades: Dict[str, float], odds: Dict[str, float], contexto: Dict[str, Any], banca: float, perfil: str, limite_total: float) -> List[Dict[str, Any]]:
-    resultados: List[Dict[str, Any]] = []
+def _pools_para_odds(pools: Dict[str, List[float]]) -> Dict[str, float]:
+    saida = {}
+    for mercado, vals in pools.items():
+        m = mediana(vals)
+        if m is not None:
+            saida[mercado] = float(m)
+    return saida
 
-    for mercado in MERCADOS:
-        if mercado not in probabilidades or mercado not in odds:
-            continue
-        r = classificar_mercado(
-            mercado=mercado,
-            prob=float(probabilidades[mercado]),
-            odd=float(odds[mercado]),
-            odds=odds,
-            contexto=contexto,
-            perfil=perfil,
+
+def extrair_odds_api(jogo: dict, casa_alvo: Optional[str] = None) -> Tuple[Dict[str, float], str]:
+    """
+    Extrai odds da API.
+
+    Regra V19.2:
+    - se a casa escolhida existir na API, usa somente essa casa;
+    - se não existir, usa mediana do mercado só como referência e avisa claramente;
+    - no uso real, o modo Manual continua sendo o padrão recomendado.
+    """
+    casa_api = jogo.get("home_team")
+    fora_api = jogo.get("away_team")
+    bookmakers = list(jogo.get("bookmakers", []) or [])
+
+    casa_alvo_txt = str(casa_alvo or "").strip()
+    deve_priorizar_casa = bool(casa_alvo_txt) and casa_alvo_txt != "Outra"
+
+    if deve_priorizar_casa:
+        books_alvo = [book for book in bookmakers if bookmaker_corresponde(book, casa_alvo_txt)]
+        if books_alvo:
+            pools_alvo = {m: [] for m in MERCADOS_NUCLEO}
+            for book in books_alvo:
+                _popular_pools_com_bookmaker(pools_alvo, book, casa_api, fora_api)
+            odds_alvo = _pools_para_odds(pools_alvo)
+            if odds_alvo:
+                return odds_alvo, f"✅ Odds extraídas da casa selecionada na API: {casa_alvo_txt}. Ainda assim, confira antes de apostar."
+
+    pools = {m: [] for m in MERCADOS_NUCLEO}
+    for book in bookmakers:
+        _popular_pools_com_bookmaker(pools, book, casa_api, fora_api)
+    odds_mediana = _pools_para_odds(pools)
+
+    if deve_priorizar_casa:
+        aviso = (
+            f"⚠️ A API não encontrou odds da casa selecionada ({casa_alvo_txt}). "
+            "Estou mostrando a mediana do mercado apenas como referência. "
+            "Para apostar, confira e digite manualmente a odd da sua casa."
         )
-        resultados.append(r)
+    else:
+        aviso = "ℹ️ Casa 'Outra' selecionada: a API mostra mediana do mercado. Para aposta real, prefira digitar a odd manualmente."
 
-    resultados = aplicar_correlacao(resultados, contexto)
-
-    ordem = {"forte": 0, "boa": 1, "leve": 2, "nao": 3}
-    resultados.sort(key=lambda x: (ordem.get(x["nivel"], 9), -float(x["valor"])))
-
-    limite_total = clamp(limite_total, 0.005, 0.06)
-    usado = 0.0
-    minimo = 0.0025
-
-    for r in resultados:
-        if not r["apostar"]:
-            continue
-        desejado = float(r["percentual"])
-        restante = max(0.0, limite_total - usado)
-        if restante < minimo:
-            r["apostar"] = False
-            r["nivel"] = "nao"
-            r["percentual"] = 0.0
-            r["entrada_rs"] = 0.0
-            r["motivo"] = "bloqueada: limite total do jogo já preenchido"
-            continue
-        final = min(desejado, restante)
-        if final < minimo:
-            r["apostar"] = False
-            r["nivel"] = "nao"
-            r["percentual"] = 0.0
-            r["entrada_rs"] = 0.0
-            r["motivo"] = "bloqueada: stake ficou abaixo do mínimo executável"
-        else:
-            if final < desejado:
-                r["motivo"] = "aprovada, mas reduzida pelo limite total do jogo"
-            r["percentual"] = final
-            r["entrada_rs"] = float(banca) * final if banca > 0 else 0.0
-            usado += final
-
-    resultados.sort(key=lambda x: (ordem.get(x["nivel"], 9), -float(x["valor"])))
-    return resultados
-
+    return odds_mediana, aviso
 
 # ============================================================
-# AUDITORIA / CATÁLOGO / GOOGLE SHEETS OPCIONAL
+# GOOGLE SHEETS OPCIONAL
 # ============================================================
 
-def segredo_para_dict(obj: Any) -> Dict[str, Any]:
+def _segredo_para_dict(obj) -> dict:
     try:
-        if isinstance(obj, dict):
-            return dict(obj)
         return dict(obj)
     except Exception:
         return {}
 
 
-def config_google() -> Dict[str, Any]:
+def obter_config_google() -> Dict[str, object]:
     try:
-        gs = segredo_para_dict(st.secrets.get("google_sheets", {}))
-        sa = segredo_para_dict(st.secrets.get("gcp_service_account", {}))
-        spreadsheet_id = str(gs.get("spreadsheet_id", "")).strip()
+        cfg = _segredo_para_dict(st.secrets.get("google_sheets", {}))
+        spreadsheet_id = str(cfg.get("spreadsheet_id", "")).strip()
+        worksheet_catalogo = str(cfg.get("worksheet_catalogo", GOOGLE_SHEETS_WORKSHEET_CATALOGO)).strip() or GOOGLE_SHEETS_WORKSHEET_CATALOGO
+        worksheet_auditoria = str(cfg.get("worksheet_auditoria", GOOGLE_SHEETS_WORKSHEET_AUDITORIA)).strip() or GOOGLE_SHEETS_WORKSHEET_AUDITORIA
+        service = _segredo_para_dict(st.secrets.get("gcp_service_account", {}))
+        client_email = str(service.get("client_email", "")).strip()
         return {
-            "configurado": bool(spreadsheet_id and sa),
             "spreadsheet_id": spreadsheet_id,
-            "worksheet_catalogo": str(gs.get("worksheet_catalogo", "catalogo_odds")).strip() or "catalogo_odds",
-            "worksheet_auditoria": str(gs.get("worksheet_auditoria", "auditoria_entradas")).strip() or "auditoria_entradas",
+            "worksheet_catalogo": worksheet_catalogo,
+            "worksheet_auditoria": worksheet_auditoria,
+            "client_email": client_email,
+            "configurado": bool(spreadsheet_id and client_email),
         }
     except Exception:
-        return {"configurado": False, "spreadsheet_id": "", "worksheet_catalogo": "catalogo_odds", "worksheet_auditoria": "auditoria_entradas"}
+        return {
+            "spreadsheet_id": "",
+            "worksheet_catalogo": GOOGLE_SHEETS_WORKSHEET_CATALOGO,
+            "worksheet_auditoria": GOOGLE_SHEETS_WORKSHEET_AUDITORIA,
+            "client_email": "",
+            "configurado": False,
+        }
+
+
+def google_configurado() -> bool:
+    return bool(obter_config_google().get("configurado"))
 
 
 @st.cache_resource(show_spinner=False)
-def conectar_google():
-    cfg = config_google()
-    if not cfg.get("configurado"):
+def conectar_google_sheets():
+    if not google_configurado():
         return None
     try:
         import gspread
         from google.oauth2.service_account import Credentials
-        service_account = segredo_para_dict(st.secrets.get("gcp_service_account", {}))
+        service_account = _segredo_para_dict(st.secrets.get("gcp_service_account", {}))
         service_account = json.loads(json.dumps(service_account))
-        creds = Credentials.from_service_account_info(
-            service_account,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
-        )
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_info(service_account, scopes=scopes)
         client = gspread.authorize(creds)
-        return client.open_by_key(cfg["spreadsheet_id"])
+        return client.open_by_key(obter_config_google()["spreadsheet_id"])
     except Exception as exc:
-        st.warning(f"Google Sheets não conectou. Usando backup local temporário. Detalhe: {exc}")
+        st.warning(f"Google Sheets não conectou; usando backup local. Detalhe: {exc}")
         return None
 
 
-def obter_aba(nome: str, colunas: List[str]):
-    sh = conectar_google()
-    if sh is None:
+def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
+    planilha = conectar_google_sheets()
+    if planilha is None:
         return None
     try:
         try:
-            ws = sh.worksheet(nome)
+            aba = planilha.worksheet(nome)
         except Exception:
-            ws = sh.add_worksheet(title=nome, rows=1000, cols=max(20, len(colunas) + 3))
-            ws.update("A1", [colunas])
-        valores = ws.get_all_values()
+            aba = planilha.add_worksheet(title=nome, rows=linhas, cols=max(20, len(colunas) + 4))
+        valores = aba.get_all_values()
         if not valores:
-            ws.update("A1", [colunas])
-        elif valores[0] != colunas:
-            ws.update("A1", [colunas])
-        return ws
+            aba.update("A1", [colunas], value_input_option="USER_ENTERED")
+        return aba
     except Exception as exc:
-        st.warning(f"Não consegui abrir/criar aba {nome}. Detalhe: {exc}")
+        st.warning(f"Não consegui acessar a aba {nome} no Google Sheets. Detalhe: {exc}")
         return None
 
 
-def normalizar_df(df: pd.DataFrame, colunas: List[str]) -> pd.DataFrame:
-    """
-    Normaliza CSV/Google Sheets sem deixar nomes de colunas duplicados.
-
-    O erro do Streamlit/Arrow acontece quando a planilha tem duas colunas com
-    o mesmo nome, por exemplo duas colunas chamadas "Liga" ou "Mercado".
-    Isso pode vir de cabeçalho antigo no Google Sheets, CSV editado manualmente
-    ou concatenações anteriores. Aqui a gente preserva a primeira coluna válida,
-    remove as duplicadas e entrega sempre exatamente as colunas oficiais.
-    """
-    if df is None or df.empty:
-        return pd.DataFrame(columns=colunas)
-
-    base = df.copy()
-
-    # Garante que todos os nomes de coluna sejam texto limpo.
-    base.columns = [str(c).strip() for c in base.columns]
-
-    # Remove colunas duplicadas antes de selecionar. Sem isso, base[colunas]
-    # pode devolver duas colunas com o mesmo nome e quebrar o st.dataframe.
-    base = base.loc[:, ~pd.Index(base.columns).duplicated(keep="first")].copy()
-
-    # Se a planilha tiver colunas vazias/sem nome, elas não entram na saída.
-    for c in colunas:
-        if c not in base.columns:
-            base[c] = ""
-
-    saida = base.loc[:, colunas].copy().fillna("")
-    saida.columns = colunas
-    return saida
-
-
-def carregar_csv(path: str, colunas: List[str]) -> pd.DataFrame:
-    garantir_logs()
-    if not os.path.exists(path):
-        return pd.DataFrame(columns=colunas)
-    try:
-        return normalizar_df(pd.read_csv(path), colunas)
-    except Exception:
-        return pd.DataFrame(columns=colunas)
-
-
-def salvar_csv(df: pd.DataFrame, path: str, colunas: List[str]) -> None:
-    garantir_logs()
-    normalizar_df(df, colunas).to_csv(path, index=False)
-
-
-def carregar_google(nome_aba: str, colunas: List[str]) -> Optional[pd.DataFrame]:
-    ws = obter_aba(nome_aba, colunas)
-    if ws is None:
+def carregar_google(nome: str, colunas: List[str]) -> Optional[pd.DataFrame]:
+    aba = obter_aba(nome, colunas)
+    if aba is None:
         return None
     try:
-        valores = ws.get_all_values()
-        if len(valores) <= 1:
+        valores = aba.get_all_values()
+        if not valores:
             return pd.DataFrame(columns=colunas)
-        return normalizar_df(pd.DataFrame(valores[1:], columns=valores[0]), colunas)
-    except Exception:
+        cabecalho = [str(c).strip() for c in valores[0]]
+        linhas = valores[1:]
+        df = pd.DataFrame(linhas, columns=cabecalho)
+        return normalizar_colunas(df, colunas)
+    except Exception as exc:
+        st.warning(f"Não consegui ler {nome} no Google Sheets. Detalhe: {exc}")
         return None
 
 
-def salvar_google(df: pd.DataFrame, nome_aba: str, colunas: List[str]) -> bool:
-    ws = obter_aba(nome_aba, colunas)
-    if ws is None:
+def salvar_google(nome: str, df: pd.DataFrame, colunas: List[str]) -> bool:
+    aba = obter_aba(nome, colunas)
+    if aba is None:
         return False
     try:
-        base = normalizar_df(df, colunas).astype(str)
-        ws.clear()
-        ws.update("A1", [colunas] + base.values.tolist(), value_input_option="USER_ENTERED")
+        base = normalizar_colunas(df, colunas).astype(str)
+        valores = [colunas] + base.values.tolist()
+        aba.clear()
+        aba.update("A1", valores, value_input_option="USER_ENTERED")
         return True
     except Exception as exc:
-        st.warning(f"Google Sheets falhou ao salvar. Backup local foi atualizado. Detalhe: {exc}")
+        st.warning(f"Não consegui salvar {nome} no Google Sheets. Detalhe: {exc}")
         return False
 
+# ============================================================
+# AUDITORIA E CATÁLOGO
+# ============================================================
 
-def carregar_auditoria() -> pd.DataFrame:
-    cfg = config_google()
-    if cfg.get("configurado"):
-        g = carregar_google(cfg["worksheet_auditoria"], COLUNAS_AUDITORIA)
-        if g is not None:
-            return normalizar_df(g, COLUNAS_AUDITORIA)
-    return carregar_csv(ARQUIVO_AUDITORIA, COLUNAS_AUDITORIA)
+def carregar_auditoria_local() -> pd.DataFrame:
+    garantir_logs()
+    if os.path.exists(ARQUIVO_AUDITORIA):
+        try:
+            return normalizar_colunas(pd.read_csv(ARQUIVO_AUDITORIA), COLUNAS_AUDITORIA)
+        except Exception:
+            return pd.DataFrame(columns=COLUNAS_AUDITORIA)
+    return pd.DataFrame(columns=COLUNAS_AUDITORIA)
 
 
 def salvar_auditoria(df: pd.DataFrame) -> str:
-    base = normalizar_df(df, COLUNAS_AUDITORIA)
-    salvar_csv(base, ARQUIVO_AUDITORIA, COLUNAS_AUDITORIA)
-    cfg = config_google()
-    if cfg.get("configurado") and salvar_google(base, cfg["worksheet_auditoria"], COLUNAS_AUDITORIA):
+    garantir_logs()
+    base = normalizar_colunas(df, COLUNAS_AUDITORIA)
+    base.to_csv(ARQUIVO_AUDITORIA, index=False)
+    if google_configurado() and salvar_google(obter_config_google()["worksheet_auditoria"], base, COLUNAS_AUDITORIA):
         return "Google Sheets + backup local"
     return "backup local"
 
 
-def carregar_catalogo() -> pd.DataFrame:
-    cfg = config_google()
-    if cfg.get("configurado"):
-        g = carregar_google(cfg["worksheet_catalogo"], COLUNAS_CATALOGO)
-        if g is not None:
-            return normalizar_df(g, COLUNAS_CATALOGO)
-    return carregar_csv(ARQUIVO_CATALOGO, COLUNAS_CATALOGO)
-
-
-def salvar_catalogo(df: pd.DataFrame) -> str:
-    base = normalizar_df(df, COLUNAS_CATALOGO)
-    salvar_csv(base, ARQUIVO_CATALOGO, COLUNAS_CATALOGO)
-    cfg = config_google()
-    if cfg.get("configurado") and salvar_google(base, cfg["worksheet_catalogo"], COLUNAS_CATALOGO):
-        return "Google Sheets + backup local"
-    return "backup local"
+def carregar_auditoria() -> pd.DataFrame:
+    if google_configurado():
+        cfg = obter_config_google()
+        df_g = carregar_google(cfg["worksheet_auditoria"], COLUNAS_AUDITORIA)
+        if df_g is not None:
+            if df_g.empty:
+                local = carregar_auditoria_local()
+                if not local.empty:
+                    salvar_google(cfg["worksheet_auditoria"], local, COLUNAS_AUDITORIA)
+                    return local
+            return df_g
+    return carregar_auditoria_local()
 
 
 def banca_atual(banca_inicial: float, auditoria: pd.DataFrame) -> float:
     if auditoria.empty or "Resultado R$" not in auditoria.columns:
         return float(banca_inicial)
-    resultado = pd.to_numeric(auditoria["Resultado R$"], errors="coerce").fillna(0).sum()
-    return float(banca_inicial + resultado)
+    valores = pd.to_numeric(auditoria["Resultado R$"], errors="coerce").fillna(0.0)
+    return float(banca_inicial) + float(valores.sum())
 
 
-def selecao_mercado(mercado: str, time_casa: str, time_fora: str) -> str:
-    mapa = {
-        "Vitória Casa": time_casa,
-        "Vitória Fora": time_fora,
-        "Empate": "Empate",
-        "Mais de 2.5 gols": "Mais de 2.5 gols",
-        "Menos de 2.5 gols": "Menos de 2.5 gols",
-        "Ambos marcam - Sim": "Sim",
-        "Ambos marcam - Não": "Não",
-        "Casa ou Empate": f"{time_casa} ou empate",
-        "Fora ou Empate": f"{time_fora} ou empate",
-        "Empate Anula Casa": time_casa,
-        "Empate Anula Fora": time_fora,
-    }
-    return mapa.get(mercado, mercado)
-
-
-def registrar_odds_catalogo(catalogo: pd.DataFrame, liga: str, jogo: str, time_casa: str, time_fora: str, casa: str, odds: Dict[str, float], banca: float, perfil: str, data_jogo: date, hora_jogo: str, origem: str, obs: str) -> pd.DataFrame:
-    base = normalizar_df(catalogo, COLUNAS_CATALOGO)
-    coleta_id = str(uuid.uuid4())[:8]
-    linhas = []
-    for mercado, odd in odds.items():
-        linhas.append({
-            "ID Coleta": coleta_id,
-            "Registrado em": now_str(),
-            "Data do jogo": str(data_jogo),
-            "Hora do jogo": str(hora_jogo),
-            "Casa de apostas": casa,
-            "Liga": liga,
-            "Jogo": jogo,
-            "Mandante": time_casa,
-            "Visitante": time_fora,
-            "Mercado": mercado,
-            "Seleção": selecao_mercado(mercado, time_casa, time_fora),
-            "Cotação": float(odd),
-            "Banca no momento": float(banca),
-            "Perfil": perfil,
-            "Origem": origem,
-            "Observação": obs,
-        })
-    return normalizar_df(pd.concat([base, pd.DataFrame(linhas)], ignore_index=True), COLUNAS_CATALOGO)
-
-
-def registrar_entrada(auditoria: pd.DataFrame, liga: str, jogo: str, casa_apostas: str, mercado: str, selecao: str, resultado: Dict[str, Any], banca: float, origem: str, obs: str, data_jogo: str = "") -> pd.DataFrame:
-    base = normalizar_df(auditoria, COLUNAS_AUDITORIA)
-    entrada = float(resultado.get("entrada_rs", 0.0))
+def registrar_entrada(
+    auditoria: pd.DataFrame,
+    liga: str,
+    jogo: str,
+    casa_apostas: str,
+    mercado: str,
+    odd: float,
+    prob: float,
+    odd_justa: float,
+    margem: float,
+    entrada_pct: float,
+    entrada_rs: float,
+    banca_antes: float,
+    origem: str,
+    observacao: str,
+) -> pd.DataFrame:
+    base = normalizar_colunas(auditoria, COLUNAS_AUDITORIA)
     nova = {
         "ID": str(uuid.uuid4())[:8],
-        "Registrado em": now_str(),
-        "Data do jogo": data_jogo,
+        "Registrado em": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Liga": liga,
         "Jogo": jogo,
         "Casa de apostas": casa_apostas,
         "Mercado": mercado,
-        "Seleção": selecao,
-        "Cotação de entrada": float(resultado.get("odd", 0.0)),
-        "Cotação justa": float(resultado.get("odd_justa", 0.0)) if np.isfinite(float(resultado.get("odd_justa", 0.0))) else "",
-        "Chance pelo sistema %": round(float(resultado.get("probabilidade", 0.0)) * 100, 2),
-        "Valor esperado %": round(float(resultado.get("valor", 0.0)) * 100, 2),
-        "Entrada %": round(float(resultado.get("percentual", 0.0)) * 100, 3),
-        "Entrada R$": round(entrada, 2),
-        "Banca antes": round(float(banca), 2),
+        "Cotação de entrada": round(float(odd), 4),
+        "Cotação justa": round(float(odd_justa), 4) if np.isfinite(odd_justa) else "",
+        "Chance pelo sistema %": round(float(prob) * 100, 2),
+        "Valor esperado %": round(float(margem) * 100, 2),
+        "Entrada %": round(float(entrada_pct) * 100, 3),
+        "Entrada R$": round(float(entrada_rs), 2),
+        "Banca antes": round(float(banca_antes), 2),
+        "Cotação de fechamento": "",
+        "Vantagem no fechamento %": "",
         "Status": "Pendente",
         "Resultado R$": 0.0,
         "Banca depois": "",
-        "Cotação de fechamento": "",
-        "Vantagem no fechamento %": "",
         "Origem": origem,
-        "Observação": obs,
+        "Observação": observacao,
     }
-    return normalizar_df(pd.concat([base, pd.DataFrame([nova])], ignore_index=True), COLUNAS_AUDITORIA)
+    return pd.concat([base, pd.DataFrame([nova])], ignore_index=True)
 
 
-def fechar_resultado(status: str, entrada: float, odd: float, cashout: float = 0.0) -> float:
+def calcular_resultado(status: str, entrada_rs: float, odd: float, cashout: float = 0.0) -> float:
+    status = str(status)
     if status == "Green":
-        return entrada * (odd - 1.0)
+        return float(entrada_rs) * (float(odd) - 1.0)
     if status == "Red":
-        return -entrada
+        return -float(entrada_rs)
     if status == "Void":
         return 0.0
     if status == "Cashout":
-        return cashout - entrada
+        return float(cashout) - float(entrada_rs)
     return 0.0
 
 
-def excel_bytes(abas: Dict[str, pd.DataFrame]) -> bytes:
-    buffer = io.BytesIO()
-    try:
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            for nome, df in abas.items():
-                safe = nome[:31].replace("/", "-").replace("\\", "-").replace("*", "")
-                df.to_excel(writer, sheet_name=safe, index=False)
-        return buffer.getvalue()
-    except Exception:
-        return b""
+def carregar_catalogo_local() -> pd.DataFrame:
+    garantir_logs()
+    if os.path.exists(ARQUIVO_CATALOGO):
+        try:
+            return normalizar_colunas(pd.read_csv(ARQUIVO_CATALOGO), COLUNAS_CATALOGO)
+        except Exception:
+            return pd.DataFrame(columns=COLUNAS_CATALOGO)
+    return pd.DataFrame(columns=COLUNAS_CATALOGO)
 
 
-# ============================================================
-# RENDER
-# ============================================================
-
-def nome_mercado(mercado: str, time_casa: str, time_fora: str) -> str:
-    return (
-        mercado
-        .replace("Vitória Casa", f"Vitória {time_casa}")
-        .replace("Vitória Fora", f"Vitória {time_fora}")
-        .replace("Casa ou Empate", f"{time_casa} ou Empate")
-        .replace("Fora ou Empate", f"{time_fora} ou Empate")
-        .replace("Empate Anula Casa", f"Empate Anula {time_casa}")
-        .replace("Empate Anula Fora", f"Empate Anula {time_fora}")
-    )
+def salvar_catalogo(df: pd.DataFrame) -> str:
+    garantir_logs()
+    base = normalizar_colunas(df, COLUNAS_CATALOGO)
+    base.to_csv(ARQUIVO_CATALOGO, index=False)
+    if google_configurado() and salvar_google(obter_config_google()["worksheet_catalogo"], base, COLUNAS_CATALOGO):
+        return "Google Sheets + backup local"
+    return "backup local"
 
 
-def render_resultado(r: Dict[str, Any], banca: float, time_casa: str, time_fora: str) -> None:
-    nivel = r["nivel"]
-    apostar = bool(r["apostar"])
-    if apostar and nivel == "forte":
-        cls, title, cor = "decision-green", f"✅ APOSTAR {porcentagem(r['percentual'], 2)} DA BANCA", "big-ok"
-    elif apostar and nivel == "boa":
-        cls, title, cor = "decision-yellow", f"🟡 APOSTAR {porcentagem(r['percentual'], 2)} DA BANCA", "big-warn"
-    elif apostar and nivel == "leve":
-        cls, title, cor = "decision-blue", f"🔵 APOSTAR {porcentagem(r['percentual'], 2)} DA BANCA", "big-blue"
-    else:
-        cls, title, cor = "decision-red", "❌ NÃO APOSTAR", "big-bad"
-
-    odd_justa = "-" if not np.isfinite(float(r["odd_justa"])) else numero(float(r["odd_justa"]), 2)
-    st.markdown(
-        f"""
-        <div class="decision-card {cls}">
-            <div class="{cor}">{title}</div>
-            <div class="market-title">{nome_mercado(r['mercado'], time_casa, time_fora)}</div>
-            <div class="line"><b>Cotação:</b> {numero(r['odd'], 2)} | <b>Justa:</b> {odd_justa} | <b>Chance:</b> {porcentagem(r['probabilidade'], 1)} | <b>EV:</b> {porcentagem(r['valor'], 1)}</div>
-            <div class="line"><b>Entrada sugerida:</b> {dinheiro(r['entrada_rs'])} | <b>Núcleo automático:</b> {"Sim" if r['mercado'] in MERCADOS_NUCLEO else "Não"}</div>
-            <div class="explain"><b>Motivo:</b> {r['motivo']}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def carregar_catalogo() -> pd.DataFrame:
+    if google_configurado():
+        cfg = obter_config_google()
+        df_g = carregar_google(cfg["worksheet_catalogo"], COLUNAS_CATALOGO)
+        if df_g is not None:
+            if df_g.empty:
+                local = carregar_catalogo_local()
+                if not local.empty:
+                    salvar_google(cfg["worksheet_catalogo"], local, COLUNAS_CATALOGO)
+                    return local
+            return df_g
+    return carregar_catalogo_local()
 
 
-def render_contexto(contexto: Dict[str, Any], time_casa: str, time_fora: str) -> None:
-    st.markdown("### Leitura de risco antes da aposta")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric(f"Gols {time_casa}", numero(contexto["gols_casa"], 2))
-    c2.metric(f"Gols {time_fora}", numero(contexto["gols_fora"], 2))
-    c3.metric("Total esperado", numero(contexto["total_gols"], 2))
-    c4.metric("Fogo do jogo", porcentagem(contexto["fogo_jogo"], 0))
-    c5.metric("Risco Under", porcentagem(contexto["under_perigo"], 0))
-
-    with st.expander("Ver diagnóstico simples de gols e goleada"):
-        ph5 = contexto["casa_5"]
-        pa5 = contexto["fora_5"]
-        phm = contexto["casa_mando"]
-        pam = contexto["fora_mando"]
-
-        st.markdown(
-            f"""
-            <div class="risk-box">
-                <b>{time_casa} últimos 5:</b>
-                média fez {numero(ph5['gf_med'],2)}, sofreu {numero(ph5['ga_med'],2)},
-                fez 2+ em {porcentagem(ph5['fez2'],0)}, fez 3+ em {porcentagem(ph5['fez3'],0)},
-                Over 2.5 em {porcentagem(ph5['over25'],0)}.
-                <br>
-                <b>{time_fora} últimos 5:</b>
-                média fez {numero(pa5['gf_med'],2)}, sofreu {numero(pa5['ga_med'],2)},
-                fez 2+ em {porcentagem(pa5['fez2'],0)}, fez 3+ em {porcentagem(pa5['fez3'],0)},
-                Over 2.5 em {porcentagem(pa5['over25'],0)}.
-                <br><br>
-                <b>{time_casa} em casa:</b> sofre 2+ em {porcentagem(phm['sofreu2'],0)} e sofre 3+ em {porcentagem(phm['sofreu3'],0)}.
-                <br>
-                <b>{time_fora} fora:</b> sofre 2+ em {porcentagem(pam['sofreu2'],0)} e sofre 3+ em {porcentagem(pam['sofreu3'],0)}.
-                <br><br>
-                <b>Índice de goleada:</b> {porcentagem(contexto['risco_goleada'],0)}.
-                <b>Amostra casa/fora:</b> {contexto['amostra_casa_home']} x {contexto['amostra_fora_away']} jogos.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
+def registrar_odds_catalogo(
+    catalogo: pd.DataFrame,
+    liga: str,
+    jogo: str,
+    time_casa: str,
+    time_fora: str,
+    casa_apostas: str,
+    odds: Dict[str, float],
+    banca: float,
+    perfil: str,
+    data_jogo: date,
+    hora_jogo: str,
+    origem: str,
+    observacao: str,
+) -> pd.DataFrame:
+    base = normalizar_colunas(catalogo, COLUNAS_CATALOGO)
+    coleta = str(uuid.uuid4())[:8]
+    linhas = []
+    for mercado, odd in odds.items():
+        if not odd_valida(odd):
+            continue
+        linhas.append({
+            "ID Coleta": coleta,
+            "Registrado em": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Casa de apostas": casa_apostas,
+            "Liga": liga,
+            "Jogo": jogo,
+            "Mandante": time_casa,
+            "Visitante": time_fora,
+            "Data do jogo": data_jogo.strftime("%Y-%m-%d") if isinstance(data_jogo, date) else str(data_jogo),
+            "Hora do jogo": hora_jogo,
+            "Mercado": mercado,
+            "Seleção": nome_selecao(mercado, time_casa, time_fora),
+            "Cotação": float(odd),
+            "Banca no momento": float(banca),
+            "Perfil": perfil,
+            "Origem": origem,
+            "Observação": observacao,
+        })
+    if linhas:
+        base = pd.concat([base, pd.DataFrame(linhas)], ignore_index=True)
+    return base
 
 # ============================================================
-# APP
+# UI
 # ============================================================
 
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V18</div>
+        <div class="hero-title">TEX STATISTICS V19.2</div>
         <div class="hero-sub">
-            Refeito do zero: primeiro lê forma recente, fogo do jogo e risco de goleada; só depois calcula Poisson, valor e stake.
-            Under 2.5 e BTTS Não agora são tratados como mercados perigosos de "segurar gol".
+            Pure Sheet Manual: ataque/defesa, mando, Poisson, odd justa, margem +EV e Kelly fracionado.
+            Padrão fiel à planilha: temporada inteira, margem mínima prática de 3% e modo manual como prioridade.
+            Sem firula subjetiva. Diagnóstico, scout e auditoria informam — não bloqueiam o valor da planilha.
         </div>
-        <span class="chip">Anti-Goleada</span>
-        <span class="chip">Forma recente 5/10</span>
-        <span class="chip">Sem chute de time na API</span>
-        <span class="chip">1/4 Kelly conservador</span>
-        <span class="chip">Auditoria</span>
+        <span class="chip">Pure Sheet Manual</span>
+        <span class="chip">Temporada inteira</span>
+        <span class="chip">+EV com margem</span>
+        <span class="chip">Poisson auditável</span>
+        <span class="chip">Scout opcional</span>
+        <span class="chip">Sem hard blocks subjetivos</span>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1533,75 +1408,99 @@ st.markdown(
 
 with st.sidebar:
     st.header("Banca")
-    banca_inicial = st.number_input("Banca inicial", min_value=0.0, value=1000.0, step=50.0)
+    banca_inicial = st.number_input("Banca inicial da auditoria", min_value=0.0, value=1000.0, step=50.0)
     auditoria_sidebar = carregar_auditoria()
-    banca_calc = banca_atual(float(banca_inicial), auditoria_sidebar)
-    usar_auditada = st.checkbox("Usar banca calculada pela auditoria", value=True)
+    banca_auditada = banca_atual(banca_inicial, auditoria_sidebar)
+    usar_banca_auditada = st.checkbox("Usar banca calculada pela auditoria", value=True)
     banca_manual = st.number_input("Banca manual", min_value=0.0, value=1000.0, step=50.0)
-    banca_usada = banca_calc if usar_auditada else float(banca_manual)
-    st.metric("Banca usada", dinheiro(banca_usada))
+    banca_usada = float(banca_auditada if usar_banca_auditada else banca_manual)
+    st.metric("Banca usada", fmt_dinheiro(banca_usada))
 
     st.divider()
-    st.header("Perfil")
-    perfil = st.selectbox("Perfil de operação", ["Conservador", "Volume controlado", "Agressivo com controle"], index=1)
-    limite_default = {"Conservador": 0.015, "Volume controlado": 0.025, "Agressivo com controle": 0.035}[perfil]
-    limite_total = st.slider("Máximo total no mesmo jogo", 0.5, 5.0, float(limite_default * 100), 0.5) / 100.0
-
-    st.divider()
-    st.header("Dados")
+    st.header("Modelo")
     liga_sel = st.selectbox("Liga", list(LIGAS_CSV.keys()))
-    janela_txt = st.selectbox("Janela histórica", ["300 jogos", "500 jogos", "760 jogos", "1500 jogos"], index=1)
-    janela = int(janela_txt.split()[0])
-    st.caption("A janela define a base histórica. A forma recente continua olhando os últimos 5/10 jogos dos times.")
+    janela = st.selectbox(
+        "Janela histórica",
+        [0, 300, 500, 760, 1500],
+        index=0,
+        format_func=rotulo_janela,
+        help="Padrão fiel à planilha: usa todos os jogos disponíveis no CSV da liga. Use janelas menores só para estudo.",
+    )
+    amostra_minima = st.slider("Amostra mínima casa/fora", 3, 12, 5, 1)
 
     st.divider()
-    st.header("API de odds")
-    chave_api = st.text_input("The Odds API key", value=os.getenv("ODDS_API_KEY", ""), type="password")
+    st.header("Stake")
+    fracao_kelly = st.select_slider(
+        "Fração de Kelly",
+        options=[0.10, 0.125, 0.20, 0.25, 0.33, 0.50],
+        value=0.25,
+        format_func=lambda x: {0.10: "1/10 Kelly", 0.125: "1/8 Kelly", 0.20: "1/5 Kelly", 0.25: "1/4 Kelly", 0.33: "1/3 Kelly", 0.50: "1/2 Kelly"}.get(x, str(x)),
+    )
+    margem_minima_pct = st.slider(
+        "Margem mínima +EV",
+        min_value=0.0,
+        max_value=10.0,
+        value=3.0,
+        step=0.5,
+        format="%.1f%%",
+        help="0% só para estudo; 2% volume; 3% padrão honesto; 5% conservador.",
+    )
+    margem_minima = margem_minima_pct / 100.0
+    teto_por_entrada_pct = st.slider("Teto por entrada", 0.5, 10.0, 3.0, 0.5, format="%.1f%%")
+    teto_por_jogo_pct = st.slider("Teto total no jogo", 1.0, 20.0, 6.0, 0.5, format="%.1f%%")
+    teto_por_entrada = teto_por_entrada_pct / 100.0
+    teto_por_jogo = teto_por_jogo_pct / 100.0
+    st.caption("Padrão recomendado: 1/4 Kelly, margem mínima 3%, teto de 3% por entrada e 6% por jogo.")
+
+    st.divider()
+    st.header("Odds")
     casa_apostas = st.selectbox("Casa de apostas", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"])
+    chave_api = st.text_input("Chave The Odds API", value=os.getenv("ODDS_API_KEY", ""), type="password")
 
-tabs = st.tabs(["🎯 Analisar", "📒 Auditoria", "📊 Catálogo de odds", "🗓️ Calendário"])
+aba_analisar, aba_diagnostico, aba_scout, aba_auditoria, aba_catalogo, aba_calendario = st.tabs(["🎯 Analisar jogo", "🧪 Diagnóstico da liga", "🔎 Scout opcional", "📒 Auditoria", "📊 Catálogo", "🗓️ Ligas"])
 
-with tabs[0]:
-    with st.spinner("Carregando base..."):
-        df = carregar_base(LIGAS_CSV[liga_sel], janela)
+with st.spinner("Carregando base da liga..."):
+    df_liga = carregar_dados_liga(LIGAS_CSV[liga_sel], int(janela))
 
-    if df.empty:
-        st.error("Não consegui carregar a base da liga.")
-        st.stop()
+if df_liga.empty:
+    st.error("Não consegui carregar os dados históricos desta liga. Confira conexão, URL ou tente outra liga.")
+    st.stop()
 
-    times = sorted(df["Home"].dropna().unique().tolist())
-    c1, c2, c3, c4 = st.columns(4)
-    liga_metrics = metricas_liga(df)
-    c1.metric("Jogos na base", len(df))
-    c2.metric("Times", len(times))
-    c3.metric("Média gols liga", numero(liga_metrics["total_avg"], 2))
-    c4.metric("Over 2.5 liga", porcentagem(liga_metrics["over25"], 0))
+times_liga = sorted(df_liga["Home"].dropna().astype(str).unique().tolist())
 
+with aba_analisar:
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Jogos usados", len(df_liga))
+    m2.metric("Times", len(times_liga))
+    m3.metric("Média gols casa", fmt_num(float(df_liga["HG"].mean()), 2))
+    m4.metric("Média gols fora", fmt_num(float(df_liga["AG"].mean()), 2))
+
+    st.markdown("---")
     modo = st.radio("Modo de análise", ["Manual", "Automático pela API"], horizontal=True)
 
     odds: Dict[str, float] = {}
-    time_casa = times[0]
-    time_fora = times[min(1, len(times) - 1)]
+    time_casa = times_liga[0]
+    time_fora = times_liga[min(1, len(times_liga) - 1)]
     jogo_nome = ""
     origem = modo
-    data_jogo = date.today()
-    hora_jogo = ""
+    data_jogo_catalogo = date.today()
+    hora_jogo_catalogo = ""
     botao_analisar = False
-    botao_catalogo = False
 
     if modo == "Manual":
         st.markdown("### Jogo")
+        st.info("Modo principal recomendado: digite as odds reais da casa onde você vai apostar. Não misture Pixbet com odds de outras casas no mesmo jogo.")
         c1, c2 = st.columns(2)
         with c1:
-            time_casa = st.selectbox("Mandante", times, key="manual_home")
+            time_casa = st.selectbox("Mandante", times_liga, key="manual_casa")
         with c2:
-            time_fora = st.selectbox("Visitante", times, key="manual_away")
+            time_fora = st.selectbox("Visitante", times_liga, key="manual_fora")
 
         c1, c2 = st.columns(2)
         with c1:
-            data_jogo = st.date_input("Data do jogo", value=date.today(), key="manual_data")
+            data_jogo_catalogo = st.date_input("Data do jogo/mercado", value=date.today(), key="data_jogo")
         with c2:
-            hora_jogo = st.text_input("Hora", value="", placeholder="ex: 15:45", key="manual_hora")
+            hora_jogo_catalogo = st.text_input("Hora do jogo", value="", placeholder="ex: 15:45", key="hora_jogo")
 
         if time_casa == time_fora:
             st.warning("Mandante e visitante não podem ser o mesmo time.")
@@ -1610,266 +1509,318 @@ with tabs[0]:
             odds = coletar_odds_manuais("manual")
             c1, c2 = st.columns(2)
             with c1:
-                botao_analisar = st.button("ANALISAR JOGO", type="primary")
+                botao_analisar = st.button("ANALISAR PELA PLANILHA", type="primary")
             with c2:
-                botao_catalogo = st.button("SALVAR ODDS NO CATÁLOGO")
+                if st.button("SALVAR ODDS NO CATÁLOGO"):
+                    if not odds:
+                        st.error("Nenhuma odd válida para salvar.")
+                    else:
+                        catalogo = carregar_catalogo()
+                        catalogo = registrar_odds_catalogo(
+                            catalogo, liga_sel, jogo_nome, time_casa, time_fora, casa_apostas, odds,
+                            banca_usada, "Planilha Pura", data_jogo_catalogo, hora_jogo_catalogo,
+                            "Manual", "Odds salvas sem obrigação de aposta",
+                        )
+                        destino = salvar_catalogo(catalogo)
+                        st.success(f"Odds salvas. Destino: {destino}.")
 
     else:
         if not chave_api:
-            st.warning("Informe a chave da API na lateral ou use o modo manual.")
+            st.warning("Informe a chave da API ou use o modo Manual.")
         elif liga_sel not in LIGAS_API:
-            st.warning("Liga não mapeada na API. Use modo manual.")
+            st.warning("Liga sem mapeamento na API. Use o modo Manual.")
         else:
             jogos_api = buscar_odds_api(chave_api, LIGAS_API[liga_sel])
             if not jogos_api:
-                st.warning("API sem jogos/odds disponíveis agora para essa liga.")
+                st.warning("A API não retornou jogos/odds agora. Use Manual.")
             else:
-                opcoes = {}
                 agora = pd.Timestamp.now(tz="UTC")
+                opcoes = {}
                 for jogo in jogos_api:
                     try:
                         inicio = pd.to_datetime(jogo.get("commence_time"), utc=True)
                         if inicio <= agora:
                             continue
-                        label = f"{jogo.get('home_team')} x {jogo.get('away_team')} — {inicio.tz_convert('America/Sao_Paulo').strftime('%d/%m %H:%M')}"
+                        horario = inicio.tz_convert("America/Sao_Paulo").strftime("%d/%m %H:%M")
+                        label = f"{jogo.get('home_team')} x {jogo.get('away_team')} — {horario}"
                         opcoes[label] = jogo
                     except Exception:
                         continue
-
                 if not opcoes:
-                    st.info("A API respondeu, mas não há pré-jogo disponível.")
+                    st.warning("A API respondeu, mas não há partida pré-jogo disponível.")
                 else:
                     escolha = st.selectbox("Partida", list(opcoes.keys()))
                     jogo_api = opcoes[escolha]
+                    casa_api = jogo_api.get("home_team", "")
+                    fora_api = jogo_api.get("away_team", "")
+                    match_casa, score_casa = casar_time_seguro(casa_api, times_liga)
+                    match_fora, score_fora = casar_time_seguro(fora_api, times_liga)
 
-                    candidato_casa = casar_time_api(jogo_api.get("home_team", ""), times)
-                    candidato_fora = casar_time_api(jogo_api.get("away_team", ""), times)
-
-                    if candidato_casa is None or candidato_fora is None:
-                        st.error("Não consegui casar automaticamente um dos times da API com a base CSV. Isso agora BLOQUEIA análise automática para evitar jogo errado. Use modo manual.")
+                    if match_casa is None or match_fora is None:
+                        st.error("Não consegui casar com segurança os nomes da API com a base. Use modo Manual. O app não vai chutar time.")
+                        st.write({"API mandante": casa_api, "API visitante": fora_api})
                     else:
-                        time_casa = candidato_casa
-                        time_fora = candidato_fora
+                        st.success(f"Times casados: {casa_api} → {match_casa} ({score_casa:.0%}); {fora_api} → {match_fora} ({score_fora:.0%})")
                         c1, c2 = st.columns(2)
                         with c1:
-                            time_casa = st.selectbox("Mandante na base", times, index=times.index(time_casa), key="api_home")
+                            time_casa = st.selectbox("Mandante na base", times_liga, index=times_liga.index(match_casa), key="api_casa")
                         with c2:
-                            time_fora = st.selectbox("Visitante na base", times, index=times.index(time_fora), key="api_away")
+                            time_fora = st.selectbox("Visitante na base", times_liga, index=times_liga.index(match_fora), key="api_fora")
+                        odds, aviso_api = extrair_odds_api(jogo_api, casa_apostas)
                         jogo_nome = f"{time_casa} x {time_fora}"
-                        odds = extrair_odds_api(jogo_api)
-                        st.info(f"Cotações encontradas: {len(odds)} mercado(s).")
-                        botao_analisar = st.button("ANALISAR JOGO DA API", type="primary")
-
-    if botao_catalogo:
-        if not odds:
-            st.error("Nenhuma cotação válida para salvar.")
-        else:
-            cat = carregar_catalogo()
-            cat = registrar_odds_catalogo(cat, liga_sel, jogo_nome, time_casa, time_fora, casa_apostas, odds, banca_usada, perfil, data_jogo, hora_jogo, "Manual", "")
-            destino = salvar_catalogo(cat)
-            st.success(f"Odds salvas no catálogo. Destino: {destino}")
+                        if aviso_api:
+                            if "⚠️" in aviso_api:
+                                st.warning(aviso_api)
+                            else:
+                                st.info(aviso_api)
+                        st.info(f"Mercados com odd encontrados: {len(odds)}")
+                        botao_analisar = st.button("ANALISAR PELA PLANILHA", type="primary")
 
     if botao_analisar:
         if not odds:
-            st.error("Nenhuma cotação válida informada/encontrada.")
+            st.error("Nenhuma odd válida foi informada/encontrada.")
         elif time_casa == time_fora:
-            st.error("Jogo inválido: times iguais.")
+            st.error("Mandante e visitante não podem ser iguais.")
         else:
-            contexto = calcular_contexto(df, time_casa, time_fora)
-            probabilidades = calcular_probabilidades(contexto)
-            resultados = montar_resultados(probabilidades, odds, contexto, banca_usada, perfil, limite_total)
-            st.session_state["ultima_analise_v18"] = {
+            calc = calcular_planilha_pura(df_liga, time_casa, time_fora)
+            amostra_ok = int(calc["amostra_minima"]) >= int(amostra_minima)
+            motivo_bloqueio = ""
+            if not amostra_ok:
+                motivo_bloqueio = f"amostra baixa: {time_casa} em casa {calc['jogos_casa']} jogo(s), {time_fora} fora {calc['jogos_fora']} jogo(s). Mínimo configurado: {amostra_minima}."
+
+            resultados = avaliar_valor_planilha(
+                calc["probabilidades"], odds, banca_usada, fracao_kelly, margem_minima,
+                teto_por_entrada, teto_por_jogo, amostra_ok, motivo_bloqueio,
+            )
+
+            st.session_state["ultima_analise_v19"] = {
+                "id": str(pd.Timestamp.now().value),
                 "liga": liga_sel,
                 "jogo": jogo_nome,
                 "time_casa": time_casa,
                 "time_fora": time_fora,
-                "casa_apostas": casa_apostas,
                 "origem": origem,
-                "banca": float(banca_usada),
-                "perfil": perfil,
-                "data_jogo": str(data_jogo),
-                "contexto": contexto,
-                "probabilidades": probabilidades,
+                "casa_apostas": casa_apostas,
+                "banca": banca_usada,
+                "calc": calc,
                 "odds": odds,
-                "resultados": resultados,
+                "resultados": resultados.to_dict("records") if not resultados.empty else [],
+                "amostra_ok": amostra_ok,
+                "motivo_bloqueio": motivo_bloqueio,
+                "config": {
+                    "janela": rotulo_janela(janela),
+                    "fracao_kelly": fracao_kelly,
+                    "margem_minima": margem_minima,
+                    "teto_por_entrada": teto_por_entrada,
+                    "teto_por_jogo": teto_por_jogo,
+                    "amostra_minima": amostra_minima,
+                },
             }
 
-    analise = st.session_state.get("ultima_analise_v18")
+    analise = st.session_state.get("ultima_analise_v19")
     if analise:
+        calc = analise["calc"]
+        resultados = pd.DataFrame(analise["resultados"])
+        aprovadas = resultados[resultados["Veredito"].eq("VALOR (+EV)")].copy() if not resultados.empty else pd.DataFrame()
+
         st.markdown("---")
         st.subheader(f"Análise — {analise['jogo']}")
-        contexto = analise["contexto"]
-        resultados = analise["resultados"]
-        aprovadas = [r for r in resultados if r["apostar"]]
 
-        render_contexto(contexto, analise["time_casa"], analise["time_fora"])
-
-        if aprovadas:
-            total_rs = sum(float(r["entrada_rs"]) for r in aprovadas)
-            st.success(f"{len(aprovadas)} entrada(s) passaram. Total sugerido: {dinheiro(total_rs)}.")
+        if not analise.get("amostra_ok", False):
+            st.error(f"Trava operacional: {analise.get('motivo_bloqueio', '')}")
         else:
-            st.info("Nenhuma entrada passou. Isso é esperado quando há risco oculto, odd sem valor ou jogo com fogo/goleada.")
+            st.success("Amostra operacional aprovada. A partir daqui, quem manda é a margem +EV.")
 
-        st.markdown("### Decisões por mercado")
-        for r in resultados:
-            render_resultado(r, analise["banca"], analise["time_casa"], analise["time_fora"])
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Gols esp. casa", fmt_num(calc["gols_esperados_casa"], 2))
+        c2.metric("Gols esp. fora", fmt_num(calc["gols_esperados_fora"], 2))
+        c3.metric("Amostra casa", calc["jogos_casa"])
+        c4.metric("Amostra fora", calc["jogos_fora"])
+        c5.metric("Entradas +EV", len(aprovadas))
 
-        if aprovadas:
+        conf = classificar_confianca_estimativa(calc, resultados)
+        st.info(f"Confiança da estimativa: **{conf['nível']}** — {conf['motivos']}. Isto é aviso, não bloqueio.")
+
+        with st.expander("Ver cálculo de forças da planilha"):
+            dados_forca = pd.DataFrame([
+                {"Item": "Média gols casa liga", "Valor": calc["media_gols_casa_liga"]},
+                {"Item": f"{analise['time_casa']} gols feitos em casa", "Valor": calc["gols_feitos_casa"]},
+                {"Item": f"{analise['time_casa']} gols sofridos em casa", "Valor": calc["gols_sofridos_casa"]},
+                {"Item": f"{analise['time_casa']} força ataque casa", "Valor": calc["forca_ataque_casa"]},
+                {"Item": f"{analise['time_casa']} força defesa casa", "Valor": calc["forca_defesa_casa"]},
+                {"Item": "Média gols fora liga", "Valor": calc["media_gols_fora_liga"]},
+                {"Item": f"{analise['time_fora']} gols feitos fora", "Valor": calc["gols_feitos_fora"]},
+                {"Item": f"{analise['time_fora']} gols sofridos fora", "Valor": calc["gols_sofridos_fora"]},
+                {"Item": f"{analise['time_fora']} força ataque fora", "Valor": calc["forca_ataque_fora"]},
+                {"Item": f"{analise['time_fora']} força defesa fora", "Valor": calc["forca_defesa_fora"]},
+            ])
+            dados_forca["Valor"] = dados_forca["Valor"].map(lambda x: fmt_num(float(x), 3))
+            st.dataframe(dados_forca, use_container_width=True, hide_index=True)
+
+        if calc.get("cantos"):
+            with st.expander("Cantos — leitura simples da planilha"):
+                cantos = calc["cantos"]
+                linha_cantos = st.number_input("Linha total de cantos da casa", min_value=0.0, value=10.0, step=0.5)
+                dif = float(cantos["cantos_total"]) - float(linha_cantos)
+                if abs(dif) < 0.75:
+                    msg = "RISCO ALTO / linha justa demais"
+                elif dif > 0:
+                    msg = "Tendência Over cantos"
+                else:
+                    msg = "Tendência Under cantos"
+                st.write(f"Previsão total: **{fmt_num(cantos['cantos_total'], 2)}** | Linha: **{fmt_num(linha_cantos, 1)}** | Diferença: **{fmt_num(dif, 2)}** | {msg}")
+
+        if resultados.empty:
+            st.warning("Nenhum mercado com odd válida para comparar.")
+        else:
+            st.markdown("### Tabela da planilha")
+            st.dataframe(formatar_tabela_resultados(resultados), use_container_width=True, hide_index=True)
+
+            if not aprovadas.empty:
+                total_entrada = float(aprovadas["Entrada R$"].sum())
+                st.success(f"A planilha encontrou {len(aprovadas)} mercado(s) com VALOR (+EV). Total sugerido: {fmt_dinheiro(total_entrada)}.")
+                for _, r in aprovadas.iterrows():
+                    st.markdown(
+                        f"""
+                        <div class="card-ev">
+                            <div class="big-green">VALOR (+EV)</div>
+                            <h3>{r['Mercado']}</h3>
+                            <p><b>Probabilidade:</b> {fmt_pct(float(r['Probabilidade']), 1)} | <b>Odd justa:</b> {fmt_num(float(r['Odd justa']), 2)} | <b>Odd real:</b> {fmt_num(float(r['Odd real']), 2)}</p>
+                            <p><b>Margem:</b> {fmt_pct(float(r['Margem +EV']), 1)} | <b>Stake:</b> {fmt_pct(float(r['Stake %']), 2)} | <b>Entrada:</b> {fmt_dinheiro(float(r['Entrada R$']))}</p>
+                            <p class="muted"><b>Motivo:</b> {r['Motivo']}</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("Nenhum mercado ficou +EV com as odds informadas.")
+
+        if not aprovadas.empty:
             st.markdown("---")
-            st.markdown("### Registrar na auditoria")
-            auditoria = carregar_auditoria()
-            analise_id = str(uuid.uuid4())[:6]
-            escolhidas = []
-            with st.form(key=f"form_reg_{analise_id}"):
-                for i, r in enumerate(aprovadas):
-                    label = f"{nome_mercado(r['mercado'], analise['time_casa'], analise['time_fora'])} — {numero(r['odd'],2)} — {dinheiro(r['entrada_rs'])}"
-                    if st.checkbox(label, value=True, key=f"reg_{analise_id}_{i}"):
-                        escolhidas.append(r)
-                obs = st.text_area("Observação", value="", placeholder="Ex: escalação conferida, odds Pixbet, sem cashout...")
-                salvar = st.form_submit_button("SALVAR ENTRADAS MARCADAS", type="primary")
+            st.markdown("### Registrar entradas +EV na auditoria")
+            with st.form(key=f"form_registrar_v19_{analise['id']}"):
+                escolhidas_idx = []
+                for idx, r in aprovadas.iterrows():
+                    label = f"Registrar {r['Mercado']} — odd {fmt_num(float(r['Odd real']), 2)} — {fmt_dinheiro(float(r['Entrada R$']))}"
+                    if st.checkbox(label, value=True, key=f"check_{analise['id']}_{idx}"):
+                        escolhidas_idx.append(idx)
+                obs = st.text_area("Observação", value="", placeholder="Ex: Pixbet, odd conferida, escalação ok...", key=f"obs_{analise['id']}")
+                salvar = st.form_submit_button("SALVAR MARCADAS NA AUDITORIA", type="primary")
 
             if salvar:
-                if not escolhidas:
+                if not escolhidas_idx:
                     st.warning("Nenhuma entrada marcada.")
                 else:
-                    for r in escolhidas:
+                    auditoria = carregar_auditoria()
+                    for idx in escolhidas_idx:
+                        r = resultados.loc[idx]
                         auditoria = registrar_entrada(
-                            auditoria,
+                            auditoria=auditoria,
                             liga=analise["liga"],
                             jogo=analise["jogo"],
                             casa_apostas=analise["casa_apostas"],
-                            mercado=r["mercado"],
-                            selecao=selecao_mercado(r["mercado"], analise["time_casa"], analise["time_fora"]),
-                            resultado=r,
-                            banca=analise["banca"],
-                            origem="Motor V18",
-                            obs=obs,
-                            data_jogo=analise.get("data_jogo", ""),
+                            mercado=str(r["Mercado"]),
+                            odd=float(r["Odd real"]),
+                            prob=float(r["Probabilidade"]),
+                            odd_justa=float(r["Odd justa"]),
+                            margem=float(r["Margem +EV"]),
+                            entrada_pct=float(r["Stake %"]),
+                            entrada_rs=float(r["Entrada R$"]),
+                            banca_antes=float(analise["banca"]),
+                            origem=str(analise["origem"]),
+                            observacao=(obs + f" | V19.2 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']}").strip(),
                         )
                     destino = salvar_auditoria(auditoria)
-                    st.success(f"Entradas salvas. Destino: {destino}")
+                    st.success(f"Entradas salvas. Destino: {destino}.")
 
-        if st.button("LIMPAR ANÁLISE"):
-            st.session_state.pop("ultima_analise_v18", None)
+        if st.button("LIMPAR ÚLTIMA ANÁLISE"):
+            st.session_state.pop("ultima_analise_v19", None)
             st.rerun()
 
-with tabs[1]:
-    st.subheader("Auditoria operacional")
-    auditoria = carregar_auditoria()
-    banca_calc = banca_atual(float(banca_inicial), auditoria)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Banca inicial", dinheiro(banca_inicial))
-    c2.metric("Banca auditada", dinheiro(banca_calc))
-    c3.metric("Resultado total", dinheiro(banca_calc - float(banca_inicial)))
+with aba_diagnostico:
+    st.subheader("Diagnóstico científico da liga")
+    st.caption("Esta aba não decide aposta. Ela só mostra se a distribuição de gols da liga parece razoavelmente compatível com Poisson.")
+    diag = diagnostico_poisson_liga(df_liga)
 
-    cfg = config_google()
-    if cfg.get("configurado"):
-        st.success("Google Sheets configurado para auditoria/catálogo.")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("### Mandante")
+        s = diag["casa_stats"]
+        st.metric("Média gols mandante", fmt_num(s.get("media", 0.0), 2))
+        st.metric("Aderência", str(s.get("aderencia", "-")))
+        st.caption(f"p-valor indicativo: {fmt_num(s.get('p_valor', np.nan), 4) if np.isfinite(s.get('p_valor', np.nan)) else '-'}")
+        st.dataframe(diag["casa_tabela"], use_container_width=True, hide_index=True)
+    with c2:
+        st.markdown("### Visitante")
+        s = diag["fora_stats"]
+        st.metric("Média gols visitante", fmt_num(s.get("media", 0.0), 2))
+        st.metric("Aderência", str(s.get("aderencia", "-")))
+        st.caption(f"p-valor indicativo: {fmt_num(s.get('p_valor', np.nan), 4) if np.isfinite(s.get('p_valor', np.nan)) else '-'}")
+        st.dataframe(diag["fora_tabela"], use_container_width=True, hide_index=True)
+
+    st.info(
+        "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
+        "A decisão da V19.2 continua sendo pela planilha: odd real contra odd justa."
+    )
+
+
+with aba_scout:
+    st.subheader("Scout opcional")
+    st.caption("Finalizações, chutes no alvo, escanteios e cartões entram aqui quando o CSV da liga traz essas colunas. Isto é diagnóstico, não veto automático.")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        scout_casa = st.selectbox("Mandante para scout", times_liga, key="scout_casa")
+    with c2:
+        scout_fora = st.selectbox("Visitante para scout", times_liga, index=min(1, len(times_liga)-1), key="scout_fora")
+
+    if scout_casa == scout_fora:
+        st.warning("Escolha times diferentes.")
     else:
-        st.warning("Google Sheets não configurado. O backup local pode sumir no Streamlit Cloud ao reiniciar.")
+        tabela_scout, avisos_scout = calcular_scout_opcional(df_liga, scout_casa, scout_fora)
+        st.dataframe(tabela_scout, use_container_width=True, hide_index=True)
+        for aviso in avisos_scout:
+            st.caption("• " + aviso)
 
-    with st.expander("Adicionar entrada manual"):
-        c1, c2 = st.columns(2)
-        with c1:
-            aud_liga = st.text_input("Liga", value=liga_sel, key="aud_liga")
-            aud_jogo = st.text_input("Jogo", value="", key="aud_jogo")
-            aud_mercado = st.selectbox("Mercado", MERCADOS, key="aud_mercado")
-            aud_selecao = st.text_input("Seleção", value="", key="aud_selecao")
-        with c2:
-            aud_casa = st.selectbox("Casa", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"], key="aud_casa")
-            aud_odd = st.text_input("Cotação", value="", key="aud_odd")
-            aud_valor = st.text_input("Entrada R$", value="", key="aud_valor")
-            aud_banca = st.number_input("Banca antes", min_value=0.0, value=float(banca_calc), step=10.0, key="aud_banca")
-        aud_obs = st.text_input("Observação", value="", key="aud_obs")
-        if st.button("SALVAR ENTRADA MANUAL"):
-            odd = texto_para_float(aud_odd)
-            ent = texto_para_float(aud_valor)
-            if not aud_jogo.strip() or not odd_valida(odd) or ent is None or ent <= 0:
-                st.error("Preencha jogo, cotação válida e valor.")
-            else:
-                fake = {
-                    "odd": float(odd), "odd_justa": 0.0, "probabilidade": 0.0,
-                    "valor": 0.0, "percentual": safe_div(ent, aud_banca, 0.0),
-                    "entrada_rs": float(ent),
-                }
-                auditoria = registrar_entrada(
-                    auditoria, aud_liga, aud_jogo, aud_casa, aud_mercado,
-                    aud_selecao or aud_mercado, fake, float(aud_banca), "Manual livre", aud_obs
-                )
-                destino = salvar_auditoria(auditoria)
-                st.success(f"Entrada manual salva. Destino: {destino}")
+        modelo_scout = calcular_planilha_pura(df_liga, scout_casa, scout_fora)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Gols esperados casa", fmt_num(modelo_scout["gols_esperados_casa"], 2))
+        c2.metric("Gols esperados fora", fmt_num(modelo_scout["gols_esperados_fora"], 2))
+        c3.metric("Total esperado", fmt_num(modelo_scout["gols_esperados_casa"] + modelo_scout["gols_esperados_fora"], 2))
 
-    st.markdown("### Fechar entrada")
-    if auditoria.empty:
-        st.info("Ainda não há entradas.")
-    else:
-        pendentes = auditoria[auditoria["Status"].astype(str) == "Pendente"].copy()
-        if pendentes.empty:
-            st.info("Sem pendentes.")
-        else:
-            labels = []
-            mapa = {}
-            for idx, row in pendentes.iterrows():
-                label = f"{row['ID']} — {row['Jogo']} — {row['Mercado']} — {dinheiro(texto_para_float(row['Entrada R$']) or 0)}"
-                labels.append(label)
-                mapa[label] = idx
-            escolha = st.selectbox("Entrada", labels)
-            idx = mapa[escolha]
-            row = auditoria.loc[idx]
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                status = st.selectbox("Resultado", ["Green", "Red", "Void", "Cashout"])
-            with c2:
-                odd_close_txt = st.text_input("Odd fechamento", value="")
-            with c3:
-                cashout = st.number_input("Cashout recebido", min_value=0.0, value=0.0, step=1.0)
-            obs_close = st.text_input("Observação fechamento", value="")
-            if st.button("FECHAR ENTRADA"):
-                entrada = texto_para_float(row["Entrada R$"]) or 0.0
-                odd_ent = texto_para_float(row["Cotação de entrada"]) or 0.0
-                res = fechar_resultado(status, entrada, odd_ent, cashout)
-                odd_close = texto_para_float(odd_close_txt)
-                vantagem = ""
-                if odd_valida(odd_close) and odd_ent > 0:
-                    vantagem = round(((odd_ent / float(odd_close)) - 1.0) * 100.0, 2)
-                banca_depois = (texto_para_float(row["Banca antes"]) or 0.0) + res
-                auditoria.loc[idx, "Status"] = status
-                auditoria.loc[idx, "Resultado R$"] = round(res, 2)
-                auditoria.loc[idx, "Banca depois"] = round(banca_depois, 2)
-                auditoria.loc[idx, "Cotação de fechamento"] = odd_close if odd_close is not None else ""
-                auditoria.loc[idx, "Vantagem no fechamento %"] = vantagem
-                auditoria.loc[idx, "Observação"] = str(row.get("Observação", "")) + " | Fechamento: " + obs_close
-                destino = salvar_auditoria(auditoria)
-                st.success(f"Entrada fechada. Destino: {destino}")
+        if modelo_scout.get("cantos"):
+            cantos = modelo_scout["cantos"]
+            st.markdown("### Escanteios previstos pela lógica simples")
+            cc1, cc2, cc3 = st.columns(3)
+            cc1.metric("Cantos casa", fmt_num(cantos["cantos_casa"], 2))
+            cc2.metric("Cantos fora", fmt_num(cantos["cantos_fora"], 2))
+            cc3.metric("Total cantos", fmt_num(cantos["cantos_total"], 2))
 
-        st.markdown("### Histórico")
-        auditoria = carregar_auditoria()
-        st.dataframe(normalizar_df(auditoria, COLUNAS_AUDITORIA).tail(500), use_container_width=True, hide_index=True)
-        csv = auditoria.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("BAIXAR AUDITORIA CSV", data=csv, file_name="auditoria_tex_v18.csv", mime="text/csv")
-        xb = excel_bytes({"Auditoria": auditoria})
-        if xb:
-            st.download_button("BAIXAR AUDITORIA EXCEL", data=xb, file_name="auditoria_tex_v18.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-with tabs[2]:
+with aba_catalogo:
     st.subheader("Catálogo de odds")
+    cfg = obter_config_google()
+    if cfg.get("configurado"):
+        st.success(f"Google Sheets ativo. Aba: {cfg['worksheet_catalogo']}.")
+    else:
+        st.warning("Google Sheets não configurado. O backup local pode sumir em reinicializações do Streamlit Cloud.")
+
     catalogo = carregar_catalogo()
     if catalogo.empty:
         st.info("Ainda não há odds salvas.")
     else:
         f1, f2, f3 = st.columns(3)
         with f1:
-            filtro_liga = st.multiselect("Liga", sorted(catalogo["Liga"].dropna().unique().tolist()))
-        with f2:
             filtro_casa = st.multiselect("Casa", sorted(catalogo["Casa de apostas"].dropna().unique().tolist()))
+        with f2:
+            filtro_liga = st.multiselect("Liga", sorted(catalogo["Liga"].dropna().unique().tolist()))
         with f3:
             busca = st.text_input("Buscar jogo/time", value="")
         filtrado = catalogo.copy()
-        if filtro_liga:
-            filtrado = filtrado[filtrado["Liga"].isin(filtro_liga)]
         if filtro_casa:
             filtrado = filtrado[filtrado["Casa de apostas"].isin(filtro_casa)]
+        if filtro_liga:
+            filtrado = filtrado[filtrado["Liga"].isin(filtro_liga)]
         if busca.strip():
             termo = busca.strip().lower()
             filtrado = filtrado[
@@ -1877,44 +1828,139 @@ with tabs[2]:
                 | filtrado["Mandante"].astype(str).str.lower().str.contains(termo, na=False)
                 | filtrado["Visitante"].astype(str).str.lower().str.contains(termo, na=False)
             ]
-
-        st.dataframe(normalizar_df(filtrado, COLUNAS_CATALOGO).tail(500), use_container_width=True, hide_index=True)
+        st.dataframe(remover_colunas_duplicadas(filtrado).tail(500), use_container_width=True, hide_index=True)
         csv = filtrado.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("BAIXAR CATÁLOGO CSV", data=csv, file_name="catalogo_odds_tex_v18.csv", mime="text/csv")
-        xb = excel_bytes({"Catalogo": filtrado})
-        if xb:
-            st.download_button("BAIXAR CATÁLOGO EXCEL", data=xb, file_name="catalogo_odds_tex_v18.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("BAIXAR CATÁLOGO CSV", data=csv, file_name="catalogo_odds_tex_v19_1.csv", mime="text/csv")
 
-with tabs[3]:
-    st.subheader("Calendário operacional das ligas")
-    st.warning("Use isto como mapa operacional, não como lista oficial de jogos. Confira sempre a casa/API antes.")
-    cal = pd.DataFrame(CALENDARIO_LIGAS)
-    mes = st.selectbox("Mês", ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"], index=datetime.now().month - 1)
-    st.dataframe(cal[["Liga", mes]], use_container_width=True, hide_index=True)
+with aba_auditoria:
+    st.subheader("Auditoria")
+    cfg = obter_config_google()
+    if cfg.get("configurado"):
+        st.success(f"Google Sheets ativo. Aba: {cfg['worksheet_auditoria']}.")
+    else:
+        st.warning("Google Sheets não configurado. Use com cuidado no Streamlit Cloud.")
 
-    st.markdown("### Conferir jogos agora pela API")
-    ligas_check = st.multiselect("Ligas para consultar", list(LIGAS_API.keys()), default=[liga_sel] if liga_sel in LIGAS_API else [])
-    if st.button("VERIFICAR JOGOS DISPONÍVEIS"):
-        if not chave_api:
-            st.warning("Informe a chave da API na lateral.")
-        else:
-            encontrados = []
-            agora = pd.Timestamp.now(tz="UTC")
-            for liga_nome in ligas_check:
-                dados = buscar_odds_api(chave_api, LIGAS_API[liga_nome])
-                for jogo in dados or []:
-                    try:
-                        inicio = pd.to_datetime(jogo.get("commence_time"), utc=True)
-                        if inicio > agora:
-                            encontrados.append({
-                                "Liga": liga_nome,
-                                "Jogo": f"{jogo.get('home_team')} x {jogo.get('away_team')}",
-                                "Data/Hora": inicio.tz_convert("America/Sao_Paulo").strftime("%d/%m %H:%M"),
-                            })
-                    except Exception:
-                        continue
-            if encontrados:
-                st.success(f"Encontrei {len(encontrados)} jogo(s).")
-                st.dataframe(pd.DataFrame(encontrados), use_container_width=True, hide_index=True)
+    auditoria = carregar_auditoria()
+    banca_calc = banca_atual(banca_inicial, auditoria)
+    lucro = banca_calc - float(banca_inicial)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Banca inicial", fmt_dinheiro(banca_inicial))
+    c2.metric("Banca auditada", fmt_dinheiro(banca_calc))
+    c3.metric("Resultado total", fmt_dinheiro(lucro))
+
+    resumo_adv = resumo_auditoria_avancado(auditoria)
+    if resumo_adv:
+        st.markdown("---")
+        st.markdown("### Auditoria inteligente")
+        geral_fmt = resumo_adv["geral"].copy()
+        for col in ["Apostado", "Resultado"]:
+            geral_fmt[col] = geral_fmt[col].map(fmt_dinheiro)
+        for col in ["Taxa acerto", "ROI"]:
+            geral_fmt[col] = geral_fmt[col].map(lambda x: fmt_pct(x, 2))
+        st.dataframe(geral_fmt, use_container_width=True, hide_index=True)
+
+        a1, a2, a3 = st.tabs(["Por mercado", "Por liga", "Por faixa de odd"])
+        for aba_tmp, chave in [(a1, "por_mercado"), (a2, "por_liga"), (a3, "por_faixa_odd")]:
+            with aba_tmp:
+                t = resumo_adv[chave].copy()
+                for col in ["Apostado", "Resultado"]:
+                    t[col] = t[col].map(fmt_dinheiro)
+                for col in ["Taxa acerto", "ROI"]:
+                    t[col] = t[col].map(lambda x: fmt_pct(x, 2))
+                st.dataframe(t, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.markdown("### Lançar entrada manual")
+    with st.expander("Adicionar entrada feita fora do motor"):
+        c1, c2 = st.columns(2)
+        with c1:
+            aud_liga = st.text_input("Liga", value=liga_sel, key="aud_liga")
+            aud_jogo = st.text_input("Jogo", value="", placeholder="Ex: Bournemouth x Man City", key="aud_jogo")
+            aud_mercado = st.selectbox("Mercado", MERCADOS_NUCLEO, key="aud_mercado")
+            aud_casa = st.selectbox("Casa", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"], key="aud_casa")
+        with c2:
+            aud_odd = st.text_input("Odd", value="", key="aud_odd")
+            aud_entrada = st.text_input("Entrada R$", value="", key="aud_entrada")
+            aud_banca = st.number_input("Banca antes", min_value=0.0, value=float(banca_calc), step=10.0, key="aud_banca")
+            aud_obs = st.text_input("Observação", value="", key="aud_obs")
+        if st.button("SALVAR ENTRADA MANUAL"):
+            odd = texto_para_float(aud_odd)
+            entrada = texto_para_float(aud_entrada)
+            if not odd_valida(odd) or entrada is None or entrada <= 0 or not aud_jogo.strip():
+                st.error("Preencha jogo, odd válida e entrada.")
             else:
-                st.info("Nenhum jogo pré-jogo encontrado nas ligas consultadas.")
+                percentual = float(entrada) / float(aud_banca) if aud_banca > 0 else 0.0
+                auditoria = registrar_entrada(
+                    auditoria, aud_liga, aud_jogo, aud_casa, aud_mercado,
+                    float(odd), 0.0, 0.0, 0.0, percentual, float(entrada), float(aud_banca),
+                    "Manual livre", aud_obs,
+                )
+                destino = salvar_auditoria(auditoria)
+                st.success(f"Entrada salva. Destino: {destino}.")
+
+    st.markdown("---")
+    st.markdown("### Fechar resultado")
+    auditoria = carregar_auditoria()
+    if auditoria.empty:
+        st.info("Ainda não há entradas.")
+    else:
+        pendentes = auditoria[auditoria["Status"].astype(str).eq("Pendente")].copy()
+        if pendentes.empty:
+            st.info("Não há entradas pendentes.")
+        else:
+            labels = []
+            mapa = {}
+            for idx, row in pendentes.iterrows():
+                label = f"{row['ID']} — {row['Jogo']} — {row['Mercado']} — {fmt_dinheiro(texto_para_float(row['Entrada R$']) or 0)}"
+                labels.append(label)
+                mapa[label] = idx
+            escolha = st.selectbox("Entrada", labels)
+            idx = mapa[escolha]
+            row = auditoria.loc[idx]
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                status = st.selectbox("Resultado", ["Green", "Red", "Void", "Cashout"], key="status_fechar")
+            with c2:
+                odd_fechamento_txt = st.text_input("Odd fechamento", value="", key="odd_fechamento")
+            with c3:
+                cashout = st.number_input("Valor cashout recebido", min_value=0.0, value=0.0, step=1.0, key="cashout")
+            obs_fechamento = st.text_input("Observação fechamento", value="", key="obs_fechamento")
+            if st.button("FECHAR ENTRADA"):
+                entrada_rs = float(texto_para_float(row["Entrada R$"]) or 0.0)
+                odd_entrada = float(texto_para_float(row["Cotação de entrada"]) or 0.0)
+                resultado_rs = calcular_resultado(status, entrada_rs, odd_entrada, cashout)
+                odd_fechamento = texto_para_float(odd_fechamento_txt)
+                vantagem = ""
+                if odd_valida(odd_fechamento) and odd_entrada > 0:
+                    vantagem = round(((odd_entrada / float(odd_fechamento)) - 1.0) * 100.0, 2)
+                banca_depois = float(texto_para_float(row["Banca antes"]) or 0.0) + resultado_rs
+                auditoria.loc[idx, "Status"] = status
+                auditoria.loc[idx, "Resultado R$"] = round(resultado_rs, 2)
+                auditoria.loc[idx, "Banca depois"] = round(banca_depois, 2)
+                auditoria.loc[idx, "Cotação de fechamento"] = odd_fechamento if odd_fechamento is not None else ""
+                auditoria.loc[idx, "Vantagem no fechamento %"] = vantagem
+                auditoria.loc[idx, "Observação"] = str(row.get("Observação", "")) + " | Fechamento: " + obs_fechamento
+                destino = salvar_auditoria(auditoria)
+                st.success(f"Entrada fechada. Destino: {destino}.")
+
+    st.markdown("---")
+    st.markdown("### Histórico")
+    auditoria = carregar_auditoria()
+    if auditoria.empty:
+        st.info("Nenhum registro ainda.")
+    else:
+        st.dataframe(remover_colunas_duplicadas(auditoria).tail(500), use_container_width=True, hide_index=True)
+        csv = auditoria.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("BAIXAR AUDITORIA CSV", data=csv, file_name="auditoria_tex_v19_1.csv", mime="text/csv")
+
+with aba_calendario:
+    st.subheader("Ligas cobertas")
+    st.caption("A trava operacional mais importante é esta: só use a liga exatamente correspondente à base do app.")
+    mapa = pd.DataFrame(CALENDARIO_LIGAS)
+    st.dataframe(mapa, use_container_width=True, hide_index=True)
+    st.markdown(
+        """
+        **Regra prática:** se a casa de apostas mostrar uma competição parecida, mas não igual, não force.
+        Exemplo: Allsvenskan não é Ettan; Veikkausliiga não é Ykkönen; MLS não é MLS Next Pro.
+        """
+    )
