@@ -4,6 +4,7 @@ import json
 import uuid
 import difflib
 import html
+import time
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
 
@@ -14,7 +15,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.3.1 — PURE SHEET MANUAL + SAMPLE POLICY
+# TEX STATISTICS V19.3.2 — PURE SHEET MANUAL + GOOGLE ECONOMY
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -23,7 +24,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.3.1 Amostra Inteligente", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.3.2 Google Economy", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -371,6 +372,8 @@ ARQUIVO_AUDITORIA = "logs/auditoria_tex_v19_1.csv"  # mantém histórico da V19
 ARQUIVO_CATALOGO = "logs/catalogo_odds_tex_v19_1.csv"  # mantém histórico da V19
 GOOGLE_SHEETS_WORKSHEET_CATALOGO = "catalogo_odds"
 GOOGLE_SHEETS_WORKSHEET_AUDITORIA = "auditoria_entradas"
+GOOGLE_CACHE_TTL_SEG = 300  # evita estourar quota do Google Sheets em reruns do Streamlit
+GOOGLE_COOLDOWN_SEG = 75    # espera depois de erro de quota
 
 CALENDARIO_LIGAS = [
     {"Liga": "Brasileirão Série A", "Observação": "Use somente Série A. Não misture estaduais, Copa do Brasil, Série B, Sub-20 ou feminino."},
@@ -1443,29 +1446,76 @@ def conectar_google_sheets():
         return None
 
 
-def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
-    """Obtém ou cria uma aba no Google Sheets de forma segura.
+def _cache_key_google(nome: str) -> str:
+    safe = str(nome).strip().lower().replace(" ", "_")
+    return f"_google_cache_df_{safe}"
 
-    Correção V19.3:
-    antes o app capturava qualquer erro ao procurar a aba e tentava criar uma nova.
-    Se a aba já existia, o Google retornava: "A sheet with the name ... already exists".
-    Agora o app só cria a aba quando ela realmente não existe e, se o Google acusar
-    duplicidade, tenta reabrir a aba existente.
+
+def _cache_time_key_google(nome: str) -> str:
+    safe = str(nome).strip().lower().replace(" ", "_")
+    return f"_google_cache_ts_{safe}"
+
+
+def _google_cooldown_ativo() -> bool:
+    return float(st.session_state.get("_google_cooldown_until", 0.0)) > time.time()
+
+
+def _segundos_cooldown_google() -> int:
+    restante = float(st.session_state.get("_google_cooldown_until", 0.0)) - time.time()
+    return max(0, int(restante))
+
+
+def _erro_quota_google(exc: Exception) -> bool:
+    txt = str(exc).lower()
+    return (
+        "quota exceeded" in txt
+        or "read requests per minute" in txt
+        or "write requests per minute" in txt
+        or "resource_exhausted" in txt
+        or "429" in txt
+    )
+
+
+def _ativar_cooldown_google(exc: Exception) -> None:
+    st.session_state["_google_cooldown_until"] = time.time() + GOOGLE_COOLDOWN_SEG
+    st.session_state["_google_ultimo_erro"] = str(exc)
+
+
+def _pegar_cache_google(nome: str, colunas: List[str], aceitar_vencido: bool = True) -> Optional[pd.DataFrame]:
+    key = _cache_key_google(nome)
+    ts_key = _cache_time_key_google(nome)
+    if key not in st.session_state:
+        return None
+    idade = time.time() - float(st.session_state.get(ts_key, 0.0))
+    if idade <= GOOGLE_CACHE_TTL_SEG or aceitar_vencido:
+        try:
+            return normalizar_colunas(st.session_state[key].copy(), colunas)
+        except Exception:
+            return None
+    return None
+
+
+def _salvar_cache_google(nome: str, df: pd.DataFrame, colunas: List[str]) -> None:
+    st.session_state[_cache_key_google(nome)] = normalizar_colunas(df, colunas).copy()
+    st.session_state[_cache_time_key_google(nome)] = time.time()
+
+
+def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
+    """Obtém ou cria uma aba no Google Sheets sem fazer leituras desnecessárias.
+
+    V19.3.2: o Streamlit reroda o script a cada clique. Antes, o app lia o Google
+    Sheets várias vezes por rerun e batia quota de leitura. Agora o Google fica em
+    modo economia: leitura só por cache ou sincronização manual, com cooldown quando
+    aparecer quota 429.
     """
+    if _google_cooldown_ativo():
+        return None
+
     planilha = conectar_google_sheets()
     if planilha is None:
         return None
 
     nome_limpo = str(nome).strip()
-
-    def procurar_aba_existente():
-        try:
-            for ws in planilha.worksheets():
-                if str(ws.title).strip().lower() == nome_limpo.lower():
-                    return ws
-        except Exception:
-            return None
-        return None
 
     try:
         try:
@@ -1473,67 +1523,109 @@ def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
         except Exception:
             WorksheetNotFound = Exception
 
-        aba = procurar_aba_existente()
-        if aba is None:
+        try:
+            return planilha.worksheet(nome_limpo)
+        except WorksheetNotFound:
             try:
-                aba = planilha.worksheet(nome_limpo)
-            except WorksheetNotFound:
-                try:
-                    aba = planilha.add_worksheet(
-                        title=nome_limpo,
-                        rows=linhas,
-                        cols=max(20, len(colunas) + 4),
-                    )
-                except Exception as exc_criar:
-                    # Caso o Google diga que a aba já existe, reabre a existente.
-                    if "already exists" in str(exc_criar).lower() or "já existe" in str(exc_criar).lower():
-                        aba = procurar_aba_existente() or planilha.worksheet(nome_limpo)
-                    else:
-                        raise exc_criar
-            except Exception as exc_buscar:
-                # Erro transitório/API: antes de desistir, tenta localizar pela lista de abas.
-                aba = procurar_aba_existente()
-                if aba is None:
-                    raise exc_buscar
-
-        valores = aba.get_all_values()
-        if not valores:
-            aba.update("A1", [colunas], value_input_option="USER_ENTERED")
-        return aba
+                aba = planilha.add_worksheet(
+                    title=nome_limpo,
+                    rows=linhas,
+                    cols=max(20, len(colunas) + 4),
+                )
+                # escreve cabeçalho somente na criação; não lê a aba só para checar vazio
+                aba.update("A1", [colunas], value_input_option="USER_ENTERED")
+                return aba
+            except Exception as exc_criar:
+                if "already exists" in str(exc_criar).lower() or "já existe" in str(exc_criar).lower():
+                    return planilha.worksheet(nome_limpo)
+                raise exc_criar
     except Exception as exc:
-        st.warning(f"Não consegui acessar a aba {nome_limpo} no Google Sheets. Detalhe: {exc}")
+        if _erro_quota_google(exc):
+            _ativar_cooldown_google(exc)
+            st.warning(
+                f"Google Sheets bateu limite de quota. Vou usar cache/backup local por {_segundos_cooldown_google()}s. "
+                "Isso não altera o motor da planilha."
+            )
+        else:
+            st.warning(f"Não consegui acessar a aba {nome_limpo} no Google Sheets. Detalhe: {exc}")
         return None
 
 
-def carregar_google(nome: str, colunas: List[str]) -> Optional[pd.DataFrame]:
+def carregar_google(nome: str, colunas: List[str], force: bool = False) -> Optional[pd.DataFrame]:
+    """Carrega uma aba do Google com cache agressivo.
+
+    Por padrão NÃO lê o Google a cada rerun. Para forçar leitura, use force=True
+    através dos botões de sincronização manual.
+    """
+    cache = _pegar_cache_google(nome, colunas, aceitar_vencido=True)
+
+    # Sem force, usa cache se existir e evita chamada ao Google. Se não existir cache,
+    # devolve None para cair no backup local. Isso impede estouro de quota no sidebar.
+    if not force:
+        return cache
+
+    if _google_cooldown_ativo():
+        if cache is not None:
+            st.info(f"Google em cooldown por {_segundos_cooldown_google()}s; usando última cópia em cache.")
+            return cache
+        return None
+
     aba = obter_aba(nome, colunas)
     if aba is None:
-        return None
+        return cache
+
     try:
         valores = aba.get_all_values()
         if not valores:
-            return pd.DataFrame(columns=colunas)
-        cabecalho = [str(c).strip() for c in valores[0]]
-        linhas = valores[1:]
-        df = pd.DataFrame(linhas, columns=cabecalho)
-        return normalizar_colunas(df, colunas)
+            df = pd.DataFrame(columns=colunas)
+            try:
+                aba.update("A1", [colunas], value_input_option="USER_ENTERED")
+            except Exception:
+                pass
+        else:
+            cabecalho = [str(c).strip() for c in valores[0]]
+            linhas = valores[1:]
+            df = pd.DataFrame(linhas, columns=cabecalho)
+            df = normalizar_colunas(df, colunas)
+        _salvar_cache_google(nome, df, colunas)
+        return df
     except Exception as exc:
-        st.warning(f"Não consegui ler {nome} no Google Sheets. Detalhe: {exc}")
-        return None
+        if _erro_quota_google(exc):
+            _ativar_cooldown_google(exc)
+            st.warning(
+                f"Google Sheets bateu quota de leitura. Usando cache/backup local por {_segundos_cooldown_google()}s."
+            )
+        else:
+            st.warning(f"Não consegui ler {nome} no Google Sheets. Detalhe: {exc}")
+        return cache
 
 
 def salvar_google(nome: str, df: pd.DataFrame, colunas: List[str]) -> bool:
+    if _google_cooldown_ativo():
+        _salvar_cache_google(nome, df, colunas)
+        return False
+
     aba = obter_aba(nome, colunas)
     if aba is None:
+        _salvar_cache_google(nome, df, colunas)
         return False
+
     try:
         base = normalizar_colunas(df, colunas).astype(str)
         valores = [colunas] + base.values.tolist()
         aba.clear()
         aba.update("A1", valores, value_input_option="USER_ENTERED")
+        _salvar_cache_google(nome, base, colunas)
         return True
     except Exception as exc:
-        st.warning(f"Não consegui salvar {nome} no Google Sheets. Detalhe: {exc}")
+        _salvar_cache_google(nome, df, colunas)
+        if _erro_quota_google(exc):
+            _ativar_cooldown_google(exc)
+            st.warning(
+                f"Google Sheets bateu quota de gravação. Salvei no backup local/cache e vou tentar de novo depois."
+            )
+        else:
+            st.warning(f"Não consegui salvar {nome} no Google Sheets. Detalhe: {exc}")
         return False
 
 # ============================================================
@@ -1559,18 +1651,18 @@ def salvar_auditoria(df: pd.DataFrame) -> str:
     return "backup local"
 
 
-def carregar_auditoria() -> pd.DataFrame:
+def carregar_auditoria(force_google: bool = False) -> pd.DataFrame:
+    local = carregar_auditoria_local()
     if google_configurado():
         cfg = obter_config_google()
-        df_g = carregar_google(cfg["worksheet_auditoria"], COLUNAS_AUDITORIA)
+        df_g = carregar_google(cfg["worksheet_auditoria"], COLUNAS_AUDITORIA, force=force_google)
         if df_g is not None:
-            if df_g.empty:
-                local = carregar_auditoria_local()
-                if not local.empty:
-                    salvar_google(cfg["worksheet_auditoria"], local, COLUNAS_AUDITORIA)
-                    return local
+            if df_g.empty and force_google and not local.empty:
+                # só empurra backup local para o Google quando o usuário pediu sincronização
+                salvar_google(cfg["worksheet_auditoria"], local, COLUNAS_AUDITORIA)
+                return local
             return df_g
-    return carregar_auditoria_local()
+    return local
 
 
 def banca_atual(banca_inicial: float, auditoria: pd.DataFrame) -> float:
@@ -1654,18 +1746,17 @@ def salvar_catalogo(df: pd.DataFrame) -> str:
     return "backup local"
 
 
-def carregar_catalogo() -> pd.DataFrame:
+def carregar_catalogo(force_google: bool = False) -> pd.DataFrame:
+    local = carregar_catalogo_local()
     if google_configurado():
         cfg = obter_config_google()
-        df_g = carregar_google(cfg["worksheet_catalogo"], COLUNAS_CATALOGO)
+        df_g = carregar_google(cfg["worksheet_catalogo"], COLUNAS_CATALOGO, force=force_google)
         if df_g is not None:
-            if df_g.empty:
-                local = carregar_catalogo_local()
-                if not local.empty:
-                    salvar_google(cfg["worksheet_catalogo"], local, COLUNAS_CATALOGO)
-                    return local
+            if df_g.empty and force_google and not local.empty:
+                salvar_google(cfg["worksheet_catalogo"], local, COLUNAS_CATALOGO)
+                return local
             return df_g
-    return carregar_catalogo_local()
+    return local
 
 
 def registrar_odds_catalogo(
@@ -1718,7 +1809,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.3.1</div>
+        <div class="hero-title">TEX STATISTICS V19.3.2</div>
         <div class="hero-sub">
             Pure Sheet Manual: ataque/defesa, mando, Poisson, odd justa, margem +EV e Kelly fracionado.
             Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
@@ -1738,7 +1829,16 @@ st.markdown(
 with st.sidebar:
     st.header("Banca")
     banca_inicial = st.number_input("Banca inicial da auditoria", min_value=0.0, value=1000.0, step=50.0)
-    auditoria_sidebar = carregar_auditoria()
+
+    cfg_sidebar = obter_config_google()
+    force_sync_sidebar = False
+    if cfg_sidebar.get("configurado"):
+        st.caption("Google Sheets em modo econômico: não leio a planilha a cada clique para não estourar quota.")
+        force_sync_sidebar = st.button("🔄 Sincronizar auditoria agora", key="sync_auditoria_sidebar")
+        if _google_cooldown_ativo():
+            st.warning(f"Google em espera por {_segundos_cooldown_google()}s. Usando cache/backup local.")
+
+    auditoria_sidebar = carregar_auditoria(force_google=force_sync_sidebar)
     banca_auditada = banca_atual(banca_inicial, auditoria_sidebar)
     usar_banca_auditada = st.checkbox("Usar banca calculada pela auditoria", value=True)
     banca_manual = st.number_input("Banca manual", min_value=0.0, value=1000.0, step=50.0)
@@ -2118,7 +2218,7 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.3.1 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
+                            observacao=(obs + f" | V19.3.2 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
                         )
                     destino = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas. Destino: {destino}.")
@@ -2151,7 +2251,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "A decisão da V19.3.1 continua sendo pela planilha: odd real contra odd justa."
+        "A decisão da V19.3.2 continua sendo pela planilha: odd real contra odd justa."
     )
 
 
@@ -2195,7 +2295,13 @@ with aba_catalogo:
     else:
         st.warning("Google Sheets não configurado. O backup local pode sumir em reinicializações do Streamlit Cloud.")
 
-    catalogo = carregar_catalogo()
+    force_sync_catalogo = False
+    if cfg.get("configurado"):
+        force_sync_catalogo = st.button("🔄 Sincronizar catálogo do Google", key="sync_catalogo_tab")
+        if _google_cooldown_ativo():
+            st.info(f"Google em cooldown por {_segundos_cooldown_google()}s; mostrando cache/backup local.")
+
+    catalogo = carregar_catalogo(force_google=force_sync_catalogo)
     if catalogo.empty:
         st.info("Ainda não há odds salvas.")
     else:
@@ -2230,7 +2336,13 @@ with aba_auditoria:
     else:
         st.warning("Google Sheets não configurado. Use com cuidado no Streamlit Cloud.")
 
-    auditoria = carregar_auditoria()
+    force_sync_auditoria_tab = False
+    if cfg.get("configurado"):
+        force_sync_auditoria_tab = st.button("🔄 Sincronizar auditoria do Google", key="sync_auditoria_tab")
+        if _google_cooldown_ativo():
+            st.info(f"Google em cooldown por {_segundos_cooldown_google()}s; mostrando cache/backup local.")
+
+    auditoria = carregar_auditoria(force_google=force_sync_auditoria_tab)
     banca_calc = banca_atual(banca_inicial, auditoria)
     lucro = banca_calc - float(banca_inicial)
     c1, c2, c3 = st.columns(3)
