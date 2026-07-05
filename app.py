@@ -4,6 +4,7 @@ import json
 import uuid
 import difflib
 import html
+import re
 import time
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
@@ -15,7 +16,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.4.2 — CONFERÊNCIA OPERACIONAL + RELATÓRIO LEGÍVEL
+# TEX STATISTICS V19.4.3 — CONFERÊNCIA OPERACIONAL + CARDS CORRIGIDOS
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -24,7 +25,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.4.2 Conferência Operacional", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.4.3 Conferência Operacional", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -710,6 +711,75 @@ def render_alerta_lista(titulo: str, itens: List[str]) -> None:
     lis = "".join(f"<li>{html.escape(item)}</li>" for item in limpos)
     st.markdown(f"<div class='warn-list-box'><strong>{html.escape(titulo)}</strong><ul>{lis}</ul></div>", unsafe_allow_html=True)
 
+
+
+def texto_limpo_para_tela(valor: object) -> str:
+    """Remove HTML cru/acidental antes de mostrar em cards."""
+    txt = html.unescape(str(valor or ""))
+    txt = re.sub(r"</p>\s*<p[^>]*>", " | ", txt, flags=re.IGNORECASE)
+    txt = re.sub(r"<br\s*/?>", " | ", txt, flags=re.IGNORECASE)
+    txt = re.sub(r"<[^>]+>", "", txt)
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt
+
+
+def render_card_valor_positivo(r: pd.Series) -> None:
+    """Renderiza o card sem deixar o Markdown transformar HTML indentado em texto cru."""
+    prioridade = texto_limpo_para_tela(r.get("Prioridade", "🟠 Média"))
+    prioridade_extra = texto_limpo_para_tela(r.get("_prioridade_motivo", "ordem de prioridade"))
+    prioridade_cls = prioridade_classe(prioridade)
+
+    try:
+        prob = fmt_pct(float(r["Probabilidade"]), 1)
+    except Exception:
+        prob = "-"
+    try:
+        justa = fmt_num(float(r["Cotação justa"]), 2)
+    except Exception:
+        justa = "-"
+    try:
+        real = fmt_num(float(r["Cotação real"]), 2)
+    except Exception:
+        real = "-"
+    try:
+        margem = fmt_pct(float(r["Margem positiva"]), 1)
+    except Exception:
+        margem = "-"
+    try:
+        entrada_pct = fmt_pct(float(r["Entrada %"]), 2)
+    except Exception:
+        entrada_pct = "-"
+    try:
+        entrada_rs = fmt_dinheiro(float(r["Entrada R$"]))
+    except Exception:
+        entrada_rs = "-"
+
+    alertas = [p.strip() for p in texto_limpo_para_tela(r.get("Alerta de mercado", "")).split("|") if p.strip()]
+    etiquetas = texto_limpo_para_tela(r.get("Etiquetas", ""))
+    motivo = texto_limpo_para_tela(r.get("Motivo", ""))
+
+    partes = [
+        '<div class="card-ev">',
+        f'<div class="priority-badge {prioridade_cls}">{html.escape(prioridade)} — {html.escape(prioridade_extra)}</div>',
+        '<div class="big-green">VALOR POSITIVO</div>',
+        f'<h3>{html.escape(mercado_exibicao(r.get("Mercado", "")))}</h3>',
+        f'<p><b>Status operacional:</b> {html.escape(texto_limpo_para_tela(r.get("Status operacional", "LIBERADO")))} | <b>Valor matemático:</b> {html.escape(texto_limpo_para_tela(r.get("Valor matemático", "SIM")))}</p>',
+        f'<p><b>Probabilidade:</b> {prob} | <b>Cotação justa:</b> {justa} | <b>Cotação real:</b> {real}</p>',
+        f'<p><b>Margem:</b> {margem} | <b>Entrada %:</b> {entrada_pct} | <b>Entrada R$:</b> {entrada_rs}</p>',
+    ]
+
+    if alertas:
+        itens = ''.join(f'<li>{html.escape(a)}</li>' for a in alertas)
+        partes.append(f'<div class="market-alert"><b>Atenção de mercado:</b><ul style="margin:6px 0 0 18px; padding:0;">{itens}</ul></div>')
+    if etiquetas:
+        partes.append(f'<p class="muted"><b>Etiquetas:</b> {html.escape(etiquetas)}</p>')
+    if motivo:
+        partes.append(f'<p class="muted"><b>Motivo:</b> {html.escape(motivo)}</p>')
+
+    partes.append('</div>')
+    st.markdown("\n".join(partes), unsafe_allow_html=True)
+
+
 # ============================================================
 # DADOS HISTÓRICOS
 # ============================================================
@@ -1339,7 +1409,7 @@ def avaliar_valor_planilha(
                     entrada_pct = entrada_pct_base * fator_reducao_amostra
                     motivo = (
                         (motivo_bloqueio_operacional or "amostra mínima insuficiente")
-                        + f" | valor matemático valor positivo; entrada reduzida para {fmt_pct(fator_reducao_amostra, 0)} da entrada original."
+                        + f" | valor matemático positivo; entrada reduzida para {fmt_pct(fator_reducao_amostra, 0)} da entrada original."
                     )
         else:
             veredito = "SEM VALOR"
@@ -2785,8 +2855,7 @@ with aba_analisar:
                         st.markdown("**Marque os itens abaixo antes de transformar isto em aposta real:**")
                         valores_check = []
                         for i, (suf, texto_check) in enumerate(checks, start=1):
-                            st.markdown(f"{i}. {texto_check}")
-                            valores_check.append(st.checkbox(f"Confirmar item {i}", value=False, key=f"check_operacional_{analise['id']}_{suf}"))
+                            valores_check.append(st.checkbox(f"{i}. {texto_check}", value=False, key=f"check_operacional_{analise['id']}_{suf}"))
                         checklist_ok = all(valores_check)
                         st.session_state[f"checklist_operacional_ok_{analise['id']}"] = checklist_ok
                         if checklist_ok:
@@ -2795,25 +2864,7 @@ with aba_analisar:
                             st.error("Entrada operacional pendente de conferência. Para banca real, trate como estudo ou reduza bastante a exposição.")
 
                 for _, r in aprovadas.iterrows():
-                    prioridade = str(r.get("Prioridade", "🟠 Média"))
-                    prioridade_extra = str(r.get("_prioridade_motivo", "ordem de prioridade"))
-                    prioridade_cls = prioridade_classe(prioridade)
-                    st.markdown(
-                        f"""
-                        <div class="card-ev">
-                            <div class="priority-badge {prioridade_cls}">{html.escape(prioridade)} — {html.escape(prioridade_extra)}</div>
-                            <div class="big-green">VALOR POSITIVO</div>
-                            <h3>{html.escape(mercado_exibicao(r['Mercado']))}</h3>
-                            <p><b>Status operacional:</b> {html.escape(str(r.get('Status operacional', 'LIBERADO')))} | <b>Valor matemático:</b> {html.escape(str(r.get('Valor matemático', 'SIM')))}</p>
-                            <p><b>Probabilidade:</b> {fmt_pct(float(r['Probabilidade']), 1)} | <b>Cotação justa:</b> {fmt_num(float(r['Cotação justa']), 2)} | <b>Cotação real:</b> {fmt_num(float(r['Cotação real']), 2)}</p>
-                            <p><b>Margem:</b> {fmt_pct(float(r['Margem positiva']), 1)} | <b>Entrada %:</b> {fmt_pct(float(r['Entrada %']), 2)} | <b>Entrada R$:</b> {fmt_dinheiro(float(r['Entrada R$']))}</p>
-                            {('<p class="market-alert"><b>Atenção de mercado:</b> ' + html.escape(str(r.get('Alerta de mercado', ''))) + '</p>') if str(r.get('Alerta de mercado', '')).strip() else ''}
-                            {('<p class="muted"><b>Etiquetas:</b> ' + html.escape(str(r.get('Etiquetas', ''))) + '</p>') if str(r.get('Etiquetas', '')).strip() else ''}
-                            <p class="muted"><b>Motivo:</b> {html.escape(str(r['Motivo']))}</p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+                    render_card_valor_positivo(r)
             else:
                 if not valores_matematicos.empty:
                     st.warning("Existe valor matemático positivo na tabela, mas a política operacional atual não liberou entrada real. Veja as colunas 'Valor matemático' e 'Status operacional'.")
