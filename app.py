@@ -15,7 +15,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.3.2 — PURE SHEET MANUAL + GOOGLE ECONOMY
+# TEX STATISTICS V19.3.3 — PRIORIDADE OPERACIONAL REAL + GOOGLE ECONOMY
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -24,7 +24,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.3.2 Google Economy", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.3.3 Prioridade Real", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -660,15 +660,65 @@ def render_botao_confianca(conf: Dict[str, object]) -> None:
     )
 
 
-def prioridade_aposta(prob: float, margem: float, stake: float, veredito: str) -> Tuple[str, int, str]:
+def prioridade_aposta(
+    prob: float,
+    margem: float,
+    stake: float,
+    veredito: str,
+    status_operacional: str = "",
+) -> Tuple[str, int, str]:
     if str(veredito) != "VALOR (+EV)" or margem <= 0 or stake <= 0:
         return "—", 0, "sem prioridade"
-    # Prioridade combina valor, chance e tamanho natural do Kelly. Não bloqueia nada; só ordena leitura.
+
+    # Prioridade combina valor, chance e tamanho natural do Kelly.
+    # Não bloqueia a entrada; só ordena a leitura.
     if stake >= 0.025 or (margem >= 0.12 and prob >= 0.45):
-        return "🟢 Alta", 3, "melhor equilíbrio entre margem, probabilidade e stake"
-    if stake >= 0.010 or (margem >= 0.075 and prob >= 0.40):
-        return "🟠 Média", 2, "valor válido, mas não é a melhor da tela"
-    return "🔴 Fraca", 1, "valor existe, porém é a mais volátil/fraca da lista"
+        prioridade, score, motivo = "🟢 Alta", 3, "melhor equilíbrio entre margem, probabilidade e stake"
+    elif stake >= 0.010 or (margem >= 0.075 and prob >= 0.40):
+        prioridade, score, motivo = "🟠 Média", 2, "valor válido, mas não é a melhor da tela"
+    else:
+        prioridade, score, motivo = "🔴 Fraca", 1, "valor existe, porém é a mais volátil/fraca da lista"
+
+    # Correção V19.3.3: amostra baixa não pode aparecer como prioridade alta.
+    # O valor matemático continua existindo, mas a leitura operacional fica limitada.
+    status = str(status_operacional or "").upper()
+    if "AMOSTRA BAIXA" in status and score > 2:
+        return "🟠 Média", 2, "valor forte, mas amostra baixa limita a prioridade operacional"
+
+    return prioridade, score, motivo
+
+
+def detectar_correlacao_operacional(aprovadas: pd.DataFrame, calc: Dict[str, object]) -> List[str]:
+    """
+    Mostra correlação operacional entre entradas do mesmo jogo.
+    Não bloqueia e não altera o motor da planilha; só impede tratar 3 entradas do
+    mesmo roteiro como se fossem oportunidades independentes.
+    """
+    if aprovadas is None or aprovadas.empty or "Mercado" not in aprovadas.columns:
+        return []
+
+    mercados = set(aprovadas["Mercado"].astype(str).tolist())
+    avisos: List[str] = []
+
+    if {"Menos de 2.5 gols", "Ambos marcam - Não"}.issubset(mercados):
+        avisos.append("Menos de 2.5 e Ambos marcam - Não são altamente correlacionados; não trate como duas entradas independentes.")
+
+    if {"Mais de 2.5 gols", "Ambos marcam - Sim"}.issubset(mercados):
+        avisos.append("Mais de 2.5 e Ambos marcam - Sim são altamente correlacionados; não trate como duas entradas independentes.")
+
+    gols_casa = float(calc.get("gols_esperados_casa", 0.0) or 0.0)
+    gols_fora = float(calc.get("gols_esperados_fora", 0.0) or 0.0)
+
+    if "Vitória Fora" in mercados and ({"Menos de 2.5 gols", "Ambos marcam - Não"} & mercados) and gols_fora > gols_casa:
+        avisos.append("Vitória Fora junto com Under/BTTS Não concentra exposição no roteiro de visitante superior e jogo controlado.")
+
+    if "Vitória Casa" in mercados and ({"Menos de 2.5 gols", "Ambos marcam - Não"} & mercados) and gols_casa > gols_fora:
+        avisos.append("Vitória Casa junto com Under/BTTS Não concentra exposição no roteiro de mandante superior e jogo controlado.")
+
+    if len(aprovadas) >= 3:
+        avisos.append("Há 3 ou mais entradas no mesmo jogo. Para gestão conservadora, escolha a principal ou reduza a exposição total do jogo.")
+
+    return avisos
 
 
 def prioridade_classe(prioridade: str) -> str:
@@ -883,7 +933,7 @@ def avaliar_valor_planilha(
             entrada_pct = 0.0
             motivo = "odd real abaixo ou muito próxima da odd justa"
 
-        prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(prob, margem, entrada_pct, veredito)
+        prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(prob, margem, entrada_pct, veredito, status_operacional)
         linhas.append({
             "Mercado": mercado,
             "Prioridade": prioridade_txt,
@@ -919,6 +969,7 @@ def avaliar_valor_planilha(
                 float(row.get("Margem +EV", 0.0)),
                 float(df.at[idx, "Stake %"]),
                 str(row.get("Veredito", "")),
+                str(row.get("Status operacional", "")),
             )
             df.at[idx, "Prioridade"] = prioridade_txt
             df.at[idx, "_prioridade_score"] = prioridade_score
@@ -1503,7 +1554,7 @@ def _salvar_cache_google(nome: str, df: pd.DataFrame, colunas: List[str]) -> Non
 def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
     """Obtém ou cria uma aba no Google Sheets sem fazer leituras desnecessárias.
 
-    V19.3.2: o Streamlit reroda o script a cada clique. Antes, o app lia o Google
+    V19.3.3: o Streamlit reroda o script a cada clique. Antes, o app lia o Google
     Sheets várias vezes por rerun e batia quota de leitura. Agora o Google fica em
     modo economia: leitura só por cache ou sincronização manual, com cooldown quando
     aparecer quota 429.
@@ -1809,7 +1860,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.3.2</div>
+        <div class="hero-title">TEX STATISTICS V19.3.3</div>
         <div class="hero-sub">
             Pure Sheet Manual: ataque/defesa, mando, Poisson, odd justa, margem +EV e Kelly fracionado.
             Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
@@ -2161,6 +2212,11 @@ with aba_analisar:
             if not aprovadas.empty:
                 total_entrada = float(aprovadas["Entrada R$"].sum())
                 st.success(f"A planilha encontrou {len(aprovadas)} mercado(s) com VALOR (+EV). Total sugerido: {fmt_dinheiro(total_entrada)}.")
+
+                avisos_correlacao = detectar_correlacao_operacional(aprovadas, calc)
+                if avisos_correlacao:
+                    st.warning("⚠️ Exposição correlacionada no mesmo jogo: " + " ".join(avisos_correlacao))
+
                 for _, r in aprovadas.iterrows():
                     prioridade = str(r.get("Prioridade", "🟠 Média"))
                     prioridade_extra = str(r.get("_prioridade_motivo", "ordem de prioridade"))
@@ -2218,7 +2274,7 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.3.2 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
+                            observacao=(obs + f" | V19.3.3 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
                         )
                     destino = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas. Destino: {destino}.")
@@ -2251,7 +2307,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "A decisão da V19.3.2 continua sendo pela planilha: odd real contra odd justa."
+        "A decisão da V19.3.3 continua sendo pela planilha: odd real contra odd justa."
     )
 
 
