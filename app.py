@@ -16,7 +16,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.4.6 — TELA LIMPA FINAL
+# TEX STATISTICS V19.4.7 — TELA LIMPA FINAL
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -775,7 +775,10 @@ def render_card_valor_positivo(r: pd.Series) -> None:
         st.subheader(mercado)
         st.markdown(f"**Status operacional:** {status}  |  **Valor matemático:** {valor_matematico}")
         st.markdown(f"**Probabilidade:** {prob}  |  **Cotação justa:** {justa}  |  **Cotação real:** {real}")
-        st.markdown(f"**Margem:** {margem}  |  **Entrada %:** {entrada_pct}  |  **Entrada R$:** {entrada_rs}")
+        col_margem, col_entrada_pct, col_entrada_rs = st.columns(3)
+        col_margem.metric("Margem", margem)
+        col_entrada_pct.metric("Entrada %", entrada_pct)
+        col_entrada_rs.metric("Entrada em reais", entrada_rs)
 
         if alertas:
             st.warning("Atenção de mercado:\n" + "\n".join(f"- {a}" for a in alertas))
@@ -2448,7 +2451,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.4.6</div>
+        <div class="hero-title">TEX STATISTICS V19.4.7</div>
         <div class="hero-sub">
             Planilha pura manual: ataque/defesa, mando, Poisson, cotação justa, margem positiva e conferência operacional.
             Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
@@ -2749,7 +2752,7 @@ with aba_analisar:
 
         st.markdown("---")
         st.subheader(f"Análise — {analise['jogo']}")
-        st.info("Versão carregada: TEX STATISTICS V19.4.6 — tela limpa final. Se esta frase não aparecer no seu app, o arquivo antigo ainda está rodando.")
+        st.info("Versão carregada: TEX STATISTICS V19.4.7 — correção R$ markdown. Se esta frase não aparecer no seu app, o arquivo antigo ainda está rodando.")
 
         politica_atual = str(analise.get("config", {}).get("politica_amostra_baixa", "Avisar e reduzir entrada"))
         fator_amostra_atual = float(analise.get("config", {}).get("fator_reducao_amostra", 0.50))
