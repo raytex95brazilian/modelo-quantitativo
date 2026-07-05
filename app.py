@@ -1159,20 +1159,64 @@ def conectar_google_sheets():
 
 
 def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
+    """Obtém ou cria uma aba no Google Sheets de forma segura.
+
+    Correção V19.2.2:
+    antes o app capturava qualquer erro ao procurar a aba e tentava criar uma nova.
+    Se a aba já existia, o Google retornava: "A sheet with the name ... already exists".
+    Agora o app só cria a aba quando ela realmente não existe e, se o Google acusar
+    duplicidade, tenta reabrir a aba existente.
+    """
     planilha = conectar_google_sheets()
     if planilha is None:
         return None
+
+    nome_limpo = str(nome).strip()
+
+    def procurar_aba_existente():
+        try:
+            for ws in planilha.worksheets():
+                if str(ws.title).strip().lower() == nome_limpo.lower():
+                    return ws
+        except Exception:
+            return None
+        return None
+
     try:
         try:
-            aba = planilha.worksheet(nome)
+            from gspread.exceptions import WorksheetNotFound
         except Exception:
-            aba = planilha.add_worksheet(title=nome, rows=linhas, cols=max(20, len(colunas) + 4))
+            WorksheetNotFound = Exception
+
+        aba = procurar_aba_existente()
+        if aba is None:
+            try:
+                aba = planilha.worksheet(nome_limpo)
+            except WorksheetNotFound:
+                try:
+                    aba = planilha.add_worksheet(
+                        title=nome_limpo,
+                        rows=linhas,
+                        cols=max(20, len(colunas) + 4),
+                    )
+                except Exception as exc_criar:
+                    # Caso o Google diga que a aba já existe, reabre a existente.
+                    if "already exists" in str(exc_criar).lower() or "já existe" in str(exc_criar).lower():
+                        aba = procurar_aba_existente() or planilha.worksheet(nome_limpo)
+                    else:
+                        raise exc_criar
+            except Exception as exc_buscar:
+                # Erro transitório/API: antes de desistir, tenta localizar pela lista de abas.
+                aba = procurar_aba_existente()
+                if aba is None:
+                    raise exc_buscar
+
         valores = aba.get_all_values()
         if not valores:
             aba.update("A1", [colunas], value_input_option="USER_ENTERED")
         return aba
     except Exception as exc:
-        st.warning(f"Não consegui acessar a aba {nome} no Google Sheets. Detalhe: {exc}")
+        st.warning(f"Não consegui acessar a aba {nome_limpo} no Google Sheets. Detalhe: {exc}")
         return None
 
 
