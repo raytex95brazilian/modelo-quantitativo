@@ -14,7 +14,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.3 — PURE SHEET MANUAL + SCIENTIFIC DIAGNOSTICS
+# TEX STATISTICS V19.3.1 — PURE SHEET MANUAL + SAMPLE POLICY
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -23,7 +23,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.3 Recorte Real", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.3.1 Amostra Inteligente", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -820,8 +820,22 @@ def avaliar_valor_planilha(
     teto_por_jogo: float,
     amostra_ok: bool,
     motivo_bloqueio_operacional: str = "",
+    politica_amostra_baixa: str = "Avisar e reduzir stake",
+    fator_reducao_amostra: float = 0.50,
 ) -> pd.DataFrame:
+    """
+    Avalia valor como a planilha, mas separa duas coisas que não podem ficar misturadas:
+    1) Valor matemático: se a odd real está acima da odd justa com margem mínima.
+    2) Status operacional: se a entrada está liberada, reduzida, apenas estudo ou bloqueada.
+
+    Isso evita a burrice visual de mostrar margem +EV forte e ao mesmo tempo esconder que
+    o motivo do corte foi só amostra baixa.
+    """
     linhas = []
+    politica = str(politica_amostra_baixa or "Avisar e reduzir stake").strip()
+    politica_lower = politica.lower()
+    fator_reducao_amostra = float(max(0.0, min(1.0, fator_reducao_amostra)))
+
     for mercado in MERCADOS_NUCLEO:
         prob = float(probabilidades.get(mercado, 0.0))
         odd = texto_para_float(odds.get(mercado))
@@ -831,19 +845,38 @@ def avaliar_valor_planilha(
         odd_justa = 1.0 / prob if prob > 0 else np.inf
         margem = (prob * odd) - 1.0
         kelly = kelly_fracionado(prob, odd, fracao_kelly)
-        stake_pct_original = min(kelly, teto_por_entrada)
+        stake_pct_base = min(kelly, teto_por_entrada)
         tem_valor = margem > margem_minima
+        valor_matematico = "SIM" if tem_valor else "NÃO"
 
-        if not amostra_ok:
-            veredito = "BLOQUEADO"
-            entrada_pct = 0.0
-            motivo = motivo_bloqueio_operacional or "amostra mínima insuficiente"
-        elif tem_valor:
-            veredito = "VALOR (+EV)"
-            entrada_pct = stake_pct_original
-            motivo = "valor positivo pela lógica da planilha"
+        if tem_valor:
+            if amostra_ok:
+                veredito = "VALOR (+EV)"
+                status_operacional = "LIBERADO"
+                entrada_pct = stake_pct_base
+                motivo = "valor positivo pela lógica da planilha"
+            else:
+                if "bloquear" in politica_lower:
+                    veredito = "BLOQUEADO"
+                    status_operacional = "AMOSTRA BAIXA — BLOQUEADO"
+                    entrada_pct = 0.0
+                    motivo = (motivo_bloqueio_operacional or "amostra mínima insuficiente") + " | valor matemático existe, mas a política atual bloqueia."
+                elif "estudo" in politica_lower:
+                    veredito = "ESTUDO"
+                    status_operacional = "AMOSTRA BAIXA — ESTUDO"
+                    entrada_pct = 0.0
+                    motivo = (motivo_bloqueio_operacional or "amostra mínima insuficiente") + " | valor matemático existe, mas está marcado apenas para estudo."
+                else:
+                    veredito = "VALOR (+EV)"
+                    status_operacional = "AMOSTRA BAIXA — STAKE REDUZIDA"
+                    entrada_pct = stake_pct_base * fator_reducao_amostra
+                    motivo = (
+                        (motivo_bloqueio_operacional or "amostra mínima insuficiente")
+                        + f" | valor matemático +EV; stake reduzida para {fmt_pct(fator_reducao_amostra, 0)} da stake original."
+                    )
         else:
             veredito = "SEM VALOR"
+            status_operacional = "SEM VALOR"
             entrada_pct = 0.0
             motivo = "odd real abaixo ou muito próxima da odd justa"
 
@@ -851,6 +884,8 @@ def avaliar_valor_planilha(
         linhas.append({
             "Mercado": mercado,
             "Prioridade": prioridade_txt,
+            "Valor matemático": valor_matematico,
+            "Status operacional": status_operacional,
             "Probabilidade": prob,
             "Odd justa": odd_justa,
             "Odd real": float(odd),
@@ -867,7 +902,8 @@ def avaliar_valor_planilha(
     if df.empty:
         return df
 
-    mask_ev = df["Veredito"].eq("VALOR (+EV)")
+    # O limite total do jogo só vale para entradas com stake efetiva.
+    mask_ev = df["Veredito"].eq("VALOR (+EV)") & (pd.to_numeric(df["Stake %"], errors="coerce").fillna(0.0) > 0)
     total_pct = float(df.loc[mask_ev, "Stake %"].sum())
     if total_pct > teto_por_jogo > 0:
         fator = teto_por_jogo / total_pct
@@ -885,12 +921,20 @@ def avaliar_valor_planilha(
             df.at[idx, "_prioridade_score"] = prioridade_score
             df.at[idx, "_prioridade_motivo"] = prioridade_motivo
 
-    ordem = {"VALOR (+EV)": 0, "SEM VALOR": 1, "BLOQUEADO": 2}
-    df["_ordem"] = df["Veredito"].map(ordem).fillna(9)
-    df = df.sort_values(["_ordem", "_prioridade_score", "Margem +EV"], ascending=[True, False, False]).drop(columns=["_ordem"]).reset_index(drop=True)
+    ordem_status = {
+        "LIBERADO": 0,
+        "AMOSTRA BAIXA — STAKE REDUZIDA": 1,
+        "AMOSTRA BAIXA — ESTUDO": 2,
+        "SEM VALOR": 3,
+        "AMOSTRA BAIXA — BLOQUEADO": 4,
+    }
+    df["_ordem_status"] = df["Status operacional"].map(ordem_status).fillna(9)
+    df = (
+        df.sort_values(["_ordem_status", "_prioridade_score", "Margem +EV"], ascending=[True, False, False])
+        .drop(columns=["_ordem_status"])
+        .reset_index(drop=True)
+    )
     return df
-
-
 
 def faixa_odd(odd: float) -> str:
     try:
@@ -1674,14 +1718,14 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.3</div>
+        <div class="hero-title">TEX STATISTICS V19.3.1</div>
         <div class="hero-sub">
             Pure Sheet Manual: ataque/defesa, mando, Poisson, odd justa, margem +EV e Kelly fracionado.
-            Padrão fiel à planilha: temporada inteira, margem mínima prática de 3% e modo manual como prioridade.
+            Padrão fiel à planilha: temporada atual, margem mínima prática de 3% e modo manual como prioridade.
             Sem firula subjetiva. Diagnóstico, scout e auditoria informam — não bloqueiam o valor da planilha.
         </div>
         <span class="chip">Pure Sheet Manual</span>
-        <span class="chip">Temporada inteira</span>
+        <span class="chip">Temporada atual</span>
         <span class="chip">+EV com margem</span>
         <span class="chip">Poisson auditável</span>
         <span class="chip">Scout opcional</span>
@@ -1717,6 +1761,22 @@ with st.sidebar:
         data_inicio_recorte = st.date_input("Data inicial da base", value=date(ano_atual, 1, 1))
         data_fim_recorte = st.date_input("Data final da base", value=date.today())
     amostra_minima = st.slider("Amostra mínima casa/fora", 3, 12, 5, 1)
+    politica_amostra_baixa = st.selectbox(
+        "Política para amostra baixa",
+        ["Avisar e reduzir stake", "Bloquear entrada", "Mostrar só para estudo"],
+        index=0,
+        help="Quando a amostra casa/fora fica abaixo do mínimo. Padrão: não zera o valor matemático; só reduz stake e avisa.",
+    )
+    fator_reducao_amostra_pct = st.slider(
+        "Stake em amostra baixa",
+        min_value=10.0,
+        max_value=100.0,
+        value=50.0,
+        step=5.0,
+        format="%.0f%%",
+        help="Usado apenas quando a política é 'Avisar e reduzir stake'. Ex: 50% = metade da stake sugerida.",
+    )
+    fator_reducao_amostra = fator_reducao_amostra_pct / 100.0
 
     st.divider()
     st.header("Stake")
@@ -1888,6 +1948,8 @@ with aba_analisar:
             resultados = avaliar_valor_planilha(
                 calc["probabilidades"], odds, banca_usada, fracao_kelly, margem_minima,
                 teto_por_entrada, teto_por_jogo, amostra_ok, motivo_bloqueio,
+                politica_amostra_baixa=politica_amostra_baixa,
+                fator_reducao_amostra=fator_reducao_amostra,
             )
 
             st.session_state["ultima_analise_v19"] = {
@@ -1912,6 +1974,8 @@ with aba_analisar:
                     "teto_por_entrada": teto_por_entrada,
                     "teto_por_jogo": teto_por_jogo,
                     "amostra_minima": amostra_minima,
+                    "politica_amostra_baixa": politica_amostra_baixa,
+                    "fator_reducao_amostra": fator_reducao_amostra,
                 },
             }
 
@@ -1919,13 +1983,24 @@ with aba_analisar:
     if analise:
         calc = analise["calc"]
         resultados = pd.DataFrame(analise["resultados"])
-        aprovadas = resultados[resultados["Veredito"].eq("VALOR (+EV)")].copy() if not resultados.empty else pd.DataFrame()
+        aprovadas = resultados[(resultados["Veredito"].eq("VALOR (+EV)")) & (pd.to_numeric(resultados["Stake %"], errors="coerce").fillna(0.0) > 0)].copy() if not resultados.empty else pd.DataFrame()
+        if not resultados.empty and "Valor matemático" in resultados.columns:
+            valores_matematicos = resultados[resultados["Valor matemático"].astype(str).eq("SIM")].copy()
+        else:
+            valores_matematicos = pd.DataFrame()
 
         st.markdown("---")
         st.subheader(f"Análise — {analise['jogo']}")
 
+        politica_atual = str(analise.get("config", {}).get("politica_amostra_baixa", "Avisar e reduzir stake"))
+        fator_amostra_atual = float(analise.get("config", {}).get("fator_reducao_amostra", 0.50))
         if not analise.get("amostra_ok", False):
-            st.error(f"Trava operacional: {analise.get('motivo_bloqueio', '')}")
+            if "Bloquear" in politica_atual:
+                st.error(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: bloquear entrada.")
+            elif "estudo" in politica_atual.lower():
+                st.warning(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: mostrar só para estudo.")
+            else:
+                st.warning(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: permitir com stake reduzida para {fmt_pct(fator_amostra_atual, 0)}.")
         else:
             st.success("Amostra operacional aprovada. A partir daqui, quem manda é a margem +EV.")
 
@@ -1996,6 +2071,7 @@ with aba_analisar:
                             <div class="priority-badge {prioridade_cls}">{html.escape(prioridade)} — {html.escape(prioridade_extra)}</div>
                             <div class="big-green">VALOR (+EV)</div>
                             <h3>{html.escape(str(r['Mercado']))}</h3>
+                            <p><b>Status operacional:</b> {html.escape(str(r.get('Status operacional', 'LIBERADO')))} | <b>Valor matemático:</b> {html.escape(str(r.get('Valor matemático', 'SIM')))}</p>
                             <p><b>Probabilidade:</b> {fmt_pct(float(r['Probabilidade']), 1)} | <b>Odd justa:</b> {fmt_num(float(r['Odd justa']), 2)} | <b>Odd real:</b> {fmt_num(float(r['Odd real']), 2)}</p>
                             <p><b>Margem:</b> {fmt_pct(float(r['Margem +EV']), 1)} | <b>Stake:</b> {fmt_pct(float(r['Stake %']), 2)} | <b>Entrada:</b> {fmt_dinheiro(float(r['Entrada R$']))}</p>
                             <p class="muted"><b>Motivo:</b> {html.escape(str(r['Motivo']))}</p>
@@ -2004,7 +2080,10 @@ with aba_analisar:
                         unsafe_allow_html=True,
                     )
             else:
-                st.info("Nenhum mercado ficou +EV com as odds informadas.")
+                if not valores_matematicos.empty:
+                    st.warning("Existe valor matemático (+EV) na tabela, mas a política operacional atual não liberou entrada com stake. Veja as colunas 'Valor matemático' e 'Status operacional'.")
+                else:
+                    st.info("Nenhum mercado ficou +EV com as odds informadas.")
 
         if not aprovadas.empty:
             st.markdown("---")
@@ -2039,7 +2118,7 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.3 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']}").strip(),
+                            observacao=(obs + f" | V19.3.1 Pure Sheet Manual | Janela {analise['config']['janela']} | Kelly {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')}").strip(),
                         )
                     destino = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas. Destino: {destino}.")
@@ -2072,7 +2151,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "A decisão da V19.3 continua sendo pela planilha: odd real contra odd justa."
+        "A decisão da V19.3.1 continua sendo pela planilha: odd real contra odd justa."
     )
 
 
