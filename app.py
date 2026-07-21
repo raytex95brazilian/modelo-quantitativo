@@ -16,7 +16,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.5 — VISUAL PREMIUM
+# TEX STATISTICS V19.6 — PROBABILIDADES E EV
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -25,7 +25,7 @@ from scipy.stats import poisson, chi2
 # - manter apenas travas operacionais: liga correta, time correto e amostra mínima.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V19.5 Visual Premium", layout="wide")
+st.set_page_config(page_title="TEX STATISTICS — V19.6 Probabilidades e EV", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -298,17 +298,24 @@ MERCADOS_NUCLEO = [
     "Ambos marcam - Não",
 ]
 
+VERSAO_MODELO = "TEX STATISTICS V19.6"
+
 COLUNAS_AUDITORIA = [
     "ID", "Registrado em", "Liga", "Jogo", "Casa de apostas", "Mercado",
-    "Cotação de entrada", "Cotação justa", "Chance pelo sistema %", "Valor esperado %",
-    "Entrada %", "Entrada R$", "Banca antes", "Cotação de fechamento",
-    "Vantagem no fechamento %", "Status", "Resultado R$", "Banca depois", "Origem", "Observação", "Etiquetas",
+    "Cotação de entrada", "Probabilidade implícita bruta %", "Margem do mercado %",
+    "Probabilidade de mercado ajustada %", "Chance pelo sistema %",
+    "Vantagem do modelo (p.p.)", "Referência da vantagem", "Cotação justa", "Valor esperado %",
+    "Fonte da probabilidade", "Versão do modelo", "Entrada %", "Entrada R$", "Banca antes",
+    "Cotação de fechamento", "Vantagem no fechamento %", "Status", "Resultado R$", "Banca depois",
+    "Diagnóstico pós-jogo", "Origem", "Observação", "Etiquetas",
 ]
 
 COLUNAS_CATALOGO = [
     "ID Coleta", "Registrado em", "Casa de apostas", "Liga", "Jogo", "Mandante", "Visitante",
-    "Data do jogo", "Hora do jogo", "Mercado", "Seleção", "Cotação", "Banca no momento",
-    "Perfil", "Origem", "Observação",
+    "Data do jogo", "Hora do jogo", "Mercado", "Seleção", "Cotação",
+    "Grupo do mercado", "Mercado completo", "Probabilidade implícita bruta %",
+    "Margem do mercado %", "Probabilidade ajustada sem margem %",
+    "Banca no momento", "Perfil", "Origem", "Observação",
 ]
 
 ARQUIVO_AUDITORIA = "logs/auditoria_tex_v19_1.csv"  # mantém histórico da V19
@@ -446,6 +453,142 @@ def nome_selecao(mercado: str, time_casa: str, time_fora: str) -> str:
         "Ambos marcam - Não": "Não",
     }
     return mapa.get(mercado, mercado)
+
+
+
+def grupo_mercado(mercado: object) -> str:
+    """Agrupa as seleções que formam um mercado completo para retirar a margem da casa."""
+    m = str(mercado or "").strip()
+    if m in {"Vitória Casa", "Empate", "Vitória Fora"}:
+        return "Resultado final 1X2"
+    if m in {"Mais de 2.5 gols", "Menos de 2.5 gols"}:
+        return "Total de gols 2.5"
+    if m in {"Ambos marcam - Sim", "Ambos marcam - Não"}:
+        return "Ambas marcam"
+    return "Outro"
+
+
+def tamanho_esperado_grupo(grupo: object) -> int:
+    return {"Resultado final 1X2": 3, "Total de gols 2.5": 2, "Ambas marcam": 2}.get(str(grupo), 0)
+
+
+def metricas_probabilidade_das_odds(odds: Dict[str, float]) -> Dict[str, Dict[str, object]]:
+    """
+    Converte as odds em probabilidade bruta e, quando todas as seleções do mercado
+    estão disponíveis, calcula a margem (overround) e a probabilidade normalizada.
+    """
+    saida: Dict[str, Dict[str, object]] = {}
+    grupos: Dict[str, List[Tuple[str, float]]] = {}
+
+    for mercado, odd_valor in (odds or {}).items():
+        odd = texto_para_float(odd_valor)
+        if not odd_valida(odd):
+            continue
+        grupo = grupo_mercado(mercado)
+        grupos.setdefault(grupo, []).append((str(mercado), float(odd)))
+
+    for grupo, itens in grupos.items():
+        esperado = tamanho_esperado_grupo(grupo)
+        completo = esperado > 0 and len(itens) == esperado
+        soma_bruta = sum(1.0 / odd for _, odd in itens) if itens else 0.0
+        margem = soma_bruta - 1.0 if completo and soma_bruta > 0 else None
+
+        for mercado, odd in itens:
+            prob_bruta = 1.0 / odd
+            prob_ajustada = (prob_bruta / soma_bruta) if completo and soma_bruta > 0 else None
+            saida[mercado] = {
+                "grupo": grupo,
+                "completo": completo,
+                "prob_bruta": prob_bruta,
+                "margem_mercado": margem,
+                "prob_ajustada": prob_ajustada,
+            }
+    return saida
+
+
+def enriquecer_catalogo_probabilidades(df: pd.DataFrame) -> pd.DataFrame:
+    """Migra registros antigos e recalcula as colunas derivadas sem apagar os dados originais."""
+    base = normalizar_colunas(df, COLUNAS_CATALOGO).copy()
+    if base.empty:
+        return base
+
+    base["Grupo do mercado"] = base["Mercado"].map(grupo_mercado)
+    odds_num = pd.to_numeric(base["Cotação"], errors="coerce")
+    base["Probabilidade implícita bruta %"] = np.where(odds_num > 1.0, 100.0 / odds_num, np.nan)
+    base["Mercado completo"] = "Não"
+    base["Margem do mercado %"] = np.nan
+    base["Probabilidade ajustada sem margem %"] = np.nan
+
+    chaves = ["ID Coleta", "Grupo do mercado"]
+    for _, idxs in base.groupby(chaves, dropna=False).groups.items():
+        idxs = list(idxs)
+        grupo = str(base.loc[idxs[0], "Grupo do mercado"])
+        esperado = tamanho_esperado_grupo(grupo)
+        probs = pd.to_numeric(base.loc[idxs, "Probabilidade implícita bruta %"], errors="coerce")
+        mercados_unicos = base.loc[idxs, "Mercado"].astype(str).nunique()
+        completo = esperado > 0 and mercados_unicos == esperado and probs.notna().sum() == esperado
+        if not completo:
+            continue
+        soma = float(probs.sum())
+        if soma <= 0:
+            continue
+        base.loc[idxs, "Mercado completo"] = "Sim"
+        base.loc[idxs, "Margem do mercado %"] = round(soma - 100.0, 4)
+        base.loc[idxs, "Probabilidade ajustada sem margem %"] = (probs / soma * 100.0).round(4)
+
+    for col in ["Probabilidade implícita bruta %", "Margem do mercado %", "Probabilidade ajustada sem margem %"]:
+        base[col] = pd.to_numeric(base[col], errors="coerce").round(4)
+    return base[COLUNAS_CATALOGO]
+
+
+def enriquecer_auditoria_probabilidades(df: pd.DataFrame) -> pd.DataFrame:
+    """Preenche campos derivados em registros novos e antigos sem inventar a probabilidade do modelo."""
+    base = normalizar_colunas(df, COLUNAS_AUDITORIA).copy()
+    if base.empty:
+        return base
+
+    odd = pd.to_numeric(base["Cotação de entrada"], errors="coerce")
+    modelo_pct = pd.to_numeric(base["Chance pelo sistema %"], errors="coerce")
+    ajustada_pct = pd.to_numeric(base["Probabilidade de mercado ajustada %"], errors="coerce")
+
+    base["Probabilidade implícita bruta %"] = np.where(odd > 1.0, 100.0 / odd, np.nan)
+    bruta_pct = pd.to_numeric(base["Probabilidade implícita bruta %"], errors="coerce")
+    referencia_pct = ajustada_pct.where(ajustada_pct.notna(), bruta_pct)
+    base["Vantagem do modelo (p.p.)"] = (modelo_pct - referencia_pct).where(modelo_pct > 0)
+    base["Referência da vantagem"] = np.where(
+        modelo_pct <= 0,
+        "",
+        np.where(ajustada_pct.notna(), "Mercado ajustado sem margem", "Mercado bruto (margem indisponível)"),
+    )
+
+    justa_atual = pd.to_numeric(base["Cotação justa"], errors="coerce")
+    justa_calculada = np.where(modelo_pct > 0, 100.0 / modelo_pct, np.nan)
+    base["Cotação justa"] = justa_atual.where(justa_atual.notna(), justa_calculada)
+    base["Valor esperado %"] = np.where(
+        (modelo_pct > 0) & (odd > 1.0),
+        ((modelo_pct / 100.0) * odd - 1.0) * 100.0,
+        pd.to_numeric(base["Valor esperado %"], errors="coerce"),
+    )
+
+    for col in [
+        "Probabilidade implícita bruta %", "Margem do mercado %",
+        "Probabilidade de mercado ajustada %", "Chance pelo sistema %",
+        "Vantagem do modelo (p.p.)", "Cotação justa", "Valor esperado %",
+    ]:
+        base[col] = pd.to_numeric(base[col], errors="coerce").round(4)
+    return base[COLUNAS_AUDITORIA]
+
+
+def dataframe_para_excel_bytes(df: pd.DataFrame, nome_aba: str) -> Optional[bytes]:
+    """Gera um XLSX em memória. Se o ambiente não tiver engine Excel, mantém o CSV disponível."""
+    try:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer) as writer:
+            df.to_excel(writer, index=False, sheet_name=str(nome_aba)[:31])
+        buffer.seek(0)
+        return buffer.getvalue()
+    except Exception:
+        return None
 
 
 def resultado_perspectiva(gf: float, gs: float) -> str:
@@ -1307,6 +1450,7 @@ def avaliar_valor_planilha(
     o motivo do corte foi só amostra baixa.
     """
     linhas = []
+    metricas_mercado = metricas_probabilidade_das_odds(odds)
     politica = str(politica_amostra_baixa or "Avisar e reduzir entrada").strip()
     politica_lower = politica.lower()
     fator_reducao_amostra = float(max(0.0, min(1.0, fator_reducao_amostra)))
@@ -1357,7 +1501,11 @@ def avaliar_valor_planilha(
 
         alertas_mercado = detectar_alertas_mercado(mercado, float(odd), float(odd_justa), float(margem), odds) if tem_valor else []
         alerta_mercado_txt = " | ".join(alertas_mercado)
-        nivel_divergencia, prob_mercado, dif_app_mercado = classificar_divergencia_mercado(prob, float(odd), mercado, float(margem), alertas_mercado) if tem_valor else ("NORMAL", 1.0 / float(odd), prob - (1.0 / float(odd)))
+        metricas_casa = metricas_mercado.get(mercado, {})
+        prob_mercado_bruta = float(metricas_casa.get("prob_bruta") or (1.0 / float(odd)))
+        prob_mercado_ajustada = metricas_casa.get("prob_ajustada")
+        margem_mercado = metricas_casa.get("margem_mercado")
+        nivel_divergencia, prob_mercado, dif_app_mercado = classificar_divergencia_mercado(prob, float(odd), mercado, float(margem), alertas_mercado) if tem_valor else ("NORMAL", prob_mercado_bruta, prob - prob_mercado_bruta)
 
         etiquetas: List[str] = []
         if not amostra_ok:
@@ -1409,7 +1557,12 @@ def avaliar_valor_planilha(
             "Alerta de mercado": alerta_mercado_txt,
             "Divergência mercado": nivel_divergencia,
             "Prob. mercado": prob_mercado,
+            "Prob. mercado bruta": prob_mercado_bruta,
+            "Margem do mercado": margem_mercado,
+            "Prob. mercado ajustada": prob_mercado_ajustada,
+            "Mercado completo": "Sim" if bool(metricas_casa.get("completo")) else "Não",
             "Diferença app-mercado": dif_app_mercado,
+            "Diferença modelo-mercado ajustada": (prob - float(prob_mercado_ajustada)) if prob_mercado_ajustada is not None else (prob - prob_mercado_bruta),
             "Etiquetas": append_tag_texto("", *etiquetas),
             "Probabilidade": prob,
             "Cotação justa": odd_justa,
@@ -1744,6 +1897,9 @@ def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
         if col in out.columns:
             out[col] = out[col].map(texto_limpo_para_tela)
     out["Probabilidade"] = out["Probabilidade"].map(lambda x: fmt_pct(x, 1))
+    for col in ["Prob. mercado", "Prob. mercado bruta", "Prob. mercado ajustada", "Margem do mercado", "Diferença app-mercado", "Diferença modelo-mercado ajustada"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: "-" if x is None or pd.isna(x) else fmt_pct(float(x), 1))
     out["Cotação justa"] = out["Cotação justa"].map(lambda x: "-" if not np.isfinite(x) else fmt_num(x, 2))
     out["Cotação real"] = out["Cotação real"].map(lambda x: fmt_num(x, 2))
     out["Margem positiva"] = out["Margem positiva"].map(lambda x: fmt_pct(x, 1))
@@ -1759,7 +1915,7 @@ def formatar_tabela_resumo_operacional(df: pd.DataFrame) -> pd.DataFrame:
     out = formatar_tabela_resultados(df)
     cols = [
         "Mercado", "Prioridade", "Valor matemático", "Status operacional",
-        "Divergência mercado", "Probabilidade", "Cotação justa", "Cotação real",
+        "Divergência mercado", "Probabilidade", "Prob. mercado ajustada", "Cotação justa", "Cotação real",
         "Margem positiva", "Entrada %", "Entrada R$", "Etiquetas",
     ]
     return out[[c for c in cols if c in out.columns]].copy()
@@ -2206,7 +2362,7 @@ def carregar_auditoria_local() -> pd.DataFrame:
     garantir_logs()
     if os.path.exists(ARQUIVO_AUDITORIA):
         try:
-            return normalizar_colunas(pd.read_csv(ARQUIVO_AUDITORIA), COLUNAS_AUDITORIA)
+            return enriquecer_auditoria_probabilidades(pd.read_csv(ARQUIVO_AUDITORIA))
         except Exception:
             return pd.DataFrame(columns=COLUNAS_AUDITORIA)
     return pd.DataFrame(columns=COLUNAS_AUDITORIA)
@@ -2214,7 +2370,7 @@ def carregar_auditoria_local() -> pd.DataFrame:
 
 def salvar_auditoria(df: pd.DataFrame) -> str:
     garantir_logs()
-    base = normalizar_colunas(df, COLUNAS_AUDITORIA)
+    base = enriquecer_auditoria_probabilidades(df)
     base.to_csv(ARQUIVO_AUDITORIA, index=False)
     if google_configurado() and salvar_google(obter_config_google()["worksheet_auditoria"], base, COLUNAS_AUDITORIA):
         return "Google Sheets + backup local"
@@ -2231,8 +2387,8 @@ def carregar_auditoria(force_google: bool = False) -> pd.DataFrame:
                 # só empurra backup local para o Google quando o usuário pediu sincronização
                 salvar_google(cfg["worksheet_auditoria"], local, COLUNAS_AUDITORIA)
                 return local
-            return df_g
-    return local
+            return enriquecer_auditoria_probabilidades(df_g)
+    return enriquecer_auditoria_probabilidades(local)
 
 
 def banca_atual(banca_inicial: float, auditoria: pd.DataFrame) -> float:
@@ -2258,8 +2414,17 @@ def registrar_entrada(
     origem: str,
     observacao: str,
     etiquetas: str = "",
+    prob_mercado_bruta: Optional[float] = None,
+    prob_mercado_ajustada: Optional[float] = None,
+    margem_mercado: Optional[float] = None,
+    fonte_probabilidade: str = "Modelo Poisson do aplicativo",
+    versao_modelo: str = VERSAO_MODELO,
 ) -> pd.DataFrame:
-    base = normalizar_colunas(auditoria, COLUNAS_AUDITORIA)
+    base = enriquecer_auditoria_probabilidades(auditoria)
+    p_bruta = float(prob_mercado_bruta) if prob_mercado_bruta is not None else (1.0 / float(odd) if odd_valida(odd) else np.nan)
+    p_ajustada = float(prob_mercado_ajustada) if prob_mercado_ajustada is not None else np.nan
+    margem_casa = float(margem_mercado) if margem_mercado is not None else np.nan
+    referencia = p_ajustada if np.isfinite(p_ajustada) else p_bruta
     nova = {
         "ID": str(uuid.uuid4())[:8],
         "Registrado em": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -2268,9 +2433,16 @@ def registrar_entrada(
         "Casa de apostas": casa_apostas,
         "Mercado": mercado,
         "Cotação de entrada": round(float(odd), 4),
+        "Probabilidade implícita bruta %": round(p_bruta * 100.0, 4) if np.isfinite(p_bruta) else "",
+        "Margem do mercado %": round(margem_casa * 100.0, 4) if np.isfinite(margem_casa) else "",
+        "Probabilidade de mercado ajustada %": round(p_ajustada * 100.0, 4) if np.isfinite(p_ajustada) else "",
+        "Chance pelo sistema %": round(float(prob) * 100, 4),
+        "Vantagem do modelo (p.p.)": round((float(prob) - referencia) * 100.0, 4) if float(prob) > 0 and np.isfinite(referencia) else "",
+        "Referência da vantagem": "Mercado ajustado sem margem" if np.isfinite(p_ajustada) else ("Mercado bruto (margem indisponível)" if float(prob) > 0 else ""),
         "Cotação justa": round(float(odd_justa), 4) if np.isfinite(odd_justa) else "",
-        "Chance pelo sistema %": round(float(prob) * 100, 2),
-        "Valor esperado %": round(float(margem) * 100, 2),
+        "Valor esperado %": round(float(margem) * 100, 4),
+        "Fonte da probabilidade": fonte_probabilidade if float(prob) > 0 else "",
+        "Versão do modelo": versao_modelo if float(prob) > 0 else "",
         "Entrada %": round(float(entrada_pct) * 100, 3),
         "Entrada R$": round(float(entrada_rs), 2),
         "Banca antes": round(float(banca_antes), 2),
@@ -2279,11 +2451,12 @@ def registrar_entrada(
         "Status": "Pendente",
         "Resultado R$": 0.0,
         "Banca depois": "",
+        "Diagnóstico pós-jogo": "",
         "Origem": origem,
         "Observação": observacao,
         "Etiquetas": etiquetas,
     }
-    return pd.concat([base, pd.DataFrame([nova])], ignore_index=True)
+    return enriquecer_auditoria_probabilidades(pd.concat([base, pd.DataFrame([nova])], ignore_index=True))
 
 
 def calcular_resultado(status: str, entrada_rs: float, odd: float, cashout: float = 0.0) -> float:
@@ -2303,7 +2476,7 @@ def carregar_catalogo_local() -> pd.DataFrame:
     garantir_logs()
     if os.path.exists(ARQUIVO_CATALOGO):
         try:
-            return normalizar_colunas(pd.read_csv(ARQUIVO_CATALOGO), COLUNAS_CATALOGO)
+            return enriquecer_catalogo_probabilidades(pd.read_csv(ARQUIVO_CATALOGO))
         except Exception:
             return pd.DataFrame(columns=COLUNAS_CATALOGO)
     return pd.DataFrame(columns=COLUNAS_CATALOGO)
@@ -2311,7 +2484,7 @@ def carregar_catalogo_local() -> pd.DataFrame:
 
 def salvar_catalogo(df: pd.DataFrame) -> str:
     garantir_logs()
-    base = normalizar_colunas(df, COLUNAS_CATALOGO)
+    base = enriquecer_catalogo_probabilidades(df)
     base.to_csv(ARQUIVO_CATALOGO, index=False)
     if google_configurado() and salvar_google(obter_config_google()["worksheet_catalogo"], base, COLUNAS_CATALOGO):
         return "Google Sheets + backup local"
@@ -2327,8 +2500,8 @@ def carregar_catalogo(force_google: bool = False) -> pd.DataFrame:
             if df_g.empty and force_google and not local.empty:
                 salvar_google(cfg["worksheet_catalogo"], local, COLUNAS_CATALOGO)
                 return local
-            return df_g
-    return local
+            return enriquecer_catalogo_probabilidades(df_g)
+    return enriquecer_catalogo_probabilidades(local)
 
 
 def registrar_odds_catalogo(
@@ -2372,7 +2545,7 @@ def registrar_odds_catalogo(
         })
     if linhas:
         base = pd.concat([base, pd.DataFrame(linhas)], ignore_index=True)
-    return base
+    return enriquecer_catalogo_probabilidades(base)
 
 # ============================================================
 # UI
@@ -2381,7 +2554,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.5</div>
+        <div class="hero-title">TEX STATISTICS V19.6</div>
         <div class="hero-sub">
             Painel operacional limpo: planilha pura, Poisson auditável, cotação justa, margem positiva e gestão de risco sem travas subjetivas.
             A tela principal mostra só o que importa; o detalhe técnico fica recolhido para conferência.
@@ -2686,7 +2859,7 @@ with aba_analisar:
             <div class="analysis-head">
                 <div class="analysis-kicker">Análise operacional</div>
                 <div class="analysis-title">{html.escape(str(analise['jogo']))}</div>
-                <div class="version-pill">Versão carregada: TEX STATISTICS V19.5 — visual premium</div>
+                <div class="version-pill">Versão carregada: TEX STATISTICS V19.6 — probabilidades, margem da casa e EV</div>
             </div>
             ''',
             unsafe_allow_html=True,
@@ -2877,8 +3050,13 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V19.4.9 Card Compacto | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Checklist operacional: {'OK' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
+                            observacao=(obs + f" | V19.6 Probabilidades e EV | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Checklist operacional: {'OK' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
                             etiquetas=str(r.get("Etiquetas", "")),
+                            prob_mercado_bruta=float(r.get("Prob. mercado bruta")) if pd.notna(r.get("Prob. mercado bruta")) else None,
+                            prob_mercado_ajustada=float(r.get("Prob. mercado ajustada")) if pd.notna(r.get("Prob. mercado ajustada")) else None,
+                            margem_mercado=float(r.get("Margem do mercado")) if pd.notna(r.get("Margem do mercado")) else None,
+                            fonte_probabilidade="Modelo Poisson baseado no recorte histórico selecionado",
+                            versao_modelo=VERSAO_MODELO,
                         )
                     destino = salvar_auditoria(auditoria)
                     st.success(f"Entradas salvas. Destino: {destino}.")
@@ -2986,7 +3164,20 @@ with aba_catalogo:
             ]
         st.dataframe(remover_colunas_duplicadas(filtrado).tail(500), use_container_width=True, hide_index=True)
         csv = filtrado.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("BAIXAR CATÁLOGO CSV", data=csv, file_name="catalogo_odds_tex_v19_1.csv", mime="text/csv")
+        d1, d2 = st.columns(2)
+        with d1:
+            st.download_button("BAIXAR CATÁLOGO CSV", data=csv, file_name="catalogo_odds_tex_v19_1.csv", mime="text/csv")
+        with d2:
+            excel = dataframe_para_excel_bytes(filtrado, "Catalogo de odds")
+            if excel is not None:
+                st.download_button(
+                    "BAIXAR CATÁLOGO EXCEL",
+                    data=excel,
+                    file_name="catalogo_odds_tex_v19_6.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            else:
+                st.caption("Exportação XLSX indisponível neste ambiente; o CSV continua completo.")
 
 with aba_auditoria:
     st.subheader("Auditoria")
@@ -3086,6 +3277,11 @@ with aba_auditoria:
                 odd_fechamento_txt = st.text_input("Cotação de fechamento", value="", key="odd_fechamento")
             with c3:
                 cashout = st.number_input("Valor cashout recebido", min_value=0.0, value=0.0, step=1.0, key="cashout")
+            diagnostico_pos = st.selectbox(
+                "Diagnóstico pós-jogo",
+                ["Não classificado", "Variância provável", "Erro de modelo", "Erro de execução", "Evento extraordinário", "Dados desatualizados", "Inconclusivo"],
+                key="diagnostico_pos_jogo",
+            )
             obs_fechamento = st.text_input("Observação fechamento", value="", key="obs_fechamento")
             if st.button("FECHAR ENTRADA"):
                 entrada_rs = float(texto_para_float(row["Entrada R$"]) or 0.0)
@@ -3101,6 +3297,7 @@ with aba_auditoria:
                 auditoria.loc[idx, "Banca depois"] = round(banca_depois, 2)
                 auditoria.loc[idx, "Cotação de fechamento"] = odd_fechamento if odd_fechamento is not None else ""
                 auditoria.loc[idx, "Vantagem no fechamento %"] = vantagem
+                auditoria.loc[idx, "Diagnóstico pós-jogo"] = "" if diagnostico_pos == "Não classificado" else diagnostico_pos
                 auditoria.loc[idx, "Observação"] = str(row.get("Observação", "")) + " | Fechamento: " + obs_fechamento
                 destino = salvar_auditoria(auditoria)
                 st.success(f"Entrada fechada. Destino: {destino}.")
@@ -3113,7 +3310,20 @@ with aba_auditoria:
     else:
         st.dataframe(remover_colunas_duplicadas(auditoria).tail(500), use_container_width=True, hide_index=True)
         csv = auditoria.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("BAIXAR AUDITORIA CSV", data=csv, file_name="auditoria_tex_v19_1.csv", mime="text/csv")
+        d1, d2 = st.columns(2)
+        with d1:
+            st.download_button("BAIXAR AUDITORIA CSV", data=csv, file_name="auditoria_tex_v19_1.csv", mime="text/csv")
+        with d2:
+            excel = dataframe_para_excel_bytes(auditoria, "Auditoria")
+            if excel is not None:
+                st.download_button(
+                    "BAIXAR AUDITORIA EXCEL",
+                    data=excel,
+                    file_name="auditoria_tex_v19_6.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            else:
+                st.caption("Exportação XLSX indisponível neste ambiente; o CSV continua completo.")
 
 with aba_calendario:
     st.subheader("Ligas cobertas")
