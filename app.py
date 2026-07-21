@@ -16,7 +16,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V19.6 — PROBABILIDADES E EV
+# TEX STATISTICS V19.7 — ESTABILIDADE, CORRELAÇÃO E RESUMO
 # ============================================================
 # Objetivo desta versão:
 # - parar de empilhar filtros subjetivos;
@@ -298,7 +298,7 @@ MERCADOS_NUCLEO = [
     "Ambos marcam - Não",
 ]
 
-VERSAO_MODELO = "TEX STATISTICS V19.6"
+VERSAO_MODELO = "TEX STATISTICS V19.7"
 
 COLUNAS_AUDITORIA = [
     "ID", "Registrado em", "Liga", "Jogo", "Casa de apostas", "Mercado",
@@ -1280,6 +1280,204 @@ def detectar_correlacao_operacional(aprovadas: pd.DataFrame, calc: Dict[str, obj
     return avisos
 
 
+
+def ajustar_exposicao_correlacionada(
+    resultados: pd.DataFrame,
+    banca: float,
+    politica: str = "Dividir a entrada entre correlacionados",
+) -> pd.DataFrame:
+    """Aplica uma política clara aos pares que descrevem praticamente o mesmo roteiro."""
+    if resultados is None or resultados.empty:
+        return resultados
+    out = resultados.copy()
+    politica_txt = str(politica or "Somente avisar")
+    if "Somente avisar" in politica_txt:
+        return out
+
+    pares = [
+        ("Mais de 2.5 gols", "Ambos marcam - Sim"),
+        ("Menos de 2.5 gols", "Ambos marcam - Não"),
+    ]
+    for mercado_a, mercado_b in pares:
+        idxs = []
+        for mercado in (mercado_a, mercado_b):
+            candidatos = out.index[
+                out["Mercado"].astype(str).eq(mercado)
+                & out["Veredito"].astype(str).eq("VALOR POSITIVO")
+                & (pd.to_numeric(out["Entrada %"], errors="coerce").fillna(0.0) > 0)
+            ].tolist()
+            idxs.extend(candidatos)
+        if len(idxs) != 2:
+            continue
+
+        if "Manter somente" in politica_txt:
+            principal = max(
+                idxs,
+                key=lambda i: (
+                    float(pd.to_numeric(out.at[i, "_prioridade_score"], errors="coerce") or 0.0),
+                    float(pd.to_numeric(out.at[i, "Margem positiva"], errors="coerce") or 0.0),
+                    float(pd.to_numeric(out.at[i, "Probabilidade"], errors="coerce") or 0.0),
+                ),
+            )
+            for idx in idxs:
+                if idx == principal:
+                    out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Principal entre correlacionadas")
+                    out.at[idx, "Motivo"] = str(out.at[idx, "Motivo"]) + " | mantida como principal entre mercados correlacionados."
+                    continue
+                out.at[idx, "Entrada %"] = 0.0
+                out.at[idx, "Entrada R$"] = 0.0
+                out.at[idx, "Veredito"] = "ESTUDO"
+                out.at[idx, "Status operacional"] = "CORRELACIONADA — SOMENTE PRINCIPAL"
+                out.at[idx, "Prioridade"] = "—"
+                out.at[idx, "_prioridade_score"] = 0
+                out.at[idx, "_prioridade_motivo"] = "valor preservado para estudo; exposição concentrada na principal"
+                out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Correlacionada sem entrada")
+                out.at[idx, "Motivo"] = str(out.at[idx, "Motivo"]) + " | entrada zerada porque a política mantém somente a principal do par correlacionado."
+        else:
+            # O orçamento do par vira a maior stake individual, em vez da soma das duas.
+            stakes = [max(0.0, float(pd.to_numeric(out.at[i, "Entrada %"], errors="coerce") or 0.0)) for i in idxs]
+            orcamento_par = max(stakes)
+            pesos = [max(0.0001, float(pd.to_numeric(out.at[i, "Margem positiva"], errors="coerce") or 0.0)) for i in idxs]
+            soma_pesos = sum(pesos)
+            for idx, peso in zip(idxs, pesos):
+                nova_stake = orcamento_par * peso / soma_pesos
+                out.at[idx, "Entrada %"] = nova_stake
+                out.at[idx, "Entrada R$"] = float(banca) * nova_stake
+                out.at[idx, "Status operacional"] = str(out.at[idx, "Status operacional"]).replace(" — STAKE CORRELACIONADA DIVIDIDA", "") + " — STAKE CORRELACIONADA DIVIDIDA"
+                out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Stake correlacionada dividida")
+                out.at[idx, "Motivo"] = str(out.at[idx, "Motivo"]) + " | stake do par correlacionado dividida sem duplicar a exposição."
+
+    return out
+
+
+def formatar_tabela_estabilidade(estabilidade: Dict[str, object]) -> pd.DataFrame:
+    linhas = estabilidade.get("linhas", []) if isinstance(estabilidade, dict) else []
+    if not linhas:
+        return pd.DataFrame()
+    out = pd.DataFrame(linhas)
+    for col in ["Gols casa", "Gols fora"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: "-" if pd.isna(x) else fmt_num(float(x), 2))
+    for col in ["Vitória Casa", "Empate", "Vitória Fora", "Over 2.5", "Under 2.5", "BTTS Sim", "BTTS Não"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: "-" if pd.isna(x) else fmt_pct(float(x), 1))
+    return out
+
+
+def _linhas_unicas_texto(valores) -> List[str]:
+    saida: List[str] = []
+    for valor in valores or []:
+        for parte in str(valor or "").split("|"):
+            limpo = texto_limpo_para_tela(parte)
+            if limpo and limpo not in saida:
+                saida.append(limpo)
+    return saida
+
+
+def gerar_resumo_compartilhavel(
+    analise: Dict[str, object],
+    calc: Dict[str, object],
+    resultados: pd.DataFrame,
+    aprovadas: pd.DataFrame,
+    confianca: Dict[str, object],
+    estabilidade: Optional[Dict[str, object]] = None,
+) -> str:
+    """Gera um texto completo, determinístico e fácil de copiar para outra conversa."""
+    cfg = analise.get("config", {}) or {}
+    periodo = cfg.get("periodo_base", {}) or {}
+    linhas: List[str] = []
+    linhas.append("RESUMO — TEX STATISTICS V19.7")
+    linhas.append(f"Jogo: {analise.get('jogo', '-')}")
+    linhas.append(f"Liga: {analise.get('liga', '-')} | Casa de apostas: {analise.get('casa_apostas', '-')} | Origem das odds: {analise.get('origem', '-')}")
+    linhas.append(
+        f"Base: {cfg.get('janela', '-')} | Período: {periodo.get('inicio', '-')} a {periodo.get('fim', '-')} | "
+        f"Jogos da liga: {periodo.get('jogos', 0)} | Times: {periodo.get('times', 0)}"
+    )
+    dias = cfg.get("dias_base_jogo")
+    if dias is not None:
+        linhas.append(f"Distância entre a última partida da base e o jogo: {dias} dia(s).")
+
+    regressao = bool(calc.get("regressao_media_ativa", False))
+    peso = float(calc.get("peso_media_liga", 0.0) or 0.0)
+    linhas.append(
+        f"Modelo: Poisson casa/fora; regressão à média da liga {'ATIVA em ' + fmt_pct(peso, 0) if regressao else 'DESATIVADA'}; "
+        f"amostra mínima configurada: {cfg.get('amostra_minima', '-')} jogo(s)."
+    )
+    linhas.append(
+        f"Amostra usada: {analise.get('time_casa', '-')} em casa = {calc.get('jogos_casa', 0)}; "
+        f"{analise.get('time_fora', '-')} fora = {calc.get('jogos_fora', 0)}."
+    )
+    linhas.append(
+        f"Médias observadas: casa marcou {fmt_num(calc.get('gols_feitos_casa_bruto', calc.get('gols_feitos_casa', 0)), 2)} e sofreu "
+        f"{fmt_num(calc.get('gols_sofridos_casa_bruto', calc.get('gols_sofridos_casa', 0)), 2)}; visitante marcou "
+        f"{fmt_num(calc.get('gols_feitos_fora_bruto', calc.get('gols_feitos_fora', 0)), 2)} e sofreu "
+        f"{fmt_num(calc.get('gols_sofridos_fora_bruto', calc.get('gols_sofridos_fora', 0)), 2)}."
+    )
+    if regressao:
+        linhas.append(
+            f"Médias após ajuste: casa marcou {fmt_num(calc.get('gols_feitos_casa', 0), 2)} e sofreu {fmt_num(calc.get('gols_sofridos_casa', 0), 2)}; "
+            f"visitante marcou {fmt_num(calc.get('gols_feitos_fora', 0), 2)} e sofreu {fmt_num(calc.get('gols_sofridos_fora', 0), 2)}."
+        )
+    linhas.append(
+        f"Gols projetados: {analise.get('time_casa', '-')} {fmt_num(calc.get('gols_esperados_casa', 0), 2)} x "
+        f"{fmt_num(calc.get('gols_esperados_fora', 0), 2)} {analise.get('time_fora', '-')} "
+        f"(total {fmt_num(float(calc.get('gols_esperados_casa', 0)) + float(calc.get('gols_esperados_fora', 0)), 2)})."
+    )
+    linhas.append(f"Confiabilidade operacional: {confianca.get('nível', '-')} — {confianca.get('motivos', '-')}")
+
+    if estabilidade:
+        linhas.append(f"Estabilidade 5/8/12: {estabilidade.get('nivel', '-')} — {estabilidade.get('motivo', '-')}")
+        for r in estabilidade.get("linhas", []):
+            if r.get("Situação") != "completa":
+                linhas.append(f"  Janela {r.get('Janela')}: {r.get('Situação')}")
+            else:
+                linhas.append(
+                    f"  Janela {r.get('Janela')}: casa {fmt_num(r.get('Gols casa', 0), 2)}, fora {fmt_num(r.get('Gols fora', 0), 2)}, "
+                    f"1X2 {fmt_pct(r.get('Vitória Casa', 0), 1)}/{fmt_pct(r.get('Empate', 0), 1)}/{fmt_pct(r.get('Vitória Fora', 0), 1)}, "
+                    f"Over 2.5 {fmt_pct(r.get('Over 2.5', 0), 1)}, BTTS Sim {fmt_pct(r.get('BTTS Sim', 0), 1)}."
+                )
+
+    linhas.append("Probabilidades do modelo:")
+    for mercado in MERCADOS_NUCLEO:
+        linhas.append(f"  - {mercado_exibicao(mercado)}: {fmt_pct(float(calc.get('probabilidades', {}).get(mercado, 0.0)), 1)}")
+
+    if resultados is None or resultados.empty:
+        linhas.append("Nenhuma cotação válida foi comparada.")
+    else:
+        linhas.append("Mercados avaliados:")
+        for _, r in resultados.iterrows():
+            linhas.append(
+                f"  - {mercado_exibicao(r.get('Mercado', '-'))}: prob. {fmt_pct(float(r.get('Probabilidade', 0)), 1)}, "
+                f"odd justa {fmt_num(float(r.get('Cotação justa', 0)), 2)}, odd real {fmt_num(float(r.get('Cotação real', 0)), 2)}, "
+                f"EV {fmt_pct(float(r.get('Margem positiva', 0)), 1)}, status {texto_limpo_para_tela(r.get('Status operacional', '-'))}, "
+                f"entrada {fmt_pct(float(r.get('Entrada %', 0)), 2)} ({fmt_dinheiro(float(r.get('Entrada R$', 0)))})."
+            )
+
+    if aprovadas is not None and not aprovadas.empty:
+        total = float(pd.to_numeric(aprovadas["Entrada R$"], errors="coerce").fillna(0.0).sum())
+        principal = aprovadas.sort_values(["_prioridade_score", "Margem positiva"], ascending=[False, False]).iloc[0]
+        linhas.append(
+            f"Entradas efetivas: {len(aprovadas)} | exposição total: {fmt_dinheiro(total)} "
+            f"({fmt_pct(total / float(analise.get('banca', 1) or 1), 2)} da banca)."
+        )
+        linhas.append(f"Entrada principal pelo ordenamento do app: {mercado_exibicao(principal.get('Mercado', '-'))}.")
+    else:
+        linhas.append("Nenhuma entrada efetiva foi liberada pela configuração atual.")
+
+    alertas_correlacao = detectar_correlacao_operacional(aprovadas, calc) if aprovadas is not None else []
+    alertas_mercado = _linhas_unicas_texto(resultados.get("Alerta de mercado", pd.Series(dtype=str)).tolist() if resultados is not None and not resultados.empty and "Alerta de mercado" in resultados.columns else [])
+    if alertas_correlacao or alertas_mercado:
+        linhas.append("Alertas:")
+        for alerta in alertas_correlacao + alertas_mercado:
+            linhas.append(f"  - {texto_limpo_para_tela(alerta)}")
+
+    linhas.append(
+        f"Gestão: teto por entrada {fmt_pct(float(cfg.get('teto_por_entrada', 0)), 1)}; teto total por jogo {fmt_pct(float(cfg.get('teto_por_jogo', 0)), 1)}; "
+        f"correlação: {cfg.get('politica_correlacao', 'Somente avisar')}."
+    )
+    linhas.append("Observação: o resumo reproduz o cálculo do app; não incorpora automaticamente escalações, lesões ou notícias externas.")
+    return "\n".join(linhas)
+
 def prioridade_classe(prioridade: str) -> str:
     p = str(prioridade).lower()
     if "alta" in p:
@@ -1300,17 +1498,69 @@ def matriz_poisson(gols_casa: float, gols_fora: float, tamanho: int = 15) -> np.
     return matriz
 
 
-def calcular_planilha_pura(df: pd.DataFrame, time_casa: str, time_fora: str) -> Dict[str, object]:
+def _ordenar_e_limitar_jogos(df: pd.DataFrame, limite_jogos: Optional[int] = None) -> pd.DataFrame:
+    """Ordena cronologicamente e, se solicitado, mantém apenas os jogos mais recentes."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=getattr(df, "columns", []))
+    out = df.copy()
+    if "DataTemp" in out.columns:
+        out["DataTemp"] = pd.to_datetime(out["DataTemp"], errors="coerce")
+        out = out.sort_values("DataTemp", kind="mergesort")
+    if limite_jogos is not None:
+        try:
+            n = max(1, int(limite_jogos))
+            out = out.tail(n)
+        except Exception:
+            pass
+    return out.reset_index(drop=True)
+
+
+def _regredir_media(valor_time: float, media_liga: float, ativa: bool, peso_liga: float) -> float:
+    """Combina a média recente do time com a média da liga sem esconder o valor bruto."""
+    try:
+        valor = float(valor_time)
+        liga = float(media_liga)
+        peso = float(np.clip(peso_liga, 0.0, 0.80)) if ativa else 0.0
+        return float((1.0 - peso) * valor + peso * liga)
+    except Exception:
+        return float(media_liga)
+
+
+def calcular_planilha_pura(
+    df: pd.DataFrame,
+    time_casa: str,
+    time_fora: str,
+    regressao_media_ativa: bool = False,
+    peso_media_liga: float = 0.25,
+    limite_jogos: Optional[int] = None,
+) -> Dict[str, object]:
+    """
+    Motor simples e auditável.
+
+    - O recorte oficial continua sendo o selecionado pelo usuário.
+    - limite_jogos é usado apenas nos diagnósticos 5/8/12.
+    - A regressão, quando ativa, preserva a leitura recente e puxa levemente
+      médias extremas para a média atual da liga.
+    """
     media_gols_casa_liga = max(0.20, float(pd.to_numeric(df["HG"], errors="coerce").mean()))
     media_gols_fora_liga = max(0.20, float(pd.to_numeric(df["AG"], errors="coerce").mean()))
 
-    jogos_casa = df[df["Home"].astype(str) == str(time_casa)].copy()
-    jogos_fora = df[df["Away"].astype(str) == str(time_fora)].copy()
+    jogos_casa_todos = df[df["Home"].astype(str) == str(time_casa)].copy()
+    jogos_fora_todos = df[df["Away"].astype(str) == str(time_fora)].copy()
+    jogos_casa = _ordenar_e_limitar_jogos(jogos_casa_todos, limite_jogos)
+    jogos_fora = _ordenar_e_limitar_jogos(jogos_fora_todos, limite_jogos)
 
-    gols_feitos_casa = media_simples(jogos_casa["HG"], media_gols_casa_liga)
-    gols_sofridos_casa = media_simples(jogos_casa["AG"], media_gols_fora_liga)
-    gols_feitos_fora = media_simples(jogos_fora["AG"], media_gols_fora_liga)
-    gols_sofridos_fora = media_simples(jogos_fora["HG"], media_gols_casa_liga)
+    # Médias observadas no recorte casa/fora.
+    gols_feitos_casa_bruto = media_simples(jogos_casa["HG"], media_gols_casa_liga)
+    gols_sofridos_casa_bruto = media_simples(jogos_casa["AG"], media_gols_fora_liga)
+    gols_feitos_fora_bruto = media_simples(jogos_fora["AG"], media_gols_fora_liga)
+    gols_sofridos_fora_bruto = media_simples(jogos_fora["HG"], media_gols_casa_liga)
+
+    # Ajuste leve e explícito à média atual da liga.
+    gols_feitos_casa = _regredir_media(gols_feitos_casa_bruto, media_gols_casa_liga, regressao_media_ativa, peso_media_liga)
+    gols_sofridos_casa = _regredir_media(gols_sofridos_casa_bruto, media_gols_fora_liga, regressao_media_ativa, peso_media_liga)
+    gols_feitos_fora = _regredir_media(gols_feitos_fora_bruto, media_gols_fora_liga, regressao_media_ativa, peso_media_liga)
+    gols_sofridos_fora = _regredir_media(gols_sofridos_fora_bruto, media_gols_casa_liga, regressao_media_ativa, peso_media_liga)
 
     forca_ataque_casa = gols_feitos_casa / media_gols_casa_liga if media_gols_casa_liga else 1.0
     forca_defesa_casa = gols_sofridos_casa / media_gols_fora_liga if media_gols_fora_liga else 1.0
@@ -1355,7 +1605,13 @@ def calcular_planilha_pura(df: pd.DataFrame, time_casa: str, time_fora: str) -> 
         "media_gols_fora_liga": media_gols_fora_liga,
         "jogos_casa": int(len(jogos_casa)),
         "jogos_fora": int(len(jogos_fora)),
+        "jogos_casa_disponiveis": int(len(jogos_casa_todos)),
+        "jogos_fora_disponiveis": int(len(jogos_fora_todos)),
         "amostra_minima": int(min(len(jogos_casa), len(jogos_fora))),
+        "gols_feitos_casa_bruto": gols_feitos_casa_bruto,
+        "gols_sofridos_casa_bruto": gols_sofridos_casa_bruto,
+        "gols_feitos_fora_bruto": gols_feitos_fora_bruto,
+        "gols_sofridos_fora_bruto": gols_sofridos_fora_bruto,
         "gols_feitos_casa": gols_feitos_casa,
         "gols_sofridos_casa": gols_sofridos_casa,
         "gols_feitos_fora": gols_feitos_fora,
@@ -1367,9 +1623,97 @@ def calcular_planilha_pura(df: pd.DataFrame, time_casa: str, time_fora: str) -> 
         "gols_esperados_casa": gols_esperados_casa,
         "gols_esperados_fora": gols_esperados_fora,
         "probabilidades": probabilidades,
+        "regressao_media_ativa": bool(regressao_media_ativa),
+        "peso_media_liga": float(np.clip(peso_media_liga, 0.0, 0.80)) if regressao_media_ativa else 0.0,
+        "limite_jogos": limite_jogos,
         "cantos": cantos,
     }
 
+
+def calcular_estabilidade_janelas(
+    df: pd.DataFrame,
+    time_casa: str,
+    time_fora: str,
+    regressao_media_ativa: bool,
+    peso_media_liga: float,
+    janelas: Tuple[int, ...] = (5, 8, 12),
+) -> Dict[str, object]:
+    """Compara 5/8/12 sem misturar as janelas na previsão oficial."""
+    linhas: List[Dict[str, object]] = []
+    disponiveis_casa = int((df["Home"].astype(str) == str(time_casa)).sum())
+    disponiveis_fora = int((df["Away"].astype(str) == str(time_fora)).sum())
+
+    for janela in janelas:
+        completa = disponiveis_casa >= janela and disponiveis_fora >= janela
+        if not completa:
+            linhas.append({
+                "Janela": int(janela),
+                "Situação": f"indisponível ({disponiveis_casa} casa / {disponiveis_fora} fora)",
+                "Amostra casa": min(disponiveis_casa, janela),
+                "Amostra fora": min(disponiveis_fora, janela),
+            })
+            continue
+        modelo = calcular_planilha_pura(
+            df, time_casa, time_fora,
+            regressao_media_ativa=regressao_media_ativa,
+            peso_media_liga=peso_media_liga,
+            limite_jogos=janela,
+        )
+        p = modelo["probabilidades"]
+        linhas.append({
+            "Janela": int(janela),
+            "Situação": "completa",
+            "Amostra casa": int(modelo["jogos_casa"]),
+            "Amostra fora": int(modelo["jogos_fora"]),
+            "Gols casa": float(modelo["gols_esperados_casa"]),
+            "Gols fora": float(modelo["gols_esperados_fora"]),
+            "Vitória Casa": float(p["Vitória Casa"]),
+            "Empate": float(p["Empate"]),
+            "Vitória Fora": float(p["Vitória Fora"]),
+            "Over 2.5": float(p["Mais de 2.5 gols"]),
+            "Under 2.5": float(p["Menos de 2.5 gols"]),
+            "BTTS Sim": float(p["Ambos marcam - Sim"]),
+            "BTTS Não": float(p["Ambos marcam - Não"]),
+        })
+
+    completos = [r for r in linhas if r.get("Situação") == "completa"]
+    if len(completos) < 2:
+        return {
+            "nivel": "INCONCLUSIVO",
+            "amplitude_max": None,
+            "motivo": "São necessárias pelo menos duas janelas completas para comparar estabilidade.",
+            "linhas": linhas,
+        }
+
+    colunas_prob = ["Vitória Casa", "Empate", "Vitória Fora", "Over 2.5", "Under 2.5", "BTTS Sim", "BTTS Não"]
+    amplitudes = {c: max(float(r[c]) for r in completos) - min(float(r[c]) for r in completos) for c in colunas_prob}
+    mercado_mais_sensivel = max(amplitudes, key=amplitudes.get)
+    amplitude_max = float(amplitudes[mercado_mais_sensivel])
+
+    # Também verifica se muda o lado preferido dos mercados principais.
+    favoritos_1x2 = {max(["Vitória Casa", "Empate", "Vitória Fora"], key=lambda c: float(r[c])) for r in completos}
+    lados_gols = {"Over 2.5" if float(r["Over 2.5"]) >= 0.5 else "Under 2.5" for r in completos}
+    lados_btts = {"BTTS Sim" if float(r["BTTS Sim"]) >= 0.5 else "BTTS Não" for r in completos}
+    mudou_lado = len(favoritos_1x2) > 1 or len(lados_gols) > 1 or len(lados_btts) > 1
+
+    if amplitude_max <= 0.05 and not mudou_lado:
+        nivel = "ESTÁVEL"
+    elif amplitude_max <= 0.10 and not mudou_lado:
+        nivel = "MODERADA"
+    else:
+        nivel = "INSTÁVEL"
+
+    motivo = f"Maior variação: {fmt_pct(amplitude_max, 1)} em {mercado_mais_sensivel}."
+    if mudou_lado:
+        motivo += " Pelo menos uma conclusão principal mudou de lado entre as janelas."
+    return {
+        "nivel": nivel,
+        "amplitude_max": amplitude_max,
+        "mercado_mais_sensivel": mercado_mais_sensivel,
+        "motivo": motivo,
+        "linhas": linhas,
+        "amplitudes": amplitudes,
+    }
 
 def calcular_cantos_se_existir(df: pd.DataFrame, time_casa: str, time_fora: str) -> Optional[Dict[str, float]]:
     if not all(c in df.columns for c in ["HC", "AC"]):
@@ -2554,9 +2898,9 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V19.6</div>
+        <div class="hero-title">TEX STATISTICS V19.7</div>
         <div class="hero-sub">
-            Painel operacional limpo: planilha pura, Poisson auditável, cotação justa, margem positiva e gestão de risco sem travas subjetivas.
+            Painel operacional limpo: planilha pura, Poisson auditável, regressão leve à média, teste de estabilidade, cotação justa e gestão de risco.
             A tela principal mostra só o que importa; o detalhe técnico fica recolhido para conferência.
         </div>
         <div class="chip-row">
@@ -2623,6 +2967,29 @@ with st.sidebar:
     )
     fator_reducao_amostra = fator_reducao_amostra_pct / 100.0
 
+    st.markdown("**Estabilidade e ajuste**")
+    regressao_media_ativa = st.checkbox(
+        "Aplicar ajuste à média da liga",
+        value=True,
+        help="Mantém a informação recente, mas reduz o efeito de placares extremos. Pode ser desligado para reproduzir o cálculo antigo.",
+    )
+    peso_media_liga_pct = st.slider(
+        "Peso da média da liga",
+        min_value=0.0,
+        max_value=50.0,
+        value=25.0,
+        step=5.0,
+        format="%.0f%%",
+        disabled=not regressao_media_ativa,
+        help="25% significa: 75% da média recente do time e 25% da média atual da liga.",
+    )
+    peso_media_liga = peso_media_liga_pct / 100.0 if regressao_media_ativa else 0.0
+    teste_estabilidade_ativo = st.checkbox(
+        "Comparar estabilidade em 5/8/12 jogos",
+        value=True,
+        help="A previsão oficial continua usando o recorte principal. As janelas extras servem apenas para mostrar sensibilidade.",
+    )
+
     st.divider()
     st.header("Entrada")
     fracao_kelly = st.select_slider(
@@ -2642,7 +3009,7 @@ with st.sidebar:
     )
     margem_minima = margem_minima_pct / 100.0
     teto_por_entrada_pct = st.slider("Teto por entrada", 0.5, 10.0, 3.0, 0.5, format="%.1f%%")
-    teto_por_jogo_pct = st.slider("Teto total no jogo", 1.0, 20.0, 6.0, 0.5, format="%.1f%%")
+    teto_por_jogo_pct = st.slider("Teto total no jogo", 0.5, 20.0, 2.0, 0.5, format="%.1f%%")
     teto_por_entrada = teto_por_entrada_pct / 100.0
     teto_por_jogo = teto_por_jogo_pct / 100.0
     fator_reducao_divergencia_pct = st.slider(
@@ -2655,7 +3022,13 @@ with st.sidebar:
         help="Quando o modelo bate de frente com o mercado, a entrada é reduzida automaticamente. Não bloqueia; só protege a banca.",
     )
     fator_reducao_divergencia = fator_reducao_divergencia_pct / 100.0
-    st.caption("Padrão recomendado: 1/4 do cálculo, margem mínima 3%, teto de 3% por entrada e 6% por jogo. O recorte padrão agora é temporada atual, não histórico gigante.")
+    politica_correlacao = st.selectbox(
+        "Tratamento de mercados correlacionados",
+        ["Dividir a entrada entre correlacionados", "Manter somente a principal", "Somente avisar"],
+        index=0,
+        help="Evita somar como independentes Over+BTTS Sim ou Under+BTTS Não. O valor matemático continua visível.",
+    )
+    st.caption("Padrão recomendado: 1/4 do cálculo, margem mínima 3%, teto de 3% por entrada, 2% por jogo e divisão da stake entre mercados correlacionados.")
 
     st.divider()
     st.header("Cotações")
@@ -2794,7 +3167,11 @@ with aba_analisar:
         elif time_casa == time_fora:
             st.error("Mandante e visitante não podem ser iguais.")
         else:
-            calc = calcular_planilha_pura(df_liga, time_casa, time_fora)
+            calc = calcular_planilha_pura(
+                df_liga, time_casa, time_fora,
+                regressao_media_ativa=regressao_media_ativa,
+                peso_media_liga=peso_media_liga,
+            )
             amostra_ok = int(calc["amostra_minima"]) >= int(amostra_minima)
             motivo_bloqueio = ""
             if not amostra_ok:
@@ -2808,6 +3185,10 @@ with aba_analisar:
                 amostra_minima_real=int(calc.get("amostra_minima", 0)),
                 fator_reducao_divergencia=fator_reducao_divergencia,
             )
+            resultados = ajustar_exposicao_correlacionada(resultados, banca_usada, politica_correlacao)
+            estabilidade = calcular_estabilidade_janelas(
+                df_liga, time_casa, time_fora, regressao_media_ativa, peso_media_liga
+            ) if teste_estabilidade_ativo else None
             periodo_usado = resumo_base_dados(df_liga)
             dias_base_jogo = dias_base_ate_jogo(periodo_usado, data_jogo_catalogo)
             resultados = aplicar_alerta_base_distante(resultados, dias_base_jogo)
@@ -2825,6 +3206,7 @@ with aba_analisar:
                 "calc": calc,
                 "odds": odds,
                 "resultados": resultados.to_dict("records") if not resultados.empty else [],
+                "estabilidade": estabilidade,
                 "amostra_ok": amostra_ok,
                 "motivo_bloqueio": motivo_bloqueio,
                 "config": {
@@ -2840,6 +3222,10 @@ with aba_analisar:
                     "politica_amostra_baixa": politica_amostra_baixa,
                     "fator_reducao_amostra": fator_reducao_amostra,
                     "fator_reducao_divergencia": fator_reducao_divergencia,
+                    "regressao_media_ativa": regressao_media_ativa,
+                    "peso_media_liga": peso_media_liga,
+                    "teste_estabilidade_ativo": teste_estabilidade_ativo,
+                    "politica_correlacao": politica_correlacao,
                 },
             }
 
@@ -2859,7 +3245,7 @@ with aba_analisar:
             <div class="analysis-head">
                 <div class="analysis-kicker">Análise operacional</div>
                 <div class="analysis-title">{html.escape(str(analise['jogo']))}</div>
-                <div class="version-pill">Versão carregada: TEX STATISTICS V19.6 — probabilidades, margem da casa e EV</div>
+                <div class="version-pill">Versão carregada: TEX STATISTICS V19.7 — regressão à média, estabilidade, correlação e resumo</div>
             </div>
             ''',
             unsafe_allow_html=True,
@@ -2903,16 +3289,40 @@ with aba_analisar:
         render_botao_confianca(conf)
         st.info("Confiabilidade da amostra é leitura operacional. Valor matemático vem da margem positiva; uso com banca real depende de amostra, divergência de mercado, base atualizada e checklist.")
 
+        if calc.get("regressao_media_ativa"):
+            st.info(f"Ajuste à média da liga ativo: {fmt_pct(float(calc.get('peso_media_liga', 0.0)), 0)} da média da liga e {fmt_pct(1.0 - float(calc.get('peso_media_liga', 0.0)), 0)} do recorte recente.")
+        else:
+            st.caption("Ajuste à média da liga desativado: cálculo reproduz as médias observadas sem suavização.")
+
+        estabilidade = analise.get("estabilidade")
+        if estabilidade:
+            nivel_est = str(estabilidade.get("nivel", "INCONCLUSIVO"))
+            msg_est = f"Estabilidade 5/8/12: {nivel_est} — {estabilidade.get('motivo', '')}"
+            if nivel_est == "ESTÁVEL":
+                st.success(msg_est)
+            elif nivel_est == "INSTÁVEL":
+                st.warning(msg_est)
+            else:
+                st.info(msg_est)
+            with st.expander("Ver comparação de estabilidade 5/8/12", expanded=False):
+                tabela_est = formatar_tabela_estabilidade(estabilidade)
+                if not tabela_est.empty:
+                    st.dataframe(tabela_est, use_container_width=True, hide_index=True)
+
         with st.expander("Ver cálculo de forças da planilha"):
             dados_forca = pd.DataFrame([
                 {"Item": "Média gols casa liga", "Valor": calc["media_gols_casa_liga"]},
-                {"Item": f"{analise['time_casa']} gols feitos em casa", "Valor": calc["gols_feitos_casa"]},
-                {"Item": f"{analise['time_casa']} gols sofridos em casa", "Valor": calc["gols_sofridos_casa"]},
+                {"Item": f"{analise['time_casa']} gols feitos em casa — observado", "Valor": calc.get("gols_feitos_casa_bruto", calc["gols_feitos_casa"])},
+                {"Item": f"{analise['time_casa']} gols feitos em casa — usado", "Valor": calc["gols_feitos_casa"]},
+                {"Item": f"{analise['time_casa']} gols sofridos em casa — observado", "Valor": calc.get("gols_sofridos_casa_bruto", calc["gols_sofridos_casa"])},
+                {"Item": f"{analise['time_casa']} gols sofridos em casa — usado", "Valor": calc["gols_sofridos_casa"]},
                 {"Item": f"{analise['time_casa']} força ataque casa", "Valor": calc["forca_ataque_casa"]},
                 {"Item": f"{analise['time_casa']} força defesa casa", "Valor": calc["forca_defesa_casa"]},
                 {"Item": "Média gols fora liga", "Valor": calc["media_gols_fora_liga"]},
-                {"Item": f"{analise['time_fora']} gols feitos fora", "Valor": calc["gols_feitos_fora"]},
-                {"Item": f"{analise['time_fora']} gols sofridos fora", "Valor": calc["gols_sofridos_fora"]},
+                {"Item": f"{analise['time_fora']} gols feitos fora — observado", "Valor": calc.get("gols_feitos_fora_bruto", calc["gols_feitos_fora"])},
+                {"Item": f"{analise['time_fora']} gols feitos fora — usado", "Valor": calc["gols_feitos_fora"]},
+                {"Item": f"{analise['time_fora']} gols sofridos fora — observado", "Valor": calc.get("gols_sofridos_fora_bruto", calc["gols_sofridos_fora"])},
+                {"Item": f"{analise['time_fora']} gols sofridos fora — usado", "Valor": calc["gols_sofridos_fora"]},
                 {"Item": f"{analise['time_fora']} força ataque fora", "Valor": calc["forca_ataque_fora"]},
                 {"Item": f"{analise['time_fora']} força defesa fora", "Valor": calc["forca_defesa_fora"]},
             ])
@@ -3017,6 +3427,27 @@ with aba_analisar:
                 else:
                     st.info("Nenhum mercado ficou valor positivo com as cotações informadas.")
 
+        st.markdown("---")
+        st.markdown("### Resumo para compartilhar")
+        st.caption("Texto automático com os principais números, configurações, estabilidade, entradas e alertas. Pode ser copiado e enviado sem repetir toda a tela.")
+        resumo_compartilhavel = gerar_resumo_compartilhavel(
+            analise, calc, resultados, aprovadas, conf, analise.get("estabilidade")
+        )
+        st.text_area(
+            "Resumo",
+            value=resumo_compartilhavel,
+            height=520,
+            key=f"resumo_compartilhavel_{analise['id']}",
+        )
+        nome_resumo = re.sub(r"[^A-Za-z0-9_-]+", "_", str(analise.get("jogo", "analise"))).strip("_")
+        st.download_button(
+            "BAIXAR RESUMO EM TXT",
+            data=resumo_compartilhavel.encode("utf-8"),
+            file_name=f"resumo_{nome_resumo}.txt",
+            mime="text/plain",
+            key=f"download_resumo_{analise['id']}",
+        )
+
         if not aprovadas.empty:
             st.markdown("---")
             st.markdown("### Registrar entradas com valor positivo na auditoria")
@@ -3111,7 +3542,7 @@ with aba_scout:
         for aviso in avisos_scout:
             st.caption("• " + aviso)
 
-        modelo_scout = calcular_planilha_pura(df_liga, scout_casa, scout_fora)
+        modelo_scout = calcular_planilha_pura(df_liga, scout_casa, scout_fora, regressao_media_ativa=regressao_media_ativa, peso_media_liga=peso_media_liga)
         c1, c2, c3 = st.columns(3)
         c1.metric("Gols esperados casa", fmt_num(modelo_scout["gols_esperados_casa"], 2))
         c2.metric("Gols esperados fora", fmt_num(modelo_scout["gols_esperados_fora"], 2))
