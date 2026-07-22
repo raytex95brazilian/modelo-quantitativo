@@ -9,7 +9,8 @@ import html
 import re
 import time
 import calendar
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -19,7 +20,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX ESTATÍSTICAS V20.3.3 — DIREÇÃO ALGÉBRICA E COERÊNCIA INTERNA
+# TEX ESTATÍSTICAS V20.3.5 — DIREÇÃO ALGÉBRICA E COERÊNCIA INTERNA
 # ============================================================
 # Objetivo desta versão:
 # - manter o cálculo auditável de forças e Poisson;
@@ -30,7 +31,33 @@ from scipy.stats import poisson, chi2
 # - tratar estabilidade, odds incoerentes e lados opostos como travas reais, não meros avisos.
 # ============================================================
 
-st.set_page_config(page_title="TEX ESTATÍSTICAS — V20.3.3 Direção Algébrica", layout="wide")
+st.set_page_config(page_title="TEX ESTATÍSTICAS — V20.3.5 Direção Algébrica", layout="wide")
+
+# ============================================================
+# FUSO HORÁRIO DOS REGISTROS
+# ============================================================
+
+# O servidor do Streamlit normalmente opera em UTC. Todos os horários gravados
+# pelo TEX devem representar o horário local do usuário no Nordeste do Brasil.
+FUSO_HORARIO_REGISTROS = os.getenv("TEX_FUSO_HORARIO", "America/Fortaleza")
+
+
+def agora_local() -> datetime:
+    """Retorna a data/hora local com fuso explícito; nunca usa o UTC do servidor."""
+    try:
+        return datetime.now(ZoneInfo(FUSO_HORARIO_REGISTROS))
+    except (ZoneInfoNotFoundError, Exception):
+        # Fallback seguro para o horário de Brasília/Nordeste (UTC-03:00).
+        return datetime.now(timezone(timedelta(hours=-3)))
+
+
+def agora_local_texto() -> str:
+    return agora_local().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def carimbo_local_backup() -> str:
+    return agora_local().strftime("%Y%m%d_%H%M%S_%f")
+
 
 # ============================================================
 # VISUAL
@@ -303,7 +330,7 @@ MERCADOS_NUCLEO = [
     "Ambos marcam - Não",
 ]
 
-VERSAO_MODELO = "TEX ESTATÍSTICAS V20.3.3"
+VERSAO_MODELO = "TEX ESTATÍSTICAS V20.3.5"
 
 COLUNAS_HISTORICO_ANALISES = [
     "ID Análise", "ID Coleta", "Registrado em", "Liga", "Jogo", "Mandante", "Visitante",
@@ -1490,7 +1517,7 @@ def gerar_resumo_compartilhavel(
     cfg = analise.get("config", {}) or {}
     periodo = cfg.get("periodo_base", {}) or {}
     linhas: List[str] = []
-    linhas.append("RESUMO — TEX ESTATÍSTICAS V20.3.3")
+    linhas.append("RESUMO — TEX ESTATÍSTICAS V20.3.5")
     linhas.append(f"Jogo: {analise.get('jogo', '-')}")
     linhas.append(f"Liga: {analise.get('liga', '-')} | Casa de apostas: {analise.get('casa_apostas', '-')} | Origem das cotações: {analise.get('origem', '-')}")
     linhas.append(
@@ -3294,7 +3321,7 @@ def _salvar_backup_versionado(df: pd.DataFrame, nome_base: str, colunas: List[st
     base = normalizar_colunas(df, colunas)
     caminho_atual = os.path.join("logs", f"{nome_base}.csv")
     base.to_csv(caminho_atual, index=False, encoding="utf-8-sig")
-    carimbo = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    carimbo = carimbo_local_backup()
     caminho_backup = os.path.join(DIRETORIO_BACKUPS, f"{nome_base}_{carimbo}.csv")
     base.to_csv(caminho_backup, index=False, encoding="utf-8-sig")
 
@@ -3661,7 +3688,7 @@ def registrar_entrada(
     referencia = p_ajustada if np.isfinite(p_ajustada) else p_bruta
     nova = {
         "ID": str(uuid.uuid4())[:8],
-        "Registrado em": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Registrado em": agora_local_texto(),
         "Liga": liga,
         "Jogo": jogo,
         "Casa de apostas": casa_apostas,
@@ -3866,7 +3893,7 @@ def registrar_odds_catalogo(
 ) -> pd.DataFrame:
     base = normalizar_colunas(catalogo, COLUNAS_CATALOGO)
     coleta = str(id_coleta or uuid.uuid4().hex[:8])
-    momento = str(registrado_em or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    momento = str(registrado_em or agora_local_texto())
     linhas = []
     for mercado, odd in odds.items():
         if not odd_valida(odd):
@@ -3989,7 +4016,7 @@ def registrar_historico_analise(
         nivel_estabilidade = str(estabilidade.get("nivel", ""))
 
     linhas = []
-    momento = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    momento = agora_local_texto()
     for mercado in MERCADOS_NUCLEO:
         r = resultado_por_mercado.get(mercado)
         metrica = metricas_odds.get(mercado, {}) or {}
@@ -4069,7 +4096,7 @@ def importar_catalogo_arquivo(conteudo: bytes, nome_arquivo: str) -> pd.DataFram
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX ESTATÍSTICAS V20.3.3</div>
+        <div class="hero-title">TEX ESTATÍSTICAS V20.3.5</div>
         <div class="hero-sub">
             Painel operacional limpo: planilha pura, Poisson auditável, regressão leve à média, teste de estabilidade, cotação justa e gestão de risco.
             A tela principal mostra só o que importa; o detalhe técnico fica recolhido para conferência.
@@ -4089,6 +4116,7 @@ st.markdown(
 with st.sidebar:
     st.header("Banca")
     banca_inicial = st.number_input("Banca inicial da auditoria", min_value=0.0, value=1000.0, step=50.0)
+    st.caption(f"Horário dos registros: {FUSO_HORARIO_REGISTROS} (UTC−03:00).")
 
     cfg_sidebar = obter_config_google()
     force_sync_sidebar = False
@@ -4504,9 +4532,7 @@ with aba_analisar:
                     "politica_correlacao": politica_correlacao,
                     "permitir_multiplas_entradas": permitir_multiplas_entradas,
                     "peso_prob_empirica": peso_prob_empirica,
-                    "usar_coerencia_btts_individual": usar_coerencia_btts_individual,
-                    "limiar_btts_individual": limiar_btts_individual,
-                    "bloquear_conflito_modelos": bloquear_conflito_modelos,
+                    # Configuração V20.3 atual: sem chaves órfãs de versões anteriores.
                     "somente_probabilidades": somente_probabilidades,
                     "jogos_futuros_removidos": jogos_futuros_removidos,
                 },
@@ -4548,7 +4574,7 @@ with aba_analisar:
             <div class="analysis-head">
                 <div class="analysis-kicker">Análise operacional</div>
                 <div class="analysis-title">{html.escape(str(analise['jogo']))}</div>
-                <div class="version-pill">Versão carregada: TEX ESTATÍSTICAS V20.3.3 — direção algébrica, coerência interna e uma entrada principal</div>
+                <div class="version-pill">Versão carregada: TEX ESTATÍSTICAS V20.3.5 — direção algébrica, coerência interna e uma entrada principal</div>
             </div>
             ''',
             unsafe_allow_html=True,
@@ -4805,12 +4831,12 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V20.3.3 Direção Algébrica | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Lista de conferência: {'CONCLUÍDA' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
+                            observacao=(obs + f" | V20.3.5 Direção Algébrica | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Lista de conferência: {'CONCLUÍDA' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
                             etiquetas=str(r.get("Etiquetas", "")),
                             prob_mercado_bruta=float(r.get("Prob. mercado bruta")) if pd.notna(r.get("Prob. mercado bruta")) else None,
                             prob_mercado_ajustada=float(r.get("Prob. mercado ajustada")) if pd.notna(r.get("Prob. mercado ajustada")) else None,
                             margem_mercado=float(r.get("Margem do mercado")) if pd.notna(r.get("Margem do mercado")) else None,
-                            fonte_probabilidade="Motor V20.3.3: direção algébrica para gols e ambas marcam; Poisson e frequência empírica como confirmação; corte temporal anterior ao jogo",
+                            fonte_probabilidade="Motor V20.3.5: direção algébrica para gols e ambas marcam; Poisson e frequência empírica como confirmação; corte temporal anterior ao jogo",
                             versao_modelo=VERSAO_MODELO,
                         )
                     destino = salvar_auditoria(auditoria)
@@ -4844,7 +4870,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura responsável: aderência ruim significa que a Poisson simples descreve pior a distribuição de gols da liga; nessas condições, o resultado deve permanecer em estudo e não servir isoladamente para entrada financeira. "
-        "Na V20.3.3, a soma projetada e o placar algébrico escolhem a direção. Poisson, frequência real, estabilidade e sobredispersão confirmam ou reduzem a entrada; divergência contra o mercado não bloqueia sozinha."
+        "Na V20.3.5, a soma projetada e o placar algébrico escolhem a direção. Poisson, frequência real, estabilidade e sobredispersão confirmam ou reduzem a entrada; divergência contra o mercado não bloqueia sozinha."
     )
 
 
