@@ -6,6 +6,7 @@ import difflib
 import html
 import re
 import time
+import calendar
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
 
@@ -16,7 +17,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX STATISTICS V20.1 — ESTABILIDADE, CORRELAÇÃO E RESUMO
+# TEX ESTATÍSTICAS V20.2 — MOTOR RESPONSÁVEL E PORTUGUÊS INTEGRAL
 # ============================================================
 # Objetivo desta versão:
 # - manter o cálculo auditável de forças e Poisson;
@@ -27,7 +28,7 @@ from scipy.stats import poisson, chi2
 # - tratar estabilidade, odds incoerentes e lados opostos como travas reais, não meros avisos.
 # ============================================================
 
-st.set_page_config(page_title="TEX STATISTICS — V20.1 Motor Coerente", layout="wide")
+st.set_page_config(page_title="TEX ESTATÍSTICAS — V20.2 Motor Responsável", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -300,7 +301,7 @@ MERCADOS_NUCLEO = [
     "Ambos marcam - Não",
 ]
 
-VERSAO_MODELO = "TEX STATISTICS V20.1"
+VERSAO_MODELO = "TEX ESTATÍSTICAS V20.2"
 
 COLUNAS_AUDITORIA = [
     "ID", "Registrado em", "Liga", "Jogo", "Casa de apostas", "Mercado",
@@ -421,15 +422,46 @@ MESES_PT_BR = (
 )
 
 
-def date_input_ptbr(label: str, value=None, **kwargs):
-    """Calendário Streamlit no padrão brasileiro DD/MM/AAAA.
+def seletor_data_portugues(
+    rotulo: str,
+    valor: Optional[date] = None,
+    chave: str = "data",
+    ano_minimo: int = 2000,
+    ano_maximo: Optional[int] = None,
+) -> date:
+    """Seletor de data totalmente em português, independente do navegador."""
+    base = valor if isinstance(valor, date) else date.today()
+    limite_ano = int(ano_maximo or (date.today().year + 3))
+    st.markdown(f"**{rotulo}**")
+    coluna_dia, coluna_mes, coluna_ano = st.columns([1, 2, 1])
 
-    O Streamlit usa a localidade do navegador para o primeiro dia da semana e
-    para elementos localizados do calendário. O formato explícito garante que
-    a data exibida no app permaneça brasileira em qualquer ambiente compatível.
-    """
-    kwargs.setdefault("format", "DD/MM/YYYY")
-    return st.date_input(label, value=value, **kwargs)
+    with coluna_ano:
+        ano = int(st.number_input(
+            "Ano",
+            min_value=int(ano_minimo),
+            max_value=limite_ano,
+            value=int(np.clip(base.year, ano_minimo, limite_ano)),
+            step=1,
+            key=f"{chave}_ano",
+        ))
+    with coluna_mes:
+        mes_nome = st.selectbox(
+            "Mês",
+            list(MESES_PT_BR),
+            index=max(0, min(11, base.month - 1)),
+            key=f"{chave}_mes",
+        )
+    mes = MESES_PT_BR.index(mes_nome) + 1
+    ultimo_dia = calendar.monthrange(ano, mes)[1]
+    with coluna_dia:
+        dia_padrao = max(1, min(int(base.day), ultimo_dia))
+        dia = int(st.selectbox(
+            "Dia",
+            list(range(1, ultimo_dia + 1)),
+            index=dia_padrao - 1,
+            key=f"{chave}_dia",
+        ))
+    return date(ano, mes, dia)
 
 
 def remover_colunas_duplicadas(df: pd.DataFrame) -> pd.DataFrame:
@@ -766,6 +798,24 @@ def texto_limpo_para_tela(valor: object) -> str:
     txt = re.sub(r"valor matemático\s+valor positivo", "valor matemático positivo", txt, flags=re.IGNORECASE)
     txt = txt.replace("valor matemático Valor positivo", "valor matemático positivo")
     txt = txt.replace("atenção: base distante da data do jogo", "base distante da data do jogo")
+    substituicoes = {
+        "STAKE": "ENTRADA",
+        "Stake": "Entrada",
+        "stake": "entrada",
+        "ODDS": "COTAÇÕES",
+        "Odds": "Cotações",
+        "odds": "cotações",
+        "Over 2.5": "Mais de 2,5",
+        "Under 2.5": "Menos de 2,5",
+        "BTTS Sim": "Ambas marcam — Sim",
+        "BTTS Não": "Ambas marcam — Não",
+        "Green": "Vitória",
+        "Red": "Derrota",
+        "Void": "Anulada",
+        "Cashout": "Encerramento antecipado",
+    }
+    for antigo, novo in substituicoes.items():
+        txt = txt.replace(antigo, novo)
     return txt.strip(" |")
 
 
@@ -864,7 +914,7 @@ def render_card_valor_positivo(r: pd.Series) -> None:
         <div class="entry-type">Valor positivo</div>
         <div class="entry-market">{escape_card_html(mercado)}</div>
         <div class="entry-meta">
-            <span class="meta-pill">Status operacional: {escape_card_html(status)}</span>
+            <span class="meta-pill">Situação operacional: {escape_card_html(status)}</span>
             <span class="meta-pill">Valor matemático: {escape_card_html(valor_matematico)}</span>
         </div>
         <div class="kv-grid">
@@ -1116,9 +1166,9 @@ def render_stat_card(label: str, value: object, hint: str = "", icon: str = "") 
 
 def classe_confianca(nivel: str) -> str:
     n = str(nivel).lower()
-    if "forte" in n or "boa" in n:
+    if "robusta" in n or "adequada" in n:
         return "confidence-good"
-    if "mínima" in n or "minima" in n or "média" in n or "media" in n:
+    if "mínima" in n or "minima" in n:
         return "confidence-mid"
     return "confidence-low"
 
@@ -1128,11 +1178,11 @@ def render_botao_confianca(conf: Dict[str, object]) -> None:
     motivos = str(conf.get("motivos", ""))
     classe = classe_confianca(nivel)
     nl = nivel.lower()
-    icone = "🟢" if ("boa" in nl or "forte" in nl) else ("🟠" if ("mínima" in nl or "minima" in nl or "média" in nl or "media" in nl) else "🔴")
+    icone = "🟢" if ("robusta" in nl or "adequada" in nl) else ("🟠" if ("mínima" in nl or "minima" in nl) else "🔴")
     st.markdown(
         f'''
         <div class="confidence-button {classe}">
-            <span>{icone}</span><span>CONFIABILIDADE DA AMOSTRA: {html.escape(nivel.upper())}</span>
+            <span>{icone}</span><span>QUALIDADE DOS DADOS: {html.escape(nivel.upper())}</span>
         </div>
         <div class="muted" style="margin-top:-6px;margin-bottom:10px;font-weight:700;">{html.escape(motivos)}</div>
         ''',
@@ -1362,9 +1412,9 @@ def ajustar_exposicao_correlacionada(
                 nova_stake = orcamento_par * peso / soma_pesos
                 out.at[idx, "Entrada %"] = nova_stake
                 out.at[idx, "Entrada R$"] = float(banca) * nova_stake
-                out.at[idx, "Status operacional"] = str(out.at[idx, "Status operacional"]).replace(" — STAKE CORRELACIONADA DIVIDIDA", "") + " — STAKE CORRELACIONADA DIVIDIDA"
-                out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Stake correlacionada dividida")
-                out.at[idx, "Motivo"] = str(out.at[idx, "Motivo"]) + " | stake do par correlacionado dividida sem duplicar a exposição."
+                out.at[idx, "Status operacional"] = str(out.at[idx, "Status operacional"]).replace(" — ENTRADA CORRELACIONADA DIVIDIDA", "") + " — ENTRADA CORRELACIONADA DIVIDIDA"
+                out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Entrada correlacionada dividida")
+                out.at[idx, "Motivo"] = str(out.at[idx, "Motivo"]) + " | entrada do par correlacionado dividida sem duplicar a exposição."
 
     return out
 
@@ -1380,7 +1430,12 @@ def formatar_tabela_estabilidade(estabilidade: Dict[str, object]) -> pd.DataFram
     for col in ["Vitória Casa", "Empate", "Vitória Fora", "Over 2.5", "Under 2.5", "BTTS Sim", "BTTS Não"]:
         if col in out.columns:
             out[col] = out[col].map(lambda x: "-" if pd.isna(x) else fmt_pct(float(x), 1))
-    return out
+    return out.rename(columns={
+        "Over 2.5": "Mais de 2,5",
+        "Under 2.5": "Menos de 2,5",
+        "BTTS Sim": "Ambas marcam — Sim",
+        "BTTS Não": "Ambas marcam — Não",
+    })
 
 
 def _linhas_unicas_texto(valores) -> List[str]:
@@ -1405,9 +1460,9 @@ def gerar_resumo_compartilhavel(
     cfg = analise.get("config", {}) or {}
     periodo = cfg.get("periodo_base", {}) or {}
     linhas: List[str] = []
-    linhas.append("RESUMO — TEX STATISTICS V20.1")
+    linhas.append("RESUMO — TEX ESTATÍSTICAS V20.2")
     linhas.append(f"Jogo: {analise.get('jogo', '-')}")
-    linhas.append(f"Liga: {analise.get('liga', '-')} | Casa de apostas: {analise.get('casa_apostas', '-')} | Origem das odds: {analise.get('origem', '-')}")
+    linhas.append(f"Liga: {analise.get('liga', '-')} | Casa de apostas: {analise.get('casa_apostas', '-')} | Origem das cotações: {analise.get('origem', '-')}")
     linhas.append(
         f"Base: {cfg.get('janela', '-')} | Período: {periodo.get('inicio', '-')} a {periodo.get('fim', '-')} | "
         f"Jogos da liga: {periodo.get('jogos', 0)} | Times: {periodo.get('times', 0)}"
@@ -1443,7 +1498,8 @@ def gerar_resumo_compartilhavel(
         f"{fmt_num(calc.get('gols_esperados_fora', 0), 2)} {analise.get('time_fora', '-')} "
         f"(total {fmt_num(float(calc.get('gols_esperados_casa', 0)) + float(calc.get('gols_esperados_fora', 0)), 2)})."
     )
-    linhas.append(f"Confiabilidade operacional: {confianca.get('nível', '-')} — {confianca.get('motivos', '-')}")
+    linhas.append(f"Qualidade dos dados: {confianca.get('nível', '-')} — {confianca.get('motivos', '-')}")
+    linhas.append(f"Calibração preditiva: {confianca.get('calibração', 'Ainda não comprovada')}.")
 
     if estabilidade:
         linhas.append(f"Estabilidade 5/8/12: {estabilidade.get('nivel', '-')} — {estabilidade.get('motivo', '-')}")
@@ -1454,7 +1510,7 @@ def gerar_resumo_compartilhavel(
                 linhas.append(
                     f"  Janela {r.get('Janela')}: casa {fmt_num(r.get('Gols casa', 0), 2)}, fora {fmt_num(r.get('Gols fora', 0), 2)}, "
                     f"1X2 {fmt_pct(r.get('Vitória Casa', 0), 1)}/{fmt_pct(r.get('Empate', 0), 1)}/{fmt_pct(r.get('Vitória Fora', 0), 1)}, "
-                    f"Over 2.5 {fmt_pct(r.get('Over 2.5', 0), 1)}, BTTS Sim {fmt_pct(r.get('BTTS Sim', 0), 1)}."
+                    f"Mais de 2,5 {fmt_pct(r.get('Over 2.5', 0), 1)}, Ambas marcam — Sim {fmt_pct(r.get('BTTS Sim', 0), 1)}."
                 )
 
     linhas.append("Probabilidades do motor:")
@@ -1468,7 +1524,11 @@ def gerar_resumo_compartilhavel(
         linhas.append(f"  - {mercado_exibicao(mercado)}: operacional {fmt_pct(float(p_final.get(mercado, 0.0)), 1)}{extra}")
     linhas.append(
         f"Coerência simples: total projetado {fmt_num(float(calc.get('gols_total_esperado', 0.0)), 2)}; "
-        f"placar arredondado {calc.get('placar_arredondado_casa', 0)} x {calc.get('placar_arredondado_fora', 0)}."
+        f"placar arredondado {calc.get('placar_arredondado_casa', 0)} x {calc.get('placar_arredondado_fora', 0)} (apenas visual)."
+    )
+    linhas.append(
+        f"Chance individual de marcar: mandante {fmt_pct(float(calc.get('prob_casa_marcar', 0.0)), 1)}; "
+        f"visitante {fmt_pct(float(calc.get('prob_fora_marcar', 0.0)), 1)}."
     )
 
     if resultados is None or resultados.empty:
@@ -1478,9 +1538,10 @@ def gerar_resumo_compartilhavel(
         for _, r in resultados.iterrows():
             linhas.append(
                 f"  - {mercado_exibicao(r.get('Mercado', '-'))}: prob. {fmt_pct(float(r.get('Probabilidade', 0)), 1)}, "
-                f"odd justa {fmt_num(float(r.get('Cotação justa', 0)), 2)}, odd real {fmt_num(float(r.get('Cotação real', 0)), 2)}, "
-                f"EV {fmt_pct(float(r.get('Margem positiva', 0)), 1)}, status {texto_limpo_para_tela(r.get('Status operacional', '-'))}, "
-                f"entrada {fmt_pct(float(r.get('Entrada %', 0)), 2)} ({fmt_dinheiro(float(r.get('Entrada R$', 0)))})."
+                f"cotação justa {fmt_num(float(r.get('Cotação justa', 0)), 2)}, cotação real {fmt_num(float(r.get('Cotação real', 0)), 2)}, "
+                f"valor esperado {fmt_pct(float(r.get('Margem positiva', 0)), 1)}, situação {texto_limpo_para_tela(r.get('Status operacional', '-'))}, "
+                f"entrada teórica {fmt_pct(float(r.get('Entrada teórica %', r.get('Entrada %', 0))), 2)} ({fmt_dinheiro(float(r.get('Entrada teórica R$', r.get('Entrada R$', 0))))}), "
+                f"entrada financeira {fmt_pct(float(r.get('Entrada %', 0)), 2)} ({fmt_dinheiro(float(r.get('Entrada R$', 0)))})."
             )
 
     if aprovadas is not None and not aprovadas.empty:
@@ -1505,7 +1566,7 @@ def gerar_resumo_compartilhavel(
         f"Gestão: teto por entrada {fmt_pct(float(cfg.get('teto_por_entrada', 0)), 1)}; teto total por jogo {fmt_pct(float(cfg.get('teto_por_jogo', 0)), 1)}; "
         f"correlação: {cfg.get('politica_correlacao', 'Somente avisar')}."
     )
-    linhas.append("Observação: o resumo reproduz o cálculo do app; não incorpora automaticamente escalações, lesões ou notícias externas.")
+    linhas.append("Observação: o resumo reproduz o cálculo do aplicativo; não incorpora automaticamente escalações, lesões ou notícias externas.")
     return "\n".join(linhas)
 
 def prioridade_classe(prioridade: str) -> str:
@@ -1740,6 +1801,8 @@ def calcular_planilha_pura(
     prob_under25 = float(matriz[soma_gols <= 2].sum())
     prob_btts_sim = float(matriz[1:, 1:].sum())
     prob_btts_nao = float(1.0 - prob_btts_sim)
+    prob_casa_marcar = float(1.0 - np.exp(-gols_esperados_casa))
+    prob_fora_marcar = float(1.0 - np.exp(-gols_esperados_fora))
 
     probabilidades_poisson = {
         "Vitória Casa": prob_casa,
@@ -1799,6 +1862,8 @@ def calcular_planilha_pura(
         "gols_total_esperado": float(gols_esperados_casa + gols_esperados_fora),
         "placar_arredondado_casa": int(np.floor(gols_esperados_casa + 0.5)),
         "placar_arredondado_fora": int(np.floor(gols_esperados_fora + 0.5)),
+        "prob_casa_marcar": prob_casa_marcar,
+        "prob_fora_marcar": prob_fora_marcar,
         "probabilidades": probabilidades,
         "probabilidades_poisson": probabilidades_poisson,
         "probabilidades_empiricas": probabilidades_empiricas,
@@ -1957,7 +2022,8 @@ def aplicar_travas_coerencia(
     estabilidade: Optional[Dict[str, object]] = None,
     limite_under: float = 2.50,
     inicio_zona_cinza_under: float = 2.30,
-    usar_arredondamento_btts: bool = True,
+    usar_coerencia_btts_individual: bool = True,
+    limiar_btts_individual: float = 0.55,
     bloquear_conflito_modelos: bool = True,
 ) -> pd.DataFrame:
     """Transforma coerência em regra operacional, e não em aviso decorativo.
@@ -1965,9 +2031,8 @@ def aplicar_travas_coerencia(
     Regras centrais:
     - Menos de 2,5 nunca é liberado quando o total projetado é >= 2,50.
     - Entre 2,30 e 2,49, Menos fica em estudo por proximidade da linha.
-    - No mercado ambas marcam, o placar arredondado funciona como veto simples:
-      se ambos arredondam para pelo menos 1, o lado Não não é liberado; se algum
-      arredonda para 0, o lado Sim não é liberado.
+    - No mercado ambas marcam, a trava usa a chance individual de cada equipe marcar.
+      O placar arredondado permanece apenas como informação visual.
     - Se Poisson e frequência empírica apontam lados opostos, o grupo fica em estudo.
     - Se as janelas mudam de lado, nenhum lado desse grupo recebe entrada.
     - Nunca ficam dois lados opostos liberados ao mesmo tempo.
@@ -1978,8 +2043,10 @@ def aplicar_travas_coerencia(
     total = float(calc.get("gols_total_esperado", float(calc.get("gols_esperados_casa", 0.0)) + float(calc.get("gols_esperados_fora", 0.0))))
     lam_casa = float(calc.get("gols_esperados_casa", 0.0))
     lam_fora = float(calc.get("gols_esperados_fora", 0.0))
-    arred_casa = int(calc.get("placar_arredondado_casa", np.floor(lam_casa + 0.5)))
-    arred_fora = int(calc.get("placar_arredondado_fora", np.floor(lam_fora + 0.5)))
+    p_casa_marcar = float(calc.get("prob_casa_marcar", 1.0 - np.exp(-lam_casa)))
+    p_fora_marcar = float(calc.get("prob_fora_marcar", 1.0 - np.exp(-lam_fora)))
+    limiar_btts = float(np.clip(limiar_btts_individual, 0.50, 0.80))
+    limiar_baixo = 1.0 - limiar_btts
     p_pois = calc.get("probabilidades_poisson", {}) or {}
     p_emp = calc.get("probabilidades_empiricas", {}) or {}
 
@@ -2005,12 +2072,32 @@ def aplicar_travas_coerencia(
         elif mercado == "Mais de 2.5 gols":
             if total < 2.00:
                 _bloquear_operacional(out, idx, "ESTUDO — TOTAL PROJETADO BAIXO", f"total projetado {total:.2f} é inferior a 2,00", "Coerência total projetado")
-        elif mercado == "Ambos marcam - Não" and usar_arredondamento_btts:
-            if arred_casa >= 1 and arred_fora >= 1:
-                _bloquear_operacional(out, idx, "BLOQUEADO — PROJEÇÃO INDIVIDUAL INDICA GOL DOS DOIS", f"projeções {lam_casa:.2f} x {lam_fora:.2f} arredondam para {arred_casa} x {arred_fora}", "Coerência ambas marcam")
-        elif mercado == "Ambos marcam - Sim" and usar_arredondamento_btts:
-            if arred_casa <= 0 or arred_fora <= 0:
-                _bloquear_operacional(out, idx, "ESTUDO — PROJEÇÃO INDIVIDUAL NÃO SUSTENTA GOL DOS DOIS", f"projeções {lam_casa:.2f} x {lam_fora:.2f} arredondam para {arred_casa} x {arred_fora}", "Coerência ambas marcam")
+        elif mercado == "Ambos marcam - Não" and usar_coerencia_btts_individual:
+            modelos_sustentam_sim = (
+                float(p_pois.get("Ambos marcam - Sim", 0.0)) >= 0.50
+                and float(p_emp.get("Ambos marcam - Sim", 0.0)) >= 0.50
+            )
+            if p_casa_marcar >= limiar_btts and p_fora_marcar >= limiar_btts and modelos_sustentam_sim:
+                _bloquear_operacional(
+                    out,
+                    idx,
+                    "BLOQUEADO — CHANCE INDIVIDUAL SUSTENTA GOL DOS DOIS",
+                    f"chance de marcar: mandante {p_casa_marcar:.1%}, visitante {p_fora_marcar:.1%}; Poisson e frequência também favorecem Sim",
+                    "Coerência individual de ambas marcam",
+                )
+        elif mercado == "Ambos marcam - Sim" and usar_coerencia_btts_individual:
+            modelos_sustentam_nao = (
+                float(p_pois.get("Ambos marcam - Sim", 1.0)) < 0.50
+                and float(p_emp.get("Ambos marcam - Sim", 1.0)) < 0.50
+            )
+            if min(p_casa_marcar, p_fora_marcar) <= limiar_baixo and modelos_sustentam_nao:
+                _bloquear_operacional(
+                    out,
+                    idx,
+                    "ESTUDO — CHANCE INDIVIDUAL NÃO SUSTENTA GOL DOS DOIS",
+                    f"chance de marcar: mandante {p_casa_marcar:.1%}, visitante {p_fora_marcar:.1%}; Poisson e frequência também favorecem Não",
+                    "Coerência individual de ambas marcam",
+                )
 
         if mercado in {"Mais de 2.5 gols", "Menos de 2.5 gols"}:
             if instavel_gols:
@@ -2047,6 +2134,75 @@ def aplicar_travas_coerencia(
     return limpar_dataframe_operacional(out)
 
 
+def manter_apenas_entrada_principal(
+    resultados: pd.DataFrame,
+    banca: float,
+    teto_por_jogo: float,
+    permitir_multiplas: bool = False,
+) -> pd.DataFrame:
+    """Mantém no máximo uma entrada financeira por partida; as demais viram confirmações."""
+    if resultados is None or resultados.empty or permitir_multiplas:
+        return resultados
+    out = resultados.copy()
+    candidatos = out.index[
+        out["Veredito"].astype(str).eq("VALOR POSITIVO")
+        & (pd.to_numeric(out["Entrada %"], errors="coerce").fillna(0.0) > 0)
+    ].tolist()
+    if not candidatos:
+        return out
+
+    principal = max(
+        candidatos,
+        key=lambda i: (
+            float(pd.to_numeric(out.at[i, "_prioridade_score"], errors="coerce") or 0.0),
+            float(pd.to_numeric(out.at[i, "Probabilidade"], errors="coerce") or 0.0),
+            float(pd.to_numeric(out.at[i, "Margem positiva"], errors="coerce") or 0.0),
+        ),
+    )
+
+    base_operacional = float(pd.to_numeric(out.at[principal, "_entrada_operacional_base"], errors="coerce") or 0.0) if "_entrada_operacional_base" in out.columns else float(pd.to_numeric(out.at[principal, "Entrada %"], errors="coerce") or 0.0)
+    entrada_principal = min(max(0.0, base_operacional), max(0.0, float(teto_por_jogo))) if teto_por_jogo > 0 else max(0.0, base_operacional)
+    out.at[principal, "Entrada %"] = entrada_principal
+    out.at[principal, "Entrada R$"] = float(banca) * entrada_principal
+    out.at[principal, "Etiquetas"] = append_tag_texto(out.at[principal, "Etiquetas"], "Entrada principal única")
+    out.at[principal, "Motivo"] = (str(out.at[principal, "Motivo"] or "") + " | selecionada como única entrada financeira da partida.").strip()
+
+    for idx in candidatos:
+        if idx == principal:
+            continue
+        out.at[idx, "Entrada %"] = 0.0
+        out.at[idx, "Entrada R$"] = 0.0
+        out.at[idx, "Veredito"] = "CONFIRMAÇÃO"
+        out.at[idx, "Status operacional"] = "CONFIRMAÇÃO — SEM ENTRADA"
+        out.at[idx, "Prioridade"] = "—"
+        out.at[idx, "_prioridade_score"] = 0
+        out.at[idx, "_prioridade_motivo"] = "sinal secundário sem nova exposição financeira"
+        out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Confirmação sem entrada")
+        out.at[idx, "Motivo"] = (str(out.at[idx, "Motivo"] or "") + " | valor preservado como confirmação; somente o mercado principal recebe entrada.").strip()
+    return limpar_dataframe_operacional(out)
+
+
+def aplicar_trava_calibracao(resultados: pd.DataFrame, calibracao_comprovada: bool = False) -> pd.DataFrame:
+    """Preserva o cálculo teórico, mas zera dinheiro real enquanto a calibração não for comprovada."""
+    if resultados is None or resultados.empty or calibracao_comprovada:
+        return resultados
+    out = resultados.copy()
+    mask = (
+        out["Veredito"].astype(str).eq("VALOR POSITIVO")
+        & (pd.to_numeric(out["Entrada %"], errors="coerce").fillna(0.0) > 0)
+    )
+    out.loc[mask, "Veredito"] = "ESTUDO"
+    out.loc[mask, "Status operacional"] = "ESTUDO — CALIBRAÇÃO NÃO COMPROVADA"
+    out.loc[mask, "Entrada %"] = 0.0
+    out.loc[mask, "Entrada R$"] = 0.0
+    out.loc[mask, "Prioridade"] = "—"
+    out.loc[mask, "_prioridade_score"] = 0
+    out.loc[mask, "_prioridade_motivo"] = "calibração preditiva ainda não comprovada"
+    out.loc[mask, "Etiquetas"] = out.loc[mask, "Etiquetas"].map(lambda x: append_tag_texto(x, "Calibração não comprovada"))
+    out.loc[mask, "Motivo"] = out.loc[mask, "Motivo"].astype(str) + " | entrada financeira zerada; o cálculo teórico permanece visível."
+    return limpar_dataframe_operacional(out)
+
+
 def aplicar_modo_estudo(resultados: pd.DataFrame) -> pd.DataFrame:
     """Mantém comparação com odds, mas proíbe stake e recomendação."""
     if resultados is None or resultados.empty:
@@ -2059,8 +2215,8 @@ def aplicar_modo_estudo(resultados: pd.DataFrame) -> pd.DataFrame:
     out.loc[mask, "Entrada R$"] = 0.0
     out.loc[mask, "Prioridade"] = "—"
     out.loc[mask, "_prioridade_score"] = 0
-    out.loc[mask, "_prioridade_motivo"] = "modo científico sem entrada"
-    out.loc[mask, "Etiquetas"] = out.loc[mask, "Etiquetas"].map(lambda x: append_tag_texto(x, "Modo científico"))
+    out.loc[mask, "_prioridade_motivo"] = "modo somente probabilidades sem entrada"
+    out.loc[mask, "Etiquetas"] = out.loc[mask, "Etiquetas"].map(lambda x: append_tag_texto(x, "Modo somente probabilidades"))
     return out
 
 
@@ -2234,9 +2390,22 @@ def avaliar_valor_planilha(
             veredito = "ESTUDO"
             status_operacional = "ODDS INCONSISTENTES — ESTUDO"
             entrada_pct = 0.0
-            motivo = motivo + " | conjunto de odds incompatível com um mercado normal; use o modo somente probabilidades para testes."
+            motivo = motivo + " | conjunto de cotações incompatível com um mercado normal; use o modo somente probabilidades para testes."
 
         nivel_divergencia, prob_mercado, dif_app_mercado = classificar_divergencia_mercado(prob, float(odd), mercado, float(margem), alertas_mercado) if tem_valor else ("NORMAL", prob_mercado_bruta, prob - prob_mercado_bruta)
+        diferenca_ajustada = (prob - float(prob_mercado_ajustada)) if prob_mercado_ajustada is not None else (prob - prob_mercado_bruta)
+        divergencia_critica = (
+            tem_valor
+            and bool(metricas_casa.get("completo"))
+            and prob_mercado_ajustada is not None
+            and abs(float(diferenca_ajustada)) >= 0.10
+        )
+        if divergencia_critica and not odds_inconsistentes:
+            veredito = "ESTUDO"
+            status_operacional = "DIVERGÊNCIA CRÍTICA — SOMENTE ESTUDO"
+            entrada_pct = 0.0
+            nivel_divergencia = "CRÍTICA"
+            motivo = motivo + f" | diferença de {abs(float(diferenca_ajustada)) * 100:.1f} pontos percentuais entre o modelo e o mercado ajustado; entrada financeira bloqueada."
 
         etiquetas: List[str] = []
         if not amostra_ok:
@@ -2248,7 +2417,9 @@ def avaliar_valor_planilha(
         elif int(amostra_minima_real or 0) >= 8:
             etiquetas.append("Amostra boa")
 
-        if nivel_divergencia == "EXTREMA":
+        if nivel_divergencia == "CRÍTICA":
+            etiquetas.append("Divergência crítica com mercado")
+        elif nivel_divergencia == "EXTREMA":
             etiquetas.append("Divergência extrema com mercado")
         elif nivel_divergencia == "FORTE":
             etiquetas.append("Divergência forte com mercado")
@@ -2300,6 +2471,9 @@ def avaliar_valor_planilha(
             "Cotação real": float(odd),
             "Margem positiva": margem,
             "Veredito": veredito,
+            "Entrada teórica %": entrada_pct_base if tem_valor else 0.0,
+            "Entrada teórica R$": float(banca) * (entrada_pct_base if tem_valor else 0.0) if banca > 0 else 0.0,
+            "_entrada_operacional_base": entrada_pct,
             "Entrada %": entrada_pct,
             "Entrada R$": float(banca) * entrada_pct if banca > 0 else 0.0,
             "Motivo": motivo,
@@ -2430,47 +2604,40 @@ def diagnostico_poisson_liga(df: pd.DataFrame) -> Dict[str, object]:
 
 
 def classificar_confianca_estimativa(modelo: Dict[str, object], resultados: pd.DataFrame) -> Dict[str, object]:
+    """Classifica somente a qualidade dos dados; não afirma confiabilidade preditiva."""
     amostra = int(modelo.get("amostra_minima", 0))
-    margem_max = 0.0
-    if resultados is not None and not resultados.empty and "Margem positiva" in resultados.columns:
-        evs = pd.to_numeric(resultados["Margem positiva"], errors="coerce").dropna()
-        if not evs.empty:
-            margem_max = float(evs.max())
+    motivos: List[str] = []
 
-    motivos = []
-
-    # Régua honesta: passar no mínimo não significa ter amostra boa.
     if amostra >= 13:
-        nivel = "Forte"
+        nivel = "Robusta"
         pontos = 4
-        motivos.append("amostra casa/fora forte")
+        motivos.append(f"pelo menos {amostra} jogos no menor recorte casa/fora")
     elif amostra >= 8:
-        nivel = "Boa"
+        nivel = "Adequada"
         pontos = 3
-        motivos.append("amostra casa/fora boa")
+        motivos.append(f"pelo menos {amostra} jogos no menor recorte casa/fora")
     elif amostra >= 5:
-        nivel = "Mínima aprovada"
+        nivel = "Mínima"
         pontos = 2
-        motivos.append("amostra mínima aprovada")
+        motivos.append(f"apenas {amostra} jogos no menor recorte casa/fora")
     else:
-        nivel = "Baixa"
+        nivel = "Insuficiente"
         pontos = 1
-        motivos.append("amostra baixa")
-
-    if margem_max >= 0.15:
-        motivos.append("margem positiva forte")
-    elif margem_max > 0.00:
-        motivos.append("margem positiva existe, mas não é larga")
-    else:
-        motivos.append("sem margem positiva relevante")
+        motivos.append(f"somente {amostra} jogos no menor recorte casa/fora")
 
     total_esperado = float(modelo.get("gols_esperados_casa", 0.0)) + float(modelo.get("gols_esperados_fora", 0.0))
     if 1.20 <= total_esperado <= 4.20:
-        motivos.append("gols esperados dentro de faixa normal")
+        motivos.append("projeção total dentro da faixa operacional usual")
     else:
-        motivos.append("gols esperados em faixa extrema")
+        motivos.append("projeção total em faixa extrema")
 
-    return {"nível": nivel, "pontos": pontos, "motivos": "; ".join(motivos)}
+    motivos.append("calibração preditiva ainda não comprovada")
+    return {
+        "nível": nivel,
+        "pontos": pontos,
+        "motivos": "; ".join(motivos),
+        "calibração": "Ainda não comprovada",
+    }
 
 
 def coluna_se_existir(df: pd.DataFrame, *candidatas: str) -> Optional[str]:
@@ -2557,33 +2724,38 @@ def resumo_auditoria_avancado(auditoria: pd.DataFrame) -> Dict[str, pd.DataFrame
     base["Resultado R$"] = pd.to_numeric(base["Resultado R$"], errors="coerce").fillna(0.0)
     base["Cotação de entrada"] = pd.to_numeric(base["Cotação de entrada"], errors="coerce")
     base["Status"] = base["Status"].astype(str)
-    fechadas = base[base["Status"].isin(["Green", "Red", "Void", "Cashout"])].copy()
+    mapa_situacao = {
+        "Green": "Vitória", "Red": "Derrota", "Void": "Anulada", "Cashout": "Encerramento antecipado",
+        "Vitória": "Vitória", "Derrota": "Derrota", "Anulada": "Anulada", "Encerramento antecipado": "Encerramento antecipado",
+    }
+    base["Situação normalizada"] = base["Status"].map(mapa_situacao).fillna(base["Status"])
+    fechadas = base[base["Situação normalizada"].isin(["Vitória", "Derrota", "Anulada", "Encerramento antecipado"])].copy()
     if fechadas.empty:
         return {}
 
-    fechadas["Green_bin"] = (fechadas["Status"] == "Green").astype(int)
-    fechadas["Red_bin"] = (fechadas["Status"] == "Red").astype(int)
-    fechadas["Faixa odd"] = fechadas["Cotação de entrada"].apply(faixa_odd)
+    fechadas["Vitoria_bin"] = (fechadas["Situação normalizada"] == "Vitória").astype(int)
+    fechadas["Derrota_bin"] = (fechadas["Situação normalizada"] == "Derrota").astype(int)
+    fechadas["Faixa de cotação"] = fechadas["Cotação de entrada"].apply(faixa_odd)
 
     def agrupar(campo: str) -> pd.DataFrame:
         g = fechadas.groupby(campo, dropna=False).agg(
             Entradas=("ID", "count"),
-            Greens=("Green_bin", "sum"),
-            Reds=("Red_bin", "sum"),
+            Vitórias=("Vitoria_bin", "sum"),
+            Derrotas=("Derrota_bin", "sum"),
             Apostado=("Entrada R$", "sum"),
             Resultado=("Resultado R$", "sum"),
         ).reset_index()
-        g["Taxa acerto"] = np.where((g["Greens"] + g["Reds"]) > 0, g["Greens"] / (g["Greens"] + g["Reds"]), 0.0)
+        g["Taxa acerto"] = np.where((g["Vitórias"] + g["Derrotas"]) > 0, g["Vitórias"] / (g["Vitórias"] + g["Derrotas"]), 0.0)
         g["ROI"] = np.where(g["Apostado"] > 0, g["Resultado"] / g["Apostado"], 0.0)
         return g.sort_values("Resultado", ascending=False)
 
     geral = pd.DataFrame([{
         "Entradas fechadas": len(fechadas),
-        "Greens": int(fechadas["Green_bin"].sum()),
-        "Reds": int(fechadas["Red_bin"].sum()),
+        "Vitórias": int(fechadas["Vitoria_bin"].sum()),
+        "Derrotas": int(fechadas["Derrota_bin"].sum()),
         "Apostado": float(fechadas["Entrada R$"].sum()),
         "Resultado": float(fechadas["Resultado R$"].sum()),
-        "Taxa acerto": float(fechadas["Green_bin"].sum() / max(1, (fechadas["Green_bin"].sum() + fechadas["Red_bin"].sum()))),
+        "Taxa acerto": float(fechadas["Vitoria_bin"].sum() / max(1, (fechadas["Vitoria_bin"].sum() + fechadas["Derrota_bin"].sum()))),
         "ROI": float(fechadas["Resultado R$"].sum() / max(0.01, fechadas["Entrada R$"].sum())),
     }])
 
@@ -2597,12 +2769,12 @@ def resumo_auditoria_avancado(auditoria: pd.DataFrame) -> Dict[str, pd.DataFrame
         if not tag_base.empty:
             g = tag_base.groupby("Etiqueta", dropna=False).agg(
                 Entradas=("ID", "count"),
-                Greens=("Green_bin", "sum"),
-                Reds=("Red_bin", "sum"),
+                Vitórias=("Vitoria_bin", "sum"),
+                Derrotas=("Derrota_bin", "sum"),
                 Apostado=("Entrada R$", "sum"),
                 Resultado=("Resultado R$", "sum"),
             ).reset_index()
-            g["Taxa acerto"] = np.where((g["Greens"] + g["Reds"]) > 0, g["Greens"] / (g["Greens"] + g["Reds"]), 0.0)
+            g["Taxa acerto"] = np.where((g["Vitórias"] + g["Derrotas"]) > 0, g["Vitórias"] / (g["Vitórias"] + g["Derrotas"]), 0.0)
             g["ROI"] = np.where(g["Apostado"] > 0, g["Resultado"] / g["Apostado"], 0.0)
             por_etiqueta = g.sort_values("Resultado", ascending=False)
 
@@ -2610,7 +2782,7 @@ def resumo_auditoria_avancado(auditoria: pd.DataFrame) -> Dict[str, pd.DataFrame
         "geral": geral,
         "por_mercado": agrupar("Mercado"),
         "por_liga": agrupar("Liga"),
-        "por_faixa_odd": agrupar("Faixa odd"),
+        "por_faixa_odd": agrupar("Faixa de cotação"),
         "por_etiqueta": por_etiqueta,
     }
 
@@ -2621,7 +2793,7 @@ def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
     out = limpar_dataframe_operacional(df)
     if "Mercado" in out.columns:
         out["Mercado"] = out["Mercado"].map(mercado_exibicao)
-    for col in ["_prioridade_score", "_prioridade_motivo"]:
+    for col in ["_prioridade_score", "_prioridade_motivo", "_entrada_operacional_base"]:
         if col in out.columns:
             out = out.drop(columns=[col])
     for col in ["Alerta de mercado", "Etiquetas", "Motivo", "Status operacional", "Prioridade"]:
@@ -2634,9 +2806,16 @@ def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
     out["Cotação justa"] = out["Cotação justa"].map(lambda x: "-" if not np.isfinite(x) else fmt_num(x, 2))
     out["Cotação real"] = out["Cotação real"].map(lambda x: "-" if x is None or pd.isna(x) or float(x) <= 1.0 else fmt_num(x, 2))
     out["Margem positiva"] = out["Margem positiva"].map(lambda x: fmt_pct(x, 1))
-    out["Entrada %"] = out["Entrada %"].map(lambda x: fmt_pct(x, 2))
-    out["Entrada R$"] = out["Entrada R$"].map(fmt_dinheiro)
-    return out
+    for col in ["Entrada teórica %", "Entrada %"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: fmt_pct(x, 2))
+    for col in ["Entrada teórica R$", "Entrada R$"]:
+        if col in out.columns:
+            out[col] = out[col].map(fmt_dinheiro)
+    return out.rename(columns={
+        "Status operacional": "Situação operacional",
+        "Diferença app-mercado": "Diferença aplicativo-mercado",
+    })
 
 
 def formatar_tabela_resumo_operacional(df: pd.DataFrame) -> pd.DataFrame:
@@ -2645,9 +2824,9 @@ def formatar_tabela_resumo_operacional(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     out = formatar_tabela_resultados(df)
     cols = [
-        "Mercado", "Prioridade", "Valor matemático", "Status operacional",
+        "Mercado", "Prioridade", "Valor matemático", "Situação operacional",
         "Divergência mercado", "Probabilidade", "Prob. mercado ajustada", "Cotação justa", "Cotação real",
-        "Margem positiva", "Entrada %", "Entrada R$", "Etiquetas",
+        "Margem positiva", "Entrada teórica %", "Entrada teórica R$", "Entrada %", "Entrada R$", "Etiquetas",
     ]
     return out[[c for c in cols if c in out.columns]].copy()
 
@@ -2827,7 +3006,7 @@ def extrair_odds_api(jogo: dict, casa_alvo: Optional[str] = None) -> Tuple[Dict[
                 _popular_pools_com_bookmaker(pools_alvo, book, casa_api, fora_api)
             odds_alvo = _pools_para_odds(pools_alvo)
             if odds_alvo:
-                return odds_alvo, f"✅ Cotações extraídas da casa selecionada na API: {casa_alvo_txt}. Ainda assim, confira antes de apostar."
+                return odds_alvo, f"✅ Cotações extraídas da casa selecionada na fonte automática: {casa_alvo_txt}. Ainda assim, confira antes de apostar."
 
     pools = {m: [] for m in MERCADOS_NUCLEO}
     for book in bookmakers:
@@ -2836,12 +3015,12 @@ def extrair_odds_api(jogo: dict, casa_alvo: Optional[str] = None) -> Tuple[Dict[
 
     if deve_priorizar_casa:
         aviso = (
-            f"⚠️ A API não encontrou cotações da casa selecionada ({casa_alvo_txt}). "
+            f"⚠️ A fonte automática não encontrou cotações da casa selecionada ({casa_alvo_txt}). "
             "Estou mostrando a mediana do mercado apenas como referência. "
             "Para apostar, confira e digite manualmente a cotação da sua casa."
         )
     else:
-        aviso = "ℹ️ Casa 'Outra' selecionada: a API mostra mediana do mercado. Para aposta real, prefira digitar a cotação manualmente."
+        aviso = "ℹ️ Casa 'Outra' selecionada: a fonte automática mostra a mediana do mercado. Para aposta real, prefira digitar a cotação manualmente."
 
     return odds_mediana, aviso
 
@@ -2899,7 +3078,7 @@ def conectar_google_sheets():
         client = gspread.authorize(creds)
         return client.open_by_key(obter_config_google()["spreadsheet_id"])
     except Exception as exc:
-        st.warning(f"Google Sheets não conectou; usando backup local. Detalhe: {exc}")
+        st.warning(f"Planilhas Google não conectadas; usando cópia local. Detalhe: {exc}")
         return None
 
 
@@ -3000,11 +3179,11 @@ def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
         if _erro_quota_google(exc):
             _ativar_cooldown_google(exc)
             st.warning(
-                f"Google Sheets bateu limite de quota. Vou usar cache/backup local por {_segundos_cooldown_google()}s. "
+                f"Planilhas Google atingiram o limite de consultas. Usarei cópia temporária e cópia local por {_segundos_cooldown_google()}s. "
                 "Isso não altera o motor da planilha."
             )
         else:
-            st.warning(f"Não consegui acessar a aba {nome_limpo} no Google Sheets. Detalhe: {exc}")
+            st.warning(f"Não consegui acessar a aba {nome_limpo} nas Planilhas Google. Detalhe: {exc}")
         return None
 
 
@@ -3023,7 +3202,7 @@ def carregar_google(nome: str, colunas: List[str], force: bool = False) -> Optio
 
     if _google_cooldown_ativo():
         if cache is not None:
-            st.info(f"Google em cooldown por {_segundos_cooldown_google()}s; usando última cópia em cache.")
+            st.info(f"Planilhas Google em espera por {_segundos_cooldown_google()}s; usando a última cópia temporária.")
             return cache
         return None
 
@@ -3050,10 +3229,10 @@ def carregar_google(nome: str, colunas: List[str], force: bool = False) -> Optio
         if _erro_quota_google(exc):
             _ativar_cooldown_google(exc)
             st.warning(
-                f"Google Sheets bateu quota de leitura. Usando cache/backup local por {_segundos_cooldown_google()}s."
+                f"Planilhas Google atingiram o limite de leitura. Usando cópia temporária e cópia local por {_segundos_cooldown_google()}s."
             )
         else:
-            st.warning(f"Não consegui ler {nome} no Google Sheets. Detalhe: {exc}")
+            st.warning(f"Não consegui ler {nome} nas Planilhas Google. Detalhe: {exc}")
         return cache
 
 
@@ -3079,10 +3258,10 @@ def salvar_google(nome: str, df: pd.DataFrame, colunas: List[str]) -> bool:
         if _erro_quota_google(exc):
             _ativar_cooldown_google(exc)
             st.warning(
-                f"Google Sheets bateu quota de gravação. Salvei no backup local/cache e vou tentar de novo depois."
+                f"Planilhas Google atingiram o limite de gravação. Os dados foram salvos na cópia local e serão enviados novamente depois."
             )
         else:
-            st.warning(f"Não consegui salvar {nome} no Google Sheets. Detalhe: {exc}")
+            st.warning(f"Não consegui salvar {nome} nas Planilhas Google. Detalhe: {exc}")
         return False
 
 # ============================================================
@@ -3104,8 +3283,8 @@ def salvar_auditoria(df: pd.DataFrame) -> str:
     base = enriquecer_auditoria_probabilidades(df)
     base.to_csv(ARQUIVO_AUDITORIA, index=False)
     if google_configurado() and salvar_google(obter_config_google()["worksheet_auditoria"], base, COLUNAS_AUDITORIA):
-        return "Google Sheets + backup local"
-    return "backup local"
+        return "Planilhas Google + cópia local"
+    return "cópia local"
 
 
 def carregar_auditoria(force_google: bool = False) -> pd.DataFrame:
@@ -3192,13 +3371,13 @@ def registrar_entrada(
 
 def calcular_resultado(status: str, entrada_rs: float, odd: float, cashout: float = 0.0) -> float:
     status = str(status)
-    if status == "Green":
+    if status in {"Vitória", "Green"}:
         return float(entrada_rs) * (float(odd) - 1.0)
-    if status == "Red":
+    if status in {"Derrota", "Red"}:
         return -float(entrada_rs)
-    if status == "Void":
+    if status in {"Anulada", "Void"}:
         return 0.0
-    if status == "Cashout":
+    if status in {"Encerramento antecipado", "Cashout"}:
         return float(cashout) - float(entrada_rs)
     return 0.0
 
@@ -3218,8 +3397,8 @@ def salvar_catalogo(df: pd.DataFrame) -> str:
     base = enriquecer_catalogo_probabilidades(df)
     base.to_csv(ARQUIVO_CATALOGO, index=False)
     if google_configurado() and salvar_google(obter_config_google()["worksheet_catalogo"], base, COLUNAS_CATALOGO):
-        return "Google Sheets + backup local"
-    return "backup local"
+        return "Planilhas Google + cópia local"
+    return "cópia local"
 
 
 def carregar_catalogo(force_google: bool = False) -> pd.DataFrame:
@@ -3285,14 +3464,14 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX STATISTICS V20.1</div>
+        <div class="hero-title">TEX ESTATÍSTICAS V20.2</div>
         <div class="hero-sub">
             Painel operacional limpo: planilha pura, Poisson auditável, regressão leve à média, teste de estabilidade, cotação justa e gestão de risco.
             A tela principal mostra só o que importa; o detalhe técnico fica recolhido para conferência.
         </div>
         <div class="chip-row">
             <span class="chip">Planilha pura</span>
-            <span class="chip">Visual premium</span>
+            <span class="chip">Visual refinado</span>
             <span class="chip">Valor positivo</span>
             <span class="chip">Auditoria</span>
             <span class="chip">Sem firula</span>
@@ -3309,10 +3488,10 @@ with st.sidebar:
     cfg_sidebar = obter_config_google()
     force_sync_sidebar = False
     if cfg_sidebar.get("configurado"):
-        st.caption("Google Sheets em modo econômico: não leio a planilha a cada clique para não estourar quota.")
+        st.caption("Planilhas Google em modo econômico: a planilha não é lida a cada clique para evitar o limite de consultas.")
         force_sync_sidebar = st.button("🔄 Sincronizar auditoria agora", key="sync_auditoria_sidebar")
         if _google_cooldown_ativo():
-            st.warning(f"Google em espera por {_segundos_cooldown_google()}s. Usando cache/backup local.")
+            st.warning(f"Planilhas Google em espera por {_segundos_cooldown_google()}s. Usando cópia temporária e cópia local.")
 
     auditoria_sidebar = carregar_auditoria(force_google=force_sync_sidebar)
     banca_auditada = banca_atual(banca_inicial, auditoria_sidebar)
@@ -3334,8 +3513,8 @@ with st.sidebar:
     data_fim_recorte = None
     if modo_recorte == "Data personalizada":
         ano_atual = date.today().year
-        data_inicio_recorte = date_input_ptbr("Data inicial da base", value=date(ano_atual, 1, 1), key="data_inicio_base")
-        data_fim_recorte = date_input_ptbr("Data final da base", value=date.today(), key="data_fim_base")
+        data_inicio_recorte = seletor_data_portugues("Data inicial da base", valor=date(ano_atual, 1, 1), chave="data_inicio_base")
+        data_fim_recorte = seletor_data_portugues("Data final da base", valor=date.today(), chave="data_fim_base")
         st.caption("Datas no padrão brasileiro: dia/mês/ano.")
     amostra_minima = st.slider("Amostra mínima casa/fora", 3, 12, 5, 1)
     politica_amostra_baixa = st.selectbox(
@@ -3387,11 +3566,22 @@ with st.sidebar:
         help="Combina Poisson com frequências suavizadas do mandante em casa, visitante fora e liga. Resultado final 1X2 permanece Poisson.",
     )
     peso_prob_empirica = peso_prob_empirica_pct / 100.0
-    usar_arredondamento_btts = st.checkbox(
-        "Usar coerência do placar arredondado em ambas marcam",
+    usar_coerencia_btts_individual = st.checkbox(
+        "Usar chance individual de marcar na coerência de ambas marcam",
         value=True,
-        help="Se as duas projeções individuais arredondam para pelo menos 1, bloqueia 'Não'. Se alguma arredonda para 0, bloqueia 'Sim'. É uma trava, não uma nova probabilidade.",
+        help="A trava usa a chance de cada equipe marcar pelo menos uma vez. O placar arredondado fica apenas como informação visual.",
     )
+    limiar_btts_individual_pct = st.slider(
+        "Chance individual mínima para sustentar Ambas marcam — Sim",
+        min_value=50.0,
+        max_value=70.0,
+        value=55.0,
+        step=1.0,
+        format="%.0f%%",
+        disabled=not usar_coerencia_btts_individual,
+        help="Com 55%, as duas equipes precisam ter pelo menos 55% de chance individual de marcar, com confirmação de Poisson e frequência real.",
+    )
+    limiar_btts_individual = limiar_btts_individual_pct / 100.0
     bloquear_conflito_modelos = st.checkbox(
         "Bloquear gols quando Poisson e frequência real discordam",
         value=True,
@@ -3401,9 +3591,9 @@ with st.sidebar:
     st.divider()
     st.header("Entrada")
     somente_probabilidades = st.checkbox(
-        "Modo científico — somente probabilidades, sem entrada",
-        value=True,
-        help="Permite analisar sem inventar odds. Mesmo com cotações preenchidas, zera qualquer sugestão de entrada.",
+        "Modo somente probabilidades — sem calcular entrada",
+        value=False,
+        help="Use apenas quando quiser analisar sem cotações. O padrão é comparar cotações reais e calcular o valor matemático.",
     )
     fracao_kelly = st.select_slider(
         "Cálculo proporcional da entrada",
@@ -3437,18 +3627,28 @@ with st.sidebar:
     fator_reducao_divergencia = fator_reducao_divergencia_pct / 100.0
     politica_correlacao = st.selectbox(
         "Tratamento de mercados correlacionados",
-        ["Dividir a entrada entre correlacionados", "Manter somente a principal", "Somente avisar"],
+        ["Manter somente a principal", "Dividir a entrada entre correlacionados", "Somente avisar"],
         index=0,
-        help="Evita somar como independentes Over+BTTS Sim ou Under+BTTS Não. O valor matemático continua visível.",
+        help="Evita somar como independentes Mais de 2,5 + Ambas marcam — Sim ou Menos de 2,5 + Ambas marcam — Não.",
     )
-    st.caption("Padrão seguro: modo científico ligado. Ao desligá-lo, o motor ainda aplica corte temporal, coerência estrutural, conflito Poisson x frequência, estabilidade e exclusividade dos lados.")
+    permitir_multiplas_entradas = st.checkbox(
+        "Permitir mais de uma entrada no mesmo jogo — modo avançado",
+        value=False,
+        help="Desmarcado por padrão. Quando desmarcado, o aplicativo escolhe uma única entrada principal e transforma as demais em sinais de confirmação.",
+    )
+    calibracao_comprovada = st.checkbox(
+        "Habilitar entrada financeira — calibração externa comprovada",
+        value=False,
+        help="Enquanto estiver desmarcado, o aplicativo mostra a entrada teórica, mas mantém a entrada financeira em zero.",
+    )
+    st.caption("O padrão é informar cotações reais. O modo somente probabilidades vem desmarcado; a entrada financeira só é habilitada após confirmação explícita de calibração.")
 
     st.divider()
     st.header("Cotações")
     casa_apostas = st.selectbox("Casa de apostas", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"])
-    chave_api = st.text_input("Chave The Odds API", value=os.getenv("ODDS_API_KEY", ""), type="password")
+    chave_api = st.text_input("Chave da fonte automática de cotações", value=os.getenv("ODDS_API_KEY", ""), type="password")
 
-aba_analisar, aba_diagnostico, aba_scout, aba_auditoria, aba_catalogo, aba_calendario = st.tabs(["🎯 Analisar jogo", "🧪 Diagnóstico da liga", "🔎 Scout opcional", "📒 Auditoria", "📊 Catálogo", "🗓️ Ligas"])
+aba_analisar, aba_diagnostico, aba_scout, aba_auditoria, aba_catalogo, aba_calendario = st.tabs(["🎯 Analisar jogo", "🧪 Diagnóstico da liga", "🔎 Análise complementar", "📒 Auditoria", "📊 Catálogo", "🗓️ Ligas"])
 
 with st.spinner("Carregando base da liga..."):
     df_liga_bruta = carregar_dados_liga(LIGAS_CSV[liga_sel], 0)
@@ -3474,7 +3674,7 @@ with aba_analisar:
         render_stat_card("Média gols fora", fmt_num(float(df_liga["AG"].mean()), 2), "liga", "🛫")
 
     st.markdown("---")
-    modo = st.radio("Modo de análise", ["Manual", "Automático pela API"], horizontal=True)
+    modo = st.radio("Modo de análise", ["Manual", "Automático pela fonte de cotações"], horizontal=True)
 
     odds: Dict[str, float] = {}
     time_casa = times_liga[0]
@@ -3487,7 +3687,7 @@ with aba_analisar:
 
     if modo == "Manual":
         st.markdown("### Jogo")
-        st.info("Para apenas obter probabilidades, deixe as cotações vazias e mantenha o modo científico ligado. Para comparar mercado, use cotações reais da mesma casa.")
+        st.info("Para apenas obter probabilidades, ative o modo somente probabilidades. Para a análise normal, informe cotações reais da mesma casa.")
         c1, c2 = st.columns(2)
         with c1:
             time_casa = st.selectbox("Mandante", times_liga, key="manual_casa")
@@ -3496,7 +3696,7 @@ with aba_analisar:
 
         c1, c2 = st.columns(2)
         with c1:
-            data_jogo_catalogo = date_input_ptbr("Data do jogo/mercado", value=date.today(), key="data_jogo")
+            data_jogo_catalogo = seletor_data_portugues("Data do jogo ou mercado", valor=date.today(), chave="data_jogo")
             st.caption("Formato brasileiro: dia/mês/ano.")
         with c2:
             hora_jogo_catalogo = st.text_input("Hora do jogo", value="", placeholder="ex: 15:45", key="hora_jogo")
@@ -3510,7 +3710,7 @@ with aba_analisar:
             with c1:
                 botao_analisar = st.button("ANALISAR PELA PLANILHA", type="primary")
             with c2:
-                if st.button("SALVAR ODDS NO CATÁLOGO"):
+                if st.button("SALVAR COTAÇÕES NO CATÁLOGO"):
                     if not odds:
                         st.error("Nenhuma cotação válida para salvar.")
                     else:
@@ -3525,13 +3725,13 @@ with aba_analisar:
 
     else:
         if not chave_api:
-            st.warning("Informe a chave da API ou use o modo Manual.")
+            st.warning("Informe a chave da fonte automática de cotações ou use o modo manual.")
         elif liga_sel not in LIGAS_API:
-            st.warning("Liga sem mapeamento na API. Use o modo Manual.")
+            st.warning("Liga sem mapeamento na fonte automática de cotações. Use o modo manual.")
         else:
             jogos_api = buscar_odds_api(chave_api, LIGAS_API[liga_sel])
             if not jogos_api:
-                st.warning("A API não retornou jogos/cotações agora. Use Manual.")
+                st.warning("A fonte automática não retornou jogos ou cotações agora. Use o modo manual.")
             else:
                 agora = pd.Timestamp.now(tz="UTC")
                 opcoes = {}
@@ -3546,7 +3746,7 @@ with aba_analisar:
                     except Exception:
                         continue
                 if not opcoes:
-                    st.warning("A API respondeu, mas não há partida pré-jogo disponível.")
+                    st.warning("A fonte automática respondeu, mas não há partida futura disponível.")
                 else:
                     escolha = st.selectbox("Partida", list(opcoes.keys()))
                     jogo_api = opcoes[escolha]
@@ -3562,8 +3762,8 @@ with aba_analisar:
                     match_fora, score_fora = casar_time_seguro(fora_api, times_liga)
 
                     if match_casa is None or match_fora is None:
-                        st.error("Não consegui casar com segurança os nomes da API com a base. Use modo Manual. O app não vai chutar time.")
-                        st.write({"API mandante": casa_api, "API visitante": fora_api})
+                        st.error("Não foi possível relacionar com segurança os nomes recebidos com a base. Use o modo manual. O aplicativo não escolherá um time por aproximação insegura.")
+                        st.write({"Mandante recebido": casa_api, "Visitante recebido": fora_api})
                     else:
                         st.success(f"Times casados: {casa_api} → {match_casa} ({score_casa:.0%}); {fora_api} → {match_fora} ({score_fora:.0%})")
                         c1, c2 = st.columns(2)
@@ -3583,7 +3783,7 @@ with aba_analisar:
 
     if botao_analisar:
         if not odds and not somente_probabilidades:
-            st.error("Nenhuma cotação válida foi informada. Ative 'Modo científico — somente probabilidades' para analisar sem odds.")
+            st.error("Nenhuma cotação válida foi informada. Ative 'Modo somente probabilidades — sem calcular entrada' para analisar sem cotações.")
         elif time_casa == time_fora:
             st.error("Mandante e visitante não podem ser iguais.")
         else:
@@ -3619,12 +3819,21 @@ with aba_analisar:
                 )
                 resultados = aplicar_travas_coerencia(
                     resultados, calc, estabilidade,
-                    usar_arredondamento_btts=usar_arredondamento_btts,
+                    usar_coerencia_btts_individual=usar_coerencia_btts_individual,
+                    limiar_btts_individual=limiar_btts_individual,
                     bloquear_conflito_modelos=bloquear_conflito_modelos,
                 )
                 resultados = ajustar_exposicao_correlacionada(resultados, banca_usada, politica_correlacao)
+                resultados = manter_apenas_entrada_principal(
+                    resultados,
+                    banca=banca_usada,
+                    teto_por_jogo=teto_por_jogo,
+                    permitir_multiplas=permitir_multiplas_entradas,
+                )
                 if somente_probabilidades:
                     resultados = aplicar_modo_estudo(resultados)
+                else:
+                    resultados = aplicar_trava_calibracao(resultados, calibracao_comprovada=calibracao_comprovada)
             else:
                 resultados = pd.DataFrame()
 
@@ -3665,8 +3874,11 @@ with aba_analisar:
                     "peso_media_liga": peso_media_liga,
                     "teste_estabilidade_ativo": teste_estabilidade_ativo,
                     "politica_correlacao": politica_correlacao,
+                    "permitir_multiplas_entradas": permitir_multiplas_entradas,
+                    "calibracao_comprovada": calibracao_comprovada,
                     "peso_prob_empirica": peso_prob_empirica,
-                    "usar_arredondamento_btts": usar_arredondamento_btts,
+                    "usar_coerencia_btts_individual": usar_coerencia_btts_individual,
+                    "limiar_btts_individual": limiar_btts_individual,
                     "bloquear_conflito_modelos": bloquear_conflito_modelos,
                     "somente_probabilidades": somente_probabilidades,
                     "jogos_futuros_removidos": jogos_futuros_removidos,
@@ -3689,7 +3901,7 @@ with aba_analisar:
             <div class="analysis-head">
                 <div class="analysis-kicker">Análise operacional</div>
                 <div class="analysis-title">{html.escape(str(analise['jogo']))}</div>
-                <div class="version-pill">Versão carregada: TEX STATISTICS V20.1 — corte temporal, motor híbrido e coerência estrutural</div>
+                <div class="version-pill">Versão carregada: TEX ESTATÍSTICAS V20.2 — motor responsável, uma entrada por jogo e português integral</div>
             </div>
             ''',
             unsafe_allow_html=True,
@@ -3705,7 +3917,7 @@ with aba_analisar:
             else:
                 st.warning(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: permitir com entrada reduzida para {fmt_pct(fator_amostra_atual, 0)}.")
         else:
-            st.success("Amostra mínima aprovada. A liberação ainda depende de coerência estrutural, estabilidade, odds consistentes e concordância entre Poisson e frequência real.")
+            st.success("Qualidade mínima dos dados aprovada. Isso não comprova calibração preditiva; as demais travas continuam obrigatórias.")
 
         periodo_base = analise.get("config", {}).get("periodo_base") or resumo_base_dados(df_liga)
         st.markdown(f'<div class="base-info">{html.escape(texto_base_dados(periodo_base, analise.get("config", {}).get("janela", "-")))}</div>', unsafe_allow_html=True)
@@ -3728,7 +3940,9 @@ with aba_analisar:
         with c3:
             render_stat_card("Total projetado", fmt_num(calc.get("gols_total_esperado", 0), 2), "linha de 2,5", "➕")
         with c4:
-            render_stat_card("Placar arredondado", f"{calc.get('placar_arredondado_casa', 0)} x {calc.get('placar_arredondado_fora', 0)}", "trava de coerência, não previsão", "🧮")
+            render_stat_card("Placar arredondado", f"{calc.get('placar_arredondado_casa', 0)} x {calc.get('placar_arredondado_fora', 0)}", "apenas visual, não é previsão", "🧮")
+            render_stat_card("Mandante marcar", fmt_pct(float(calc.get('prob_casa_marcar', 0.0)), 1), "chance de ao menos um gol", "🏠")
+            render_stat_card("Visitante marcar", fmt_pct(float(calc.get('prob_fora_marcar', 0.0)), 1), "chance de ao menos um gol", "🛫")
         with c5:
             render_stat_card("Amostra casa/fora", f"{calc['jogos_casa']} / {calc['jogos_fora']}", "recortes posicionais", "📚")
         with c6:
@@ -3736,7 +3950,7 @@ with aba_analisar:
 
         conf = classificar_confianca_estimativa(calc, resultados)
         render_botao_confianca(conf)
-        st.info("Confiabilidade da amostra é leitura operacional. Valor matemático vem da margem positiva; uso com banca real depende de amostra, divergência de mercado, base atualizada e checklist.")
+        st.info("Qualidade dos dados descreve o tamanho e a consistência do recorte. Calibração preditiva: ainda não comprovada.")
 
         if calc.get("regressao_media_ativa"):
             st.info(f"Ajuste à média da liga ativo: {fmt_pct(float(calc.get('peso_media_liga', 0.0)), 0)} da média da liga e {fmt_pct(1.0 - float(calc.get('peso_media_liga', 0.0)), 0)} do recorte recente.")
@@ -3825,7 +4039,7 @@ with aba_analisar:
 
         if resultados.empty:
             if analise.get("config", {}).get("somente_probabilidades", False):
-                st.info("Análise concluída sem odds: probabilidades exibidas acima, nenhuma entrada calculada.")
+                st.info("Análise concluída sem cotações: probabilidades exibidas acima, nenhuma entrada calculada.")
             else:
                 st.warning("Nenhum mercado com cotação válida para comparar.")
         else:
@@ -3855,8 +4069,8 @@ with aba_analisar:
                 etiquetas_gerais = "; ".join(str(x) for x in aprovadas.get("Etiquetas", pd.Series(dtype=str)).dropna().astype(str).tolist())
                 precisa_checklist = any(p in etiquetas_gerais for p in ["Divergência extrema", "Divergência forte", "Contra favorito", "Mercado de gols contrário", "Base distante"])
                 if precisa_checklist:
-                    with st.expander("✅ Checklist de conferência manual antes de apostar", expanded=False):
-                        st.warning("Há valor matemático, mas existe alerta operacional. Marque isto como conferência humana; o app não consegue saber notícia, escalação, lesão ou movimento real da cotação.")
+                    with st.expander("✅ Lista de conferência manual antes de registrar uma entrada", expanded=False):
+                        st.warning("Há valor matemático, mas existe alerta operacional. Faça a conferência humana; o aplicativo não conhece automaticamente notícias, escalações, lesões ou movimentos recentes da cotação.")
                         checks = [
                             ("cotacao", "Conferi a cotação na mesma casa onde vou apostar."),
                             ("mandante", "Conferi que mandante, visitante e competição estão corretos."),
@@ -3878,7 +4092,7 @@ with aba_analisar:
                         checklist_ok = all(valores_check)
                         st.session_state[f"checklist_operacional_ok_{analise['id']}"] = checklist_ok
                         if checklist_ok:
-                            st.success("Checklist operacional concluído. Ainda não garante acerto; só confirma que a conferência mínima foi feita.")
+                            st.success("Lista de conferência concluída. Isso não garante acerto; apenas confirma que a verificação mínima foi realizada.")
                         else:
                             st.error("Entrada operacional pendente de conferência. Para banca real, trate como estudo ou reduza bastante a exposição.")
 
@@ -3886,7 +4100,7 @@ with aba_analisar:
                     render_card_valor_positivo(r)
             else:
                 if not valores_matematicos.empty:
-                    st.warning("Existe valor matemático positivo na tabela, mas a política operacional atual não liberou entrada real. Veja as colunas 'Valor matemático' e 'Status operacional'.")
+                    st.warning("Existe valor matemático positivo na tabela, mas a política operacional atual não liberou entrada real. Veja as colunas 'Valor matemático' e 'Situação operacional'.")
                 else:
                     st.info("Nenhum mercado ficou valor positivo com as cotações informadas.")
 
@@ -3944,12 +4158,12 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V20.1 Motor Coerente | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Checklist operacional: {'OK' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
+                            observacao=(obs + f" | V20.2 Motor Responsável | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Lista de conferência: {'CONCLUÍDA' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
                             etiquetas=str(r.get("Etiquetas", "")),
                             prob_mercado_bruta=float(r.get("Prob. mercado bruta")) if pd.notna(r.get("Prob. mercado bruta")) else None,
                             prob_mercado_ajustada=float(r.get("Prob. mercado ajustada")) if pd.notna(r.get("Prob. mercado ajustada")) else None,
                             margem_mercado=float(r.get("Margem do mercado")) if pd.notna(r.get("Margem do mercado")) else None,
-                            fonte_probabilidade="Motor V20.1: Poisson para 1X2; híbrido Poisson + frequência empírica para gols e ambas marcam; corte temporal pré-jogo",
+                            fonte_probabilidade="Motor V20.2: Poisson para resultado final; combinação de Poisson e frequência empírica para gols e ambas marcam; corte temporal anterior ao jogo",
                             versao_modelo=VERSAO_MODELO,
                         )
                     destino = salvar_auditoria(auditoria)
@@ -3982,20 +4196,20 @@ with aba_diagnostico:
         st.dataframe(diag["fora_tabela"], use_container_width=True, hide_index=True)
 
     st.info(
-        "Leitura honesta: se a aderência estiver ruim, não significa que não pode apostar; significa apenas que a liga está menos bem comportada para uma Poisson simples. "
-        "Na V20.1, aderência ruim ou sobredispersão não ficam apenas como texto: reduzem a confiança dos mercados derivados de gols, enquanto conflito de métodos e mudança de lado nas janelas bloqueiam a operação."
+        "Leitura responsável: aderência ruim significa que a Poisson simples descreve pior a distribuição de gols da liga; nessas condições, o resultado deve permanecer em estudo e não servir isoladamente para entrada financeira. "
+        "Na V20.2, aderência ruim ou sobredispersão reduzem a confiança dos mercados derivados de gols; conflito entre métodos e mudança de lado nas janelas impedem a entrada."
     )
 
 
 with aba_scout:
-    st.subheader("Scout opcional")
-    st.caption("Finalizações, chutes no alvo, escanteios e cartões entram aqui quando o CSV da liga traz essas colunas. Isto é diagnóstico, não veto automático.")
+    st.subheader("Análise complementar")
+    st.caption("Finalizações, chutes no alvo, escanteios e cartões aparecem quando a base da liga contém essas informações. É um diagnóstico, não uma trava automática.")
 
     c1, c2 = st.columns(2)
     with c1:
-        scout_casa = st.selectbox("Mandante para scout", times_liga, key="scout_casa")
+        scout_casa = st.selectbox("Mandante para análise complementar", times_liga, key="scout_casa")
     with c2:
-        scout_fora = st.selectbox("Visitante para scout", times_liga, index=min(1, len(times_liga)-1), key="scout_fora")
+        scout_fora = st.selectbox("Visitante para análise complementar", times_liga, index=min(1, len(times_liga)-1), key="scout_fora")
 
     if scout_casa == scout_fora:
         st.warning("Escolha times diferentes.")
@@ -4023,15 +4237,15 @@ with aba_catalogo:
     st.subheader("Catálogo de cotações")
     cfg = obter_config_google()
     if cfg.get("configurado"):
-        st.success(f"Google Sheets ativo. Aba: {cfg['worksheet_catalogo']}.")
+        st.success(f"Planilhas Google ativas. Aba: {cfg['worksheet_catalogo']}.")
     else:
-        st.warning("Google Sheets não configurado. O backup local pode sumir em reinicializações do Streamlit Cloud.")
+        st.warning("Planilhas Google não configuradas. A cópia local pode ser perdida quando o serviço de hospedagem reiniciar.")
 
     force_sync_catalogo = False
     if cfg.get("configurado"):
         force_sync_catalogo = st.button("🔄 Sincronizar catálogo do Google", key="sync_catalogo_tab")
         if _google_cooldown_ativo():
-            st.info(f"Google em cooldown por {_segundos_cooldown_google()}s; mostrando cache/backup local.")
+            st.info(f"Planilhas Google em espera por {_segundos_cooldown_google()}s; mostrando cópia temporária e cópia local.")
 
     catalogo = carregar_catalogo(force_google=force_sync_catalogo)
     if catalogo.empty:
@@ -4060,32 +4274,32 @@ with aba_catalogo:
         csv = filtrado.to_csv(index=False).encode("utf-8-sig")
         d1, d2 = st.columns(2)
         with d1:
-            st.download_button("BAIXAR CATÁLOGO CSV", data=csv, file_name="catalogo_odds_tex_v19_1.csv", mime="text/csv")
+            st.download_button("BAIXAR CATÁLOGO EM CSV", data=csv, file_name="catalogo_cotacoes_tex_v20_2.csv", mime="text/csv")
         with d2:
-            excel = dataframe_para_excel_bytes(filtrado, "Catalogo de odds")
+            excel = dataframe_para_excel_bytes(filtrado, "Catálogo de cotações")
             if excel is not None:
                 st.download_button(
                     "BAIXAR CATÁLOGO EXCEL",
                     data=excel,
-                    file_name="catalogo_odds_tex_v19_6.xlsx",
+                    file_name="catalogo_cotacoes_tex_v20_2.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             else:
-                st.caption("Exportação XLSX indisponível neste ambiente; o CSV continua completo.")
+                st.caption("A exportação em Excel não está disponível neste ambiente; o arquivo CSV continua completo.")
 
 with aba_auditoria:
     st.subheader("Auditoria")
     cfg = obter_config_google()
     if cfg.get("configurado"):
-        st.success(f"Google Sheets ativo. Aba: {cfg['worksheet_auditoria']}.")
+        st.success(f"Planilhas Google ativas. Aba: {cfg['worksheet_auditoria']}.")
     else:
-        st.warning("Google Sheets não configurado. Use com cuidado no Streamlit Cloud.")
+        st.warning("Planilhas Google não configuradas. Use a cópia local com cuidado no serviço de hospedagem.")
 
     force_sync_auditoria_tab = False
     if cfg.get("configurado"):
         force_sync_auditoria_tab = st.button("🔄 Sincronizar auditoria do Google", key="sync_auditoria_tab")
         if _google_cooldown_ativo():
-            st.info(f"Google em cooldown por {_segundos_cooldown_google()}s; mostrando cache/backup local.")
+            st.info(f"Planilhas Google em espera por {_segundos_cooldown_google()}s; mostrando cópia temporária e cópia local.")
 
     auditoria = carregar_auditoria(force_google=force_sync_auditoria_tab)
     banca_calc = banca_atual(banca_inicial, auditoria)
@@ -4104,7 +4318,7 @@ with aba_auditoria:
             geral_fmt[col] = geral_fmt[col].map(fmt_dinheiro)
         for col in ["Taxa acerto", "ROI"]:
             geral_fmt[col] = geral_fmt[col].map(lambda x: fmt_pct(x, 2))
-        st.dataframe(geral_fmt, use_container_width=True, hide_index=True)
+        st.dataframe(geral_fmt.rename(columns={"ROI": "Retorno sobre o valor apostado"}), use_container_width=True, hide_index=True)
 
         a1, a2, a3, a4 = st.tabs(["Por mercado", "Por liga", "Por faixa de cotação", "Por etiqueta operacional"])
         for aba_tmp, chave in [(a1, "por_mercado"), (a2, "por_liga"), (a3, "por_faixa_odd"), (a4, "por_etiqueta")]:
@@ -4114,7 +4328,7 @@ with aba_auditoria:
                     t[col] = t[col].map(fmt_dinheiro)
                 for col in ["Taxa acerto", "ROI"]:
                     t[col] = t[col].map(lambda x: fmt_pct(x, 2))
-                st.dataframe(t, use_container_width=True, hide_index=True)
+                st.dataframe(t.rename(columns={"ROI": "Retorno sobre o valor apostado"}), use_container_width=True, hide_index=True)
 
     st.markdown("---")
     st.markdown("### Lançar entrada manual")
@@ -4166,11 +4380,11 @@ with aba_auditoria:
             row = auditoria.loc[idx]
             c1, c2, c3 = st.columns(3)
             with c1:
-                status = st.selectbox("Resultado", ["Green", "Red", "Void", "Cashout"], key="status_fechar")
+                status = st.selectbox("Resultado", ["Vitória", "Derrota", "Anulada", "Encerramento antecipado"], key="status_fechar")
             with c2:
                 odd_fechamento_txt = st.text_input("Cotação de fechamento", value="", key="odd_fechamento")
             with c3:
-                cashout = st.number_input("Valor cashout recebido", min_value=0.0, value=0.0, step=1.0, key="cashout")
+                cashout = st.number_input("Valor recebido no encerramento antecipado", min_value=0.0, value=0.0, step=1.0, key="cashout")
             diagnostico_pos = st.selectbox(
                 "Diagnóstico pós-jogo",
                 ["Não classificado", "Variância provável", "Erro de modelo", "Erro de execução", "Evento extraordinário", "Dados desatualizados", "Inconclusivo"],
@@ -4202,26 +4416,32 @@ with aba_auditoria:
     if auditoria.empty:
         st.info("Nenhum registro ainda.")
     else:
-        st.dataframe(remover_colunas_duplicadas(auditoria).tail(500), use_container_width=True, hide_index=True)
+        auditoria_exibicao = remover_colunas_duplicadas(auditoria).tail(500).copy()
+        if "Status" in auditoria_exibicao.columns:
+            auditoria_exibicao["Status"] = auditoria_exibicao["Status"].replace({
+                "Green": "Vitória", "Red": "Derrota", "Void": "Anulada", "Cashout": "Encerramento antecipado"
+            })
+            auditoria_exibicao = auditoria_exibicao.rename(columns={"Status": "Situação"})
+        st.dataframe(auditoria_exibicao, use_container_width=True, hide_index=True)
         csv = auditoria.to_csv(index=False).encode("utf-8-sig")
         d1, d2 = st.columns(2)
         with d1:
-            st.download_button("BAIXAR AUDITORIA CSV", data=csv, file_name="auditoria_tex_v19_1.csv", mime="text/csv")
+            st.download_button("BAIXAR AUDITORIA EM CSV", data=csv, file_name="auditoria_tex_v20_2.csv", mime="text/csv")
         with d2:
             excel = dataframe_para_excel_bytes(auditoria, "Auditoria")
             if excel is not None:
                 st.download_button(
                     "BAIXAR AUDITORIA EXCEL",
                     data=excel,
-                    file_name="auditoria_tex_v19_6.xlsx",
+                    file_name="auditoria_tex_v20_2.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             else:
-                st.caption("Exportação XLSX indisponível neste ambiente; o CSV continua completo.")
+                st.caption("A exportação em Excel não está disponível neste ambiente; o arquivo CSV continua completo.")
 
 with aba_calendario:
     st.subheader("Ligas cobertas")
-    st.caption("A trava operacional mais importante é esta: só use a liga exatamente correspondente à base do app.")
+    st.caption("A trava operacional mais importante é usar exatamente a liga correspondente à base do aplicativo.")
     mapa = pd.DataFrame(CALENDARIO_LIGAS)
     st.dataframe(mapa, use_container_width=True, hide_index=True)
     st.markdown(
