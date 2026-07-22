@@ -2,6 +2,8 @@ import os
 import io
 import json
 import uuid
+import hashlib
+import csv
 import difflib
 import html
 import re
@@ -17,7 +19,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX ESTATÍSTICAS V20.2 — MOTOR RESPONSÁVEL E PORTUGUÊS INTEGRAL
+# TEX ESTATÍSTICAS V20.3.1 — DIREÇÃO ALGÉBRICA E COERÊNCIA INTERNA
 # ============================================================
 # Objetivo desta versão:
 # - manter o cálculo auditável de forças e Poisson;
@@ -28,7 +30,7 @@ from scipy.stats import poisson, chi2
 # - tratar estabilidade, odds incoerentes e lados opostos como travas reais, não meros avisos.
 # ============================================================
 
-st.set_page_config(page_title="TEX ESTATÍSTICAS — V20.2 Motor Responsável", layout="wide")
+st.set_page_config(page_title="TEX ESTATÍSTICAS — V20.3.1 Direção Algébrica", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -301,7 +303,18 @@ MERCADOS_NUCLEO = [
     "Ambos marcam - Não",
 ]
 
-VERSAO_MODELO = "TEX ESTATÍSTICAS V20.2"
+VERSAO_MODELO = "TEX ESTATÍSTICAS V20.3.1"
+
+COLUNAS_HISTORICO_ANALISES = [
+    "ID Análise", "ID Coleta", "Registrado em", "Liga", "Jogo", "Mandante", "Visitante",
+    "Data do jogo", "Hora do jogo", "Casa de apostas", "Origem", "Mercado", "Cotação",
+    "Probabilidade operacional %", "Probabilidade Poisson %", "Probabilidade empírica %",
+    "Probabilidade de mercado ajustada %", "Cotação justa", "Valor esperado %",
+    "Gols projetados casa", "Gols projetados fora", "Gols projetados total",
+    "Chance mandante marcar %", "Chance visitante marcar %",
+    "Amostra casa", "Amostra fora", "Estabilidade", "Situação", "Entrada %",
+    "Versão do modelo", "Configuração JSON",
+]
 
 COLUNAS_AUDITORIA = [
     "ID", "Registrado em", "Liga", "Jogo", "Casa de apostas", "Mercado",
@@ -323,10 +336,13 @@ COLUNAS_CATALOGO = [
 
 ARQUIVO_AUDITORIA = "logs/auditoria_tex_v19_1.csv"  # mantém histórico da V19
 ARQUIVO_CATALOGO = "logs/catalogo_odds_tex_v19_1.csv"  # mantém histórico da V19
+ARQUIVO_HISTORICO_ANALISES = "logs/historico_analises_tex_v20_3_1.csv"
+DIRETORIO_BACKUPS = "logs/backups"
 GOOGLE_SHEETS_WORKSHEET_CATALOGO = "catalogo_odds"
 GOOGLE_SHEETS_WORKSHEET_AUDITORIA = "auditoria_entradas"
-GOOGLE_CACHE_TTL_SEG = 300  # evita estourar quota do Google Sheets em reruns do Streamlit
-GOOGLE_COOLDOWN_SEG = 75    # espera depois de erro de quota
+GOOGLE_SHEETS_WORKSHEET_HISTORICO = "historico_analises"
+GOOGLE_CACHE_TTL_SEG = 300
+GOOGLE_COOLDOWN_SEG = 75
 
 CALENDARIO_LIGAS = [
     {"Liga": "Brasileirão Série A", "Observação": "Use somente Série A. Não misture estaduais, Copa do Brasil, Série B, Sub-20 ou feminino."},
@@ -355,12 +371,18 @@ CALENDARIO_LIGAS = [
     {"Liga": "Grécia - Super League", "Observação": "Use somente Super League Greece principal."},
 ]
 
+# Catálogo histórico recuperado pelo usuário. A sincronização usa chave única e
+# acrescenta apenas registros ausentes; nunca apaga ou substitui linhas remotas.
+CATALOGO_RECUPERACAO_2026 = json.loads(r"""[{"ID Coleta":"47cf8d1d","Registrado em":"2026-07-16 03:36:24","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Bodo/Glimt x Fredrikstad","Mandante":"Bodo/Glimt","Visitante":"Fredrikstad","Data do jogo":"2026-07-17","Hora do jogo":"14:15:00","Mercado":"Vitória Casa","Seleção":"Bodo/Glimt","Cotação":1.13,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"47cf8d1d","Registrado em":"2026-07-16 03:36:24","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Bodo/Glimt x Fredrikstad","Mandante":"Bodo/Glimt","Visitante":"Fredrikstad","Data do jogo":"2026-07-17","Hora do jogo":"14:15:00","Mercado":"Empate","Seleção":"Empate","Cotação":7.2,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"47cf8d1d","Registrado em":"2026-07-16 03:36:24","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Bodo/Glimt x Fredrikstad","Mandante":"Bodo/Glimt","Visitante":"Fredrikstad","Data do jogo":"2026-07-17","Hora do jogo":"14:15:00","Mercado":"Vitória Fora","Seleção":"Fredrikstad","Cotação":10.7,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"47cf8d1d","Registrado em":"2026-07-16 03:36:24","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Bodo/Glimt x Fredrikstad","Mandante":"Bodo/Glimt","Visitante":"Fredrikstad","Data do jogo":"2026-07-17","Hora do jogo":"14:15:00","Mercado":"Mais de 2.5 gols","Seleção":"Mais de 2.5 gols","Cotação":1.22,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"47cf8d1d","Registrado em":"2026-07-16 03:36:24","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Bodo/Glimt x Fredrikstad","Mandante":"Bodo/Glimt","Visitante":"Fredrikstad","Data do jogo":"2026-07-17","Hora do jogo":"14:15:00","Mercado":"Menos de 2.5 gols","Seleção":"Menos de 2.5 gols","Cotação":3.03,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"47cf8d1d","Registrado em":"2026-07-16 03:36:24","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Bodo/Glimt x Fredrikstad","Mandante":"Bodo/Glimt","Visitante":"Fredrikstad","Data do jogo":"2026-07-17","Hora do jogo":"14:15:00","Mercado":"Ambos marcam - Sim","Seleção":"Sim","Cotação":1.76,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"47cf8d1d","Registrado em":"2026-07-16 03:36:24","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Bodo/Glimt x Fredrikstad","Mandante":"Bodo/Glimt","Visitante":"Fredrikstad","Data do jogo":"2026-07-17","Hora do jogo":"14:15:00","Mercado":"Ambos marcam - Não","Seleção":"Não","Cotação":1.82,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"218123bc","Registrado em":"2026-07-16 03:46:26","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"HamKam x Tromso","Mandante":"HamKam","Visitante":"Tromso","Data do jogo":"2026-07-18","Hora do jogo":"09:00:00","Mercado":"Vitória Casa","Seleção":"HamKam","Cotação":3.25,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"218123bc","Registrado em":"2026-07-16 03:46:26","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"HamKam x Tromso","Mandante":"HamKam","Visitante":"Tromso","Data do jogo":"2026-07-18","Hora do jogo":"09:00:00","Mercado":"Empate","Seleção":"Empate","Cotação":2.99,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"218123bc","Registrado em":"2026-07-16 03:46:26","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"HamKam x Tromso","Mandante":"HamKam","Visitante":"Tromso","Data do jogo":"2026-07-18","Hora do jogo":"09:00:00","Mercado":"Vitória Fora","Seleção":"Tromso","Cotação":2.11,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"218123bc","Registrado em":"2026-07-16 03:46:26","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"HamKam x Tromso","Mandante":"HamKam","Visitante":"Tromso","Data do jogo":"2026-07-18","Hora do jogo":"09:00:00","Mercado":"Mais de 2.5 gols","Seleção":"Mais de 2.5 gols","Cotação":1.92,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"218123bc","Registrado em":"2026-07-16 03:46:26","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"HamKam x Tromso","Mandante":"HamKam","Visitante":"Tromso","Data do jogo":"2026-07-18","Hora do jogo":"09:00:00","Mercado":"Menos de 2.5 gols","Seleção":"Menos de 2.5 gols","Cotação":1.67,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"218123bc","Registrado em":"2026-07-16 03:46:26","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"HamKam x Tromso","Mandante":"HamKam","Visitante":"Tromso","Data do jogo":"2026-07-18","Hora do jogo":"09:00:00","Mercado":"Ambos marcam - Sim","Seleção":"Sim","Cotação":1.72,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"218123bc","Registrado em":"2026-07-16 03:46:26","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"HamKam x Tromso","Mandante":"HamKam","Visitante":"Tromso","Data do jogo":"2026-07-18","Hora do jogo":"09:00:00","Mercado":"Ambos marcam - Não","Seleção":"Não","Cotação":1.86,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"512d3429","Registrado em":"2026-07-16 04:04:59","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Kristiansund x Sarpsborg 08","Mandante":"Kristiansund","Visitante":"Sarpsborg 08","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Vitória Casa","Seleção":"Kristiansund","Cotação":2.9,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"512d3429","Registrado em":"2026-07-16 04:04:59","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Kristiansund x Sarpsborg 08","Mandante":"Kristiansund","Visitante":"Sarpsborg 08","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Empate","Seleção":"Empate","Cotação":3.38,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"512d3429","Registrado em":"2026-07-16 04:04:59","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Kristiansund x Sarpsborg 08","Mandante":"Kristiansund","Visitante":"Sarpsborg 08","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Vitória Fora","Seleção":"Sarpsborg 08","Cotação":2.1,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"512d3429","Registrado em":"2026-07-16 04:04:59","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Kristiansund x Sarpsborg 08","Mandante":"Kristiansund","Visitante":"Sarpsborg 08","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Mais de 2.5 gols","Seleção":"Mais de 2.5 gols","Cotação":1.57,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"512d3429","Registrado em":"2026-07-16 04:04:59","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Kristiansund x Sarpsborg 08","Mandante":"Kristiansund","Visitante":"Sarpsborg 08","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Menos de 2.5 gols","Seleção":"Menos de 2.5 gols","Cotação":2.09,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"512d3429","Registrado em":"2026-07-16 04:04:59","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Kristiansund x Sarpsborg 08","Mandante":"Kristiansund","Visitante":"Sarpsborg 08","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Ambos marcam - Sim","Seleção":"Sim","Cotação":1.45,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"512d3429","Registrado em":"2026-07-16 04:04:59","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Kristiansund x Sarpsborg 08","Mandante":"Kristiansund","Visitante":"Sarpsborg 08","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Ambos marcam - Não","Seleção":"Não","Cotação":2.28,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"0eb572ac","Registrado em":"2026-07-16 04:07:09","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Start x Rosenborg","Mandante":"Start","Visitante":"Rosenborg","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Vitória Casa","Seleção":"Start","Cotação":2.93,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"0eb572ac","Registrado em":"2026-07-16 04:07:09","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Start x Rosenborg","Mandante":"Start","Visitante":"Rosenborg","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Empate","Seleção":"Empate","Cotação":3.32,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"0eb572ac","Registrado em":"2026-07-16 04:07:09","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Start x Rosenborg","Mandante":"Start","Visitante":"Rosenborg","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Vitória Fora","Seleção":"Rosenborg","Cotação":2.11,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"0eb572ac","Registrado em":"2026-07-16 04:07:09","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Start x Rosenborg","Mandante":"Start","Visitante":"Rosenborg","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Mais de 2.5 gols","Seleção":"Mais de 2.5 gols","Cotação":1.64,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"0eb572ac","Registrado em":"2026-07-16 04:07:09","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Start x Rosenborg","Mandante":"Start","Visitante":"Rosenborg","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Menos de 2.5 gols","Seleção":"Menos de 2.5 gols","Cotação":1.96,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"0eb572ac","Registrado em":"2026-07-16 04:07:09","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Start x Rosenborg","Mandante":"Start","Visitante":"Rosenborg","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Ambos marcam - Sim","Seleção":"Sim","Cotação":1.52,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"0eb572ac","Registrado em":"2026-07-16 04:07:09","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Start x Rosenborg","Mandante":"Start","Visitante":"Rosenborg","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Ambos marcam - Não","Seleção":"Não","Cotação":2.17,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"8b0dd959","Registrado em":"2026-07-16 04:17:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Lillestrom x KFUM Oslo","Mandante":"Lillestrom","Visitante":"KFUM Oslo","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Vitória Casa","Seleção":"Lillestrom","Cotação":1.64,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"8b0dd959","Registrado em":"2026-07-16 04:17:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Lillestrom x KFUM Oslo","Mandante":"Lillestrom","Visitante":"KFUM Oslo","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Empate","Seleção":"Empate","Cotação":3.72,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"8b0dd959","Registrado em":"2026-07-16 04:17:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Lillestrom x KFUM Oslo","Mandante":"Lillestrom","Visitante":"KFUM Oslo","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Vitória Fora","Seleção":"KFUM Oslo","Cotação":4.2,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"8b0dd959","Registrado em":"2026-07-16 04:17:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Lillestrom x KFUM Oslo","Mandante":"Lillestrom","Visitante":"KFUM Oslo","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Mais de 2.5 gols","Seleção":"Mais de 2.5 gols","Cotação":1.61,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"8b0dd959","Registrado em":"2026-07-16 04:17:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Lillestrom x KFUM Oslo","Mandante":"Lillestrom","Visitante":"KFUM Oslo","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Menos de 2.5 gols","Seleção":"Menos de 2.5 gols","Cotação":2.01,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"8b0dd959","Registrado em":"2026-07-16 04:17:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Lillestrom x KFUM Oslo","Mandante":"Lillestrom","Visitante":"KFUM Oslo","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Ambos marcam - Sim","Seleção":"Sim","Cotação":1.61,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"8b0dd959","Registrado em":"2026-07-16 04:17:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Lillestrom x KFUM Oslo","Mandante":"Lillestrom","Visitante":"KFUM Oslo","Data do jogo":"2026-07-18","Hora do jogo":"11:00:00","Mercado":"Ambos marcam - Não","Seleção":"Não","Cotação":2.02,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"1b3285e8","Registrado em":"2026-07-16 04:27:55","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Molde x Brann","Mandante":"Molde","Visitante":"Brann","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Vitória Casa","Seleção":"Molde","Cotação":1.97,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"1b3285e8","Registrado em":"2026-07-16 04:27:55","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Molde x Brann","Mandante":"Molde","Visitante":"Brann","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Empate","Seleção":"Empate","Cotação":3.52,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"1b3285e8","Registrado em":"2026-07-16 04:27:55","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Molde x Brann","Mandante":"Molde","Visitante":"Brann","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Vitória Fora","Seleção":"Brann","Cotação":3.7,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"1b3285e8","Registrado em":"2026-07-16 04:27:55","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Molde x Brann","Mandante":"Molde","Visitante":"Brann","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Mais de 2.5 gols","Seleção":"Mais de 2.5 gols","Cotação":1.48,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"1b3285e8","Registrado em":"2026-07-16 04:27:55","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Molde x Brann","Mandante":"Molde","Visitante":"Brann","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Menos de 2.5 gols","Seleção":"Menos de 2.5 gols","Cotação":2.23,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"1b3285e8","Registrado em":"2026-07-16 04:27:55","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Molde x Brann","Mandante":"Molde","Visitante":"Brann","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Ambos marcam - Sim","Seleção":"Sim","Cotação":1.43,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"1b3285e8","Registrado em":"2026-07-16 04:27:55","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Molde x Brann","Mandante":"Molde","Visitante":"Brann","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Ambos marcam - Não","Seleção":"Não","Cotação":2.39,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"79b70236","Registrado em":"2026-07-16 04:34:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Viking x Sandefjord","Mandante":"Viking","Visitante":"Sandefjord","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Vitória Casa","Seleção":"Viking","Cotação":1.26,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"79b70236","Registrado em":"2026-07-16 04:34:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Viking x Sandefjord","Mandante":"Viking","Visitante":"Sandefjord","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Empate","Seleção":"Empate","Cotação":5.3,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"79b70236","Registrado em":"2026-07-16 04:34:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Viking x Sandefjord","Mandante":"Viking","Visitante":"Sandefjord","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Vitória Fora","Seleção":"Sandefjord","Cotação":7.6,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"79b70236","Registrado em":"2026-07-16 04:34:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Viking x Sandefjord","Mandante":"Viking","Visitante":"Sandefjord","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Mais de 2.5 gols","Seleção":"Mais de 2.5 gols","Cotação":1.31,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"79b70236","Registrado em":"2026-07-16 04:34:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Viking x Sandefjord","Mandante":"Viking","Visitante":"Sandefjord","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Menos de 2.5 gols","Seleção":"Menos de 2.5 gols","Cotação":2.78,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"79b70236","Registrado em":"2026-07-16 04:34:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Viking x Sandefjord","Mandante":"Viking","Visitante":"Sandefjord","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Ambos marcam - Sim","Seleção":"Sim","Cotação":1.63,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"},{"ID Coleta":"79b70236","Registrado em":"2026-07-16 04:34:01","Casa de apostas":"Pixbet","Liga":"Noruega - Eliteserien","Jogo":"Viking x Sandefjord","Mandante":"Viking","Visitante":"Sandefjord","Data do jogo":"2026-07-18","Hora do jogo":"13:00:00","Mercado":"Ambos marcam - Não","Seleção":"Não","Cotação":1.99,"Banca no momento":1000.0,"Perfil":"Planilha Pura","Origem":"Manual","Observação":"Cotações salvas sem obrigação de aposta"}]""")
+
+
 # ============================================================
 # UTILITÁRIOS
 # ============================================================
 
 def garantir_logs() -> None:
     os.makedirs("logs", exist_ok=True)
+    os.makedirs(DIRETORIO_BACKUPS, exist_ok=True)
 
 
 def texto_para_float(valor) -> Optional[float]:
@@ -1216,6 +1238,9 @@ def prioridade_aposta(
     amostra = int(amostra_minima or 0)
     status = str(status_operacional or "").upper()
 
+    if "DIVERGÊNCIA CRÍTICA" in status:
+        return "🟠 Média", 2, "forte diferença em relação ao mercado; entrada reduzida, mas a tese interna permanece válida"
+
     if "DIVERGÊNCIA EXTREMA" in status:
         return "🔴 Baixa", 1, "valor contra o mercado; exige confirmação manual antes de apostar"
 
@@ -1383,6 +1408,7 @@ def ajustar_exposicao_correlacionada(
             principal = max(
                 idxs,
                 key=lambda i: (
+                    float(pd.to_numeric(out.at[i, "_coerencia_score"], errors="coerce") or 0.0) if "_coerencia_score" in out.columns else 0.0,
                     float(pd.to_numeric(out.at[i, "_prioridade_score"], errors="coerce") or 0.0),
                     float(pd.to_numeric(out.at[i, "Margem positiva"], errors="coerce") or 0.0),
                     float(pd.to_numeric(out.at[i, "Probabilidade"], errors="coerce") or 0.0),
@@ -1393,6 +1419,8 @@ def ajustar_exposicao_correlacionada(
                     out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Principal entre correlacionadas")
                     out.at[idx, "Motivo"] = str(out.at[idx, "Motivo"]) + " | mantida como principal entre mercados correlacionados."
                     continue
+                out.at[idx, "Entrada teórica %"] = 0.0
+                out.at[idx, "Entrada teórica R$"] = 0.0
                 out.at[idx, "Entrada %"] = 0.0
                 out.at[idx, "Entrada R$"] = 0.0
                 out.at[idx, "Veredito"] = "ESTUDO"
@@ -1410,6 +1438,8 @@ def ajustar_exposicao_correlacionada(
             soma_pesos = sum(pesos)
             for idx, peso in zip(idxs, pesos):
                 nova_stake = orcamento_par * peso / soma_pesos
+                out.at[idx, "Entrada teórica %"] = nova_stake
+                out.at[idx, "Entrada teórica R$"] = float(banca) * nova_stake
                 out.at[idx, "Entrada %"] = nova_stake
                 out.at[idx, "Entrada R$"] = float(banca) * nova_stake
                 out.at[idx, "Status operacional"] = str(out.at[idx, "Status operacional"]).replace(" — ENTRADA CORRELACIONADA DIVIDIDA", "") + " — ENTRADA CORRELACIONADA DIVIDIDA"
@@ -1460,7 +1490,7 @@ def gerar_resumo_compartilhavel(
     cfg = analise.get("config", {}) or {}
     periodo = cfg.get("periodo_base", {}) or {}
     linhas: List[str] = []
-    linhas.append("RESUMO — TEX ESTATÍSTICAS V20.2")
+    linhas.append("RESUMO — TEX ESTATÍSTICAS V20.3.1")
     linhas.append(f"Jogo: {analise.get('jogo', '-')}")
     linhas.append(f"Liga: {analise.get('liga', '-')} | Casa de apostas: {analise.get('casa_apostas', '-')} | Origem das cotações: {analise.get('origem', '-')}")
     linhas.append(
@@ -1499,7 +1529,7 @@ def gerar_resumo_compartilhavel(
         f"(total {fmt_num(float(calc.get('gols_esperados_casa', 0)) + float(calc.get('gols_esperados_fora', 0)), 2)})."
     )
     linhas.append(f"Qualidade dos dados: {confianca.get('nível', '-')} — {confianca.get('motivos', '-')}")
-    linhas.append(f"Calibração preditiva: {confianca.get('calibração', 'Ainda não comprovada')}.")
+    linhas.append(f"Validação histórica: {confianca.get('calibração', 'Em acompanhamento')}.")
 
     if estabilidade:
         linhas.append(f"Estabilidade 5/8/12: {estabilidade.get('nivel', '-')} — {estabilidade.get('motivo', '-')}")
@@ -1540,8 +1570,8 @@ def gerar_resumo_compartilhavel(
                 f"  - {mercado_exibicao(r.get('Mercado', '-'))}: prob. {fmt_pct(float(r.get('Probabilidade', 0)), 1)}, "
                 f"cotação justa {fmt_num(float(r.get('Cotação justa', 0)), 2)}, cotação real {fmt_num(float(r.get('Cotação real', 0)), 2)}, "
                 f"valor esperado {fmt_pct(float(r.get('Margem positiva', 0)), 1)}, situação {texto_limpo_para_tela(r.get('Status operacional', '-'))}, "
-                f"entrada teórica {fmt_pct(float(r.get('Entrada teórica %', r.get('Entrada %', 0))), 2)} ({fmt_dinheiro(float(r.get('Entrada teórica R$', r.get('Entrada R$', 0))))}), "
-                f"entrada financeira {fmt_pct(float(r.get('Entrada %', 0)), 2)} ({fmt_dinheiro(float(r.get('Entrada R$', 0)))})."
+                f"direção algébrica {texto_limpo_para_tela(r.get('Direção algébrica', '-'))}, "
+                f"entrada final {fmt_pct(float(r.get('Entrada %', 0)), 2)} ({fmt_dinheiro(float(r.get('Entrada R$', 0)))})."
             )
 
     if aprovadas is not None and not aprovadas.empty:
@@ -1982,14 +2012,19 @@ def _estabilidade_mudou_lado(estabilidade: Optional[Dict[str, object]], grupo: s
 def _bloquear_operacional(out: pd.DataFrame, idx, status: str, motivo: str, etiqueta: str) -> None:
     """Mantém a linha auditável, mas zera qualquer ação operacional."""
     for col, padrao in [
-        ("Veredito", ""), ("Status operacional", ""), ("Entrada %", 0.0), ("Entrada R$", 0.0),
+        ("Veredito", ""), ("Status operacional", ""),
+        ("Entrada teórica %", 0.0), ("Entrada teórica R$", 0.0),
+        ("Entrada %", 0.0), ("Entrada R$", 0.0),
         ("Prioridade", "—"), ("_prioridade_score", 0), ("_prioridade_motivo", "sem prioridade"),
-        ("Motivo", ""), ("Etiquetas", ""),
+        ("Motivo", ""), ("Etiquetas", ""), ("Coerência interna", ""),
+        ("Direção algébrica", ""), ("_coerencia_score", 0),
     ]:
         if col not in out.columns:
             out[col] = padrao
     out.at[idx, "Veredito"] = "BLOQUEADO"
     out.at[idx, "Status operacional"] = status
+    out.at[idx, "Entrada teórica %"] = 0.0
+    out.at[idx, "Entrada teórica R$"] = 0.0
     out.at[idx, "Entrada %"] = 0.0
     out.at[idx, "Entrada R$"] = 0.0
     out.at[idx, "Prioridade"] = "—"
@@ -2009,6 +2044,10 @@ def _reduzir_operacional(out: pd.DataFrame, idx, fator: float, motivo: str, etiq
         return
     out.at[idx, "Entrada %"] = entrada_pct * fator
     out.at[idx, "Entrada R$"] = entrada_rs * fator
+    if "Entrada teórica %" in out.columns:
+        out.at[idx, "Entrada teórica %"] = out.at[idx, "Entrada %"]
+    if "Entrada teórica R$" in out.columns:
+        out.at[idx, "Entrada teórica R$"] = out.at[idx, "Entrada R$"]
     out.at[idx, "Motivo"] = (str(out.at[idx, "Motivo"] or "") + " | " + motivo).strip(" |")
     out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], etiqueta)
     status = str(out.at[idx, "Status operacional"] or "LIBERADO")
@@ -2020,105 +2059,151 @@ def aplicar_travas_coerencia(
     resultados: pd.DataFrame,
     calc: Dict[str, object],
     estabilidade: Optional[Dict[str, object]] = None,
-    limite_under: float = 2.50,
-    inicio_zona_cinza_under: float = 2.30,
-    usar_coerencia_btts_individual: bool = True,
-    limiar_btts_individual: float = 0.55,
-    bloquear_conflito_modelos: bool = True,
+    linha_gols: float = 2.50,
+    usar_direcao_algebrica_gols: bool = True,
+    usar_direcao_algebrica_btts: bool = True,
+    reduzir_conflito_modelos: bool = True,
 ) -> pd.DataFrame:
-    """Transforma coerência em regra operacional, e não em aviso decorativo.
+    """Aplica uma camada direcional simples antes do valor esperado.
 
-    Regras centrais:
-    - Menos de 2,5 nunca é liberado quando o total projetado é >= 2,50.
-    - Entre 2,30 e 2,49, Menos fica em estudo por proximidade da linha.
-    - No mercado ambas marcam, a trava usa a chance individual de cada equipe marcar.
-      O placar arredondado permanece apenas como informação visual.
-    - Se Poisson e frequência empírica apontam lados opostos, o grupo fica em estudo.
-    - Se as janelas mudam de lado, nenhum lado desse grupo recebe entrada.
-    - Nunca ficam dois lados opostos liberados ao mesmo tempo.
+    Princípio desta versão:
+    - a soma dos gols projetados escolhe o lado estrutural do mercado de 2,5 gols;
+    - o arredondamento aritmético individual escolhe o lado estrutural de ambas marcam;
+    - Poisson, frequência real e estabilidade confirmam ou reduzem a força da tese;
+    - divergência contra o mercado não bloqueia por si só, pois pode ser justamente a vantagem;
+    - somente incoerência interna, lado oposto ou cotações inválidas bloqueiam a entrada.
     """
     if resultados is None or resultados.empty:
         return resultados
+
     out = resultados.copy()
-    total = float(calc.get("gols_total_esperado", float(calc.get("gols_esperados_casa", 0.0)) + float(calc.get("gols_esperados_fora", 0.0))))
-    lam_casa = float(calc.get("gols_esperados_casa", 0.0))
-    lam_fora = float(calc.get("gols_esperados_fora", 0.0))
-    p_casa_marcar = float(calc.get("prob_casa_marcar", 1.0 - np.exp(-lam_casa)))
-    p_fora_marcar = float(calc.get("prob_fora_marcar", 1.0 - np.exp(-lam_fora)))
-    limiar_btts = float(np.clip(limiar_btts_individual, 0.50, 0.80))
-    limiar_baixo = 1.0 - limiar_btts
+    for col, padrao in [
+        ("Direção algébrica", ""), ("Coerência interna", ""), ("_coerencia_score", 0),
+    ]:
+        if col not in out.columns:
+            out[col] = padrao
+
+    lam_casa = float(calc.get("gols_esperados_casa", 0.0) or 0.0)
+    lam_fora = float(calc.get("gols_esperados_fora", 0.0) or 0.0)
+    total = float(calc.get("gols_total_esperado", lam_casa + lam_fora) or (lam_casa + lam_fora))
+    placar_casa = int(calc.get("placar_arredondado_casa", np.floor(lam_casa + 0.5)) or 0)
+    placar_fora = int(calc.get("placar_arredondado_fora", np.floor(lam_fora + 0.5)) or 0)
+
+    direcao_gols = "Mais de 2.5 gols" if total >= float(linha_gols) else "Menos de 2.5 gols"
+    direcao_btts = "Ambos marcam - Sim" if placar_casa >= 1 and placar_fora >= 1 else "Ambos marcam - Não"
+
     p_pois = calc.get("probabilidades_poisson", {}) or {}
     p_emp = calc.get("probabilidades_empiricas", {}) or {}
-
-    conflito_gols = (
-        (float(p_pois.get("Mais de 2.5 gols", 0.0)) >= 0.5)
-        != (float(p_emp.get("Mais de 2.5 gols", 0.0)) >= 0.5)
-    ) and abs(float(p_pois.get("Mais de 2.5 gols", 0.0)) - float(p_emp.get("Mais de 2.5 gols", 0.0))) >= 0.10
-    conflito_btts = (
-        (float(p_pois.get("Ambos marcam - Sim", 0.0)) >= 0.5)
-        != (float(p_emp.get("Ambos marcam - Sim", 0.0)) >= 0.5)
-    ) and abs(float(p_pois.get("Ambos marcam - Sim", 0.0)) - float(p_emp.get("Ambos marcam - Sim", 0.0))) >= 0.10
-
+    p_final = calc.get("probabilidades", {}) or {}
     instavel_gols = _estabilidade_mudou_lado(estabilidade, "gols")
     instavel_btts = _estabilidade_mudou_lado(estabilidade, "btts")
 
+    def lado_favorecido(prob_sim_ou_mais: float, positivo: str, negativo: str) -> str:
+        return positivo if float(prob_sim_ou_mais) >= 0.5 else negativo
+
+    direcao_poisson_gols = lado_favorecido(p_pois.get("Mais de 2.5 gols", 0.0), "Mais de 2.5 gols", "Menos de 2.5 gols")
+    direcao_empirica_gols = lado_favorecido(p_emp.get("Mais de 2.5 gols", 0.0), "Mais de 2.5 gols", "Menos de 2.5 gols")
+    direcao_motor_gols = lado_favorecido(p_final.get("Mais de 2.5 gols", 0.0), "Mais de 2.5 gols", "Menos de 2.5 gols")
+    direcao_poisson_btts = lado_favorecido(p_pois.get("Ambos marcam - Sim", 0.0), "Ambos marcam - Sim", "Ambos marcam - Não")
+    direcao_empirica_btts = lado_favorecido(p_emp.get("Ambos marcam - Sim", 0.0), "Ambos marcam - Sim", "Ambos marcam - Não")
+    direcao_motor_btts = lado_favorecido(p_final.get("Ambos marcam - Sim", 0.0), "Ambos marcam - Sim", "Ambos marcam - Não")
+
     for idx, row in out.iterrows():
         mercado = str(row.get("Mercado", ""))
-        if mercado == "Menos de 2.5 gols":
-            if total >= float(limite_under):
-                _bloquear_operacional(out, idx, "BLOQUEADO — TOTAL PROJETADO ACIMA DA LINHA", f"total projetado {total:.2f} é igual ou superior a 2,50", "Coerência total projetado")
-            elif total >= float(inicio_zona_cinza_under):
-                _bloquear_operacional(out, idx, "ESTUDO — TOTAL PRÓXIMO DA LINHA", f"total projetado {total:.2f} está na zona cinzenta antes de 2,50", "Zona cinzenta total")
-        elif mercado == "Mais de 2.5 gols":
-            if total < 2.00:
-                _bloquear_operacional(out, idx, "ESTUDO — TOTAL PROJETADO BAIXO", f"total projetado {total:.2f} é inferior a 2,00", "Coerência total projetado")
-        elif mercado == "Ambos marcam - Não" and usar_coerencia_btts_individual:
-            modelos_sustentam_sim = (
-                float(p_pois.get("Ambos marcam - Sim", 0.0)) >= 0.50
-                and float(p_emp.get("Ambos marcam - Sim", 0.0)) >= 0.50
-            )
-            if p_casa_marcar >= limiar_btts and p_fora_marcar >= limiar_btts and modelos_sustentam_sim:
-                _bloquear_operacional(
-                    out,
-                    idx,
-                    "BLOQUEADO — CHANCE INDIVIDUAL SUSTENTA GOL DOS DOIS",
-                    f"chance de marcar: mandante {p_casa_marcar:.1%}, visitante {p_fora_marcar:.1%}; Poisson e frequência também favorecem Sim",
-                    "Coerência individual de ambas marcam",
-                )
-        elif mercado == "Ambos marcam - Sim" and usar_coerencia_btts_individual:
-            modelos_sustentam_nao = (
-                float(p_pois.get("Ambos marcam - Sim", 1.0)) < 0.50
-                and float(p_emp.get("Ambos marcam - Sim", 1.0)) < 0.50
-            )
-            if min(p_casa_marcar, p_fora_marcar) <= limiar_baixo and modelos_sustentam_nao:
-                _bloquear_operacional(
-                    out,
-                    idx,
-                    "ESTUDO — CHANCE INDIVIDUAL NÃO SUSTENTA GOL DOS DOIS",
-                    f"chance de marcar: mandante {p_casa_marcar:.1%}, visitante {p_fora_marcar:.1%}; Poisson e frequência também favorecem Não",
-                    "Coerência individual de ambas marcam",
-                )
+        score = 0
+        observacoes: List[str] = []
 
         if mercado in {"Mais de 2.5 gols", "Menos de 2.5 gols"}:
-            if instavel_gols:
-                _bloquear_operacional(out, idx, "ESTUDO — JANELAS MUDARAM DE LADO", "as janelas 5/8/12 discordaram sobre Mais ou Menos de 2,5", "Instabilidade específica de gols")
-            elif bloquear_conflito_modelos and conflito_gols:
-                _bloquear_operacional(out, idx, "ESTUDO — POISSON E FREQUÊNCIA DISCORDAM", "Poisson e frequência empírica apontam lados opostos no total de gols", "Conflito Poisson x empírico")
-        elif mercado in {"Ambos marcam - Sim", "Ambos marcam - Não"}:
-            if instavel_btts:
-                _bloquear_operacional(out, idx, "ESTUDO — JANELAS MUDARAM DE LADO", "as janelas 5/8/12 discordaram sobre ambas marcam", "Instabilidade específica de ambas marcam")
-            elif bloquear_conflito_modelos and conflito_btts:
-                _bloquear_operacional(out, idx, "ESTUDO — POISSON E FREQUÊNCIA DISCORDAM", "Poisson e frequência empírica apontam lados opostos em ambas marcam", "Conflito Poisson x empírico")
+            out.at[idx, "Direção algébrica"] = mercado_exibicao(direcao_gols)
+            if usar_direcao_algebrica_gols and mercado != direcao_gols:
+                _bloquear_operacional(
+                    out, idx,
+                    "BLOQUEADO — SOMA PROJETADA APONTA O LADO OPOSTO",
+                    f"a soma projetada é {total:.2f}; a direção algébrica é {mercado_exibicao(direcao_gols)}",
+                    "Direção algébrica de gols",
+                )
+                continue
 
-    # Sobredispersão não escolhe lado, mas diminui confiança em mercados derivados de gols.
+            score += 5
+            observacoes.append(f"soma projetada {total:.2f} confirma {mercado_exibicao(mercado)}")
+            if direcao_motor_gols == mercado:
+                score += 2
+                observacoes.append("probabilidade operacional confirma")
+            else:
+                observacoes.append("probabilidade operacional aponta o lado oposto")
+            if direcao_poisson_gols == mercado:
+                score += 1
+                observacoes.append("Poisson confirma")
+            else:
+                observacoes.append("Poisson diverge")
+            if direcao_empirica_gols == mercado:
+                score += 1
+                observacoes.append("frequência real confirma")
+            else:
+                observacoes.append("frequência real diverge")
+            if instavel_gols:
+                observacoes.append("janelas mudaram de lado")
+                if reduzir_conflito_modelos:
+                    _reduzir_operacional(out, idx, 0.60, "janelas 5/8/12 mudaram de lado; entrada reduzida", "Instabilidade específica de gols")
+            elif reduzir_conflito_modelos and (direcao_poisson_gols != mercado or direcao_empirica_gols != mercado):
+                _reduzir_operacional(out, idx, 0.75, "a direção algébrica foi mantida, mas um componente do modelo divergiu", "Conflito interno reduzido")
+
+        elif mercado in {"Ambos marcam - Sim", "Ambos marcam - Não"}:
+            out.at[idx, "Direção algébrica"] = mercado_exibicao(direcao_btts)
+            if usar_direcao_algebrica_btts and mercado != direcao_btts:
+                _bloquear_operacional(
+                    out, idx,
+                    "BLOQUEADO — PROJEÇÕES INDIVIDUAIS APONTAM O LADO OPOSTO",
+                    f"placar algébrico arredondado {placar_casa} x {placar_fora}; direção {mercado_exibicao(direcao_btts)}",
+                    "Direção algébrica de ambas marcam",
+                )
+                continue
+
+            score += 4
+            observacoes.append(f"placar algébrico {placar_casa} x {placar_fora} confirma {mercado_exibicao(mercado)}")
+            if direcao_motor_btts == mercado:
+                score += 2
+                observacoes.append("probabilidade operacional confirma")
+            else:
+                observacoes.append("probabilidade operacional aponta o lado oposto")
+            if direcao_poisson_btts == mercado:
+                score += 1
+                observacoes.append("Poisson confirma")
+            else:
+                observacoes.append("Poisson diverge")
+            if direcao_empirica_btts == mercado:
+                score += 1
+                observacoes.append("frequência real confirma")
+            else:
+                observacoes.append("frequência real diverge")
+            if instavel_btts:
+                observacoes.append("janelas mudaram de lado")
+                if reduzir_conflito_modelos:
+                    _reduzir_operacional(out, idx, 0.60, "janelas 5/8/12 mudaram de lado; entrada reduzida", "Instabilidade específica de ambas marcam")
+            elif reduzir_conflito_modelos and (direcao_poisson_btts != mercado or direcao_empirica_btts != mercado):
+                _reduzir_operacional(out, idx, 0.75, "a direção algébrica foi mantida, mas um componente do modelo divergiu", "Conflito interno reduzido")
+
+        else:
+            # Resultado final não possui a mesma camada algébrica de gols.
+            score = 1 if str(row.get("Veredito", "")) == "VALOR POSITIVO" else 0
+            observacoes.append("mercado de resultado final avaliado pelo motor probabilístico")
+
+        out.at[idx, "_coerencia_score"] = score
+        out.at[idx, "Coerência interna"] = "; ".join(observacoes)
+        if score >= 7:
+            out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Coerência interna forte")
+        elif score >= 4:
+            out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Coerência algébrica")
+
+    # Sobredispersão reduz, mas não anula automaticamente uma direção coerente.
     diag = calc.get("diagnostico_dispersao", {}) or {}
     razao = diag.get("razao")
     if razao is not None and np.isfinite(razao) and float(razao) >= 1.25:
         for idx, row in out.iterrows():
             if str(row.get("Mercado", "")) in {"Mais de 2.5 gols", "Menos de 2.5 gols", "Ambos marcam - Sim", "Ambos marcam - Não"}:
-                _reduzir_operacional(out, idx, 0.50, f"liga com sobredispersão forte (variância/média {float(razao):.2f})", "Sobredispersão forte")
+                _reduzir_operacional(out, idx, 0.80, f"liga com sobredispersão (variância/média {float(razao):.2f})", "Sobredispersão")
 
-    # Impede dois lados opostos com entrada simultânea, mesmo quando as odds fazem EV positivo nos dois.
+    # Nunca permite os dois lados opostos com entrada simultânea.
     for par in [("Mais de 2.5 gols", "Menos de 2.5 gols"), ("Ambos marcam - Sim", "Ambos marcam - Não")]:
         idxs = out.index[
             out["Mercado"].astype(str).isin(par)
@@ -2126,13 +2211,19 @@ def aplicar_travas_coerencia(
             & (pd.to_numeric(out["Entrada %"], errors="coerce").fillna(0.0) > 0)
         ].tolist()
         if len(idxs) > 1:
-            principal = max(idxs, key=lambda i: (float(out.at[i, "Probabilidade"]), float(out.at[i, "Margem positiva"])))
+            principal = max(
+                idxs,
+                key=lambda i: (
+                    float(pd.to_numeric(out.at[i, "_coerencia_score"], errors="coerce") or 0.0),
+                    float(out.at[i, "Probabilidade"]),
+                    float(out.at[i, "Margem positiva"]),
+                ),
+            )
             for idx in idxs:
                 if idx != principal:
-                    _bloquear_operacional(out, idx, "BLOQUEADO — LADO OPOSTO MAIS COERENTE", f"o lado oposto {out.at[principal, 'Mercado']} tem maior probabilidade operacional", "Exclusividade do mercado")
+                    _bloquear_operacional(out, idx, "BLOQUEADO — LADO OPOSTO À DIREÇÃO PRINCIPAL", f"o lado {out.at[principal, 'Mercado']} possui maior coerência interna", "Exclusividade do mercado")
 
     return limpar_dataframe_operacional(out)
-
 
 def manter_apenas_entrada_principal(
     resultados: pd.DataFrame,
@@ -2154,14 +2245,19 @@ def manter_apenas_entrada_principal(
     principal = max(
         candidatos,
         key=lambda i: (
+            float(pd.to_numeric(out.at[i, "_coerencia_score"], errors="coerce") or 0.0) if "_coerencia_score" in out.columns else 0.0,
             float(pd.to_numeric(out.at[i, "_prioridade_score"], errors="coerce") or 0.0),
-            float(pd.to_numeric(out.at[i, "Probabilidade"], errors="coerce") or 0.0),
             float(pd.to_numeric(out.at[i, "Margem positiva"], errors="coerce") or 0.0),
+            float(pd.to_numeric(out.at[i, "Probabilidade"], errors="coerce") or 0.0),
         ),
     )
 
-    base_operacional = float(pd.to_numeric(out.at[principal, "_entrada_operacional_base"], errors="coerce") or 0.0) if "_entrada_operacional_base" in out.columns else float(pd.to_numeric(out.at[principal, "Entrada %"], errors="coerce") or 0.0)
+    # Usa a entrada já reduzida por divergência, instabilidade e sobredispersão.
+    # Não restaura a entrada bruta anterior às travas.
+    base_operacional = float(pd.to_numeric(out.at[principal, "Entrada %"], errors="coerce") or 0.0)
     entrada_principal = min(max(0.0, base_operacional), max(0.0, float(teto_por_jogo))) if teto_por_jogo > 0 else max(0.0, base_operacional)
+    out.at[principal, "Entrada teórica %"] = entrada_principal
+    out.at[principal, "Entrada teórica R$"] = float(banca) * entrada_principal
     out.at[principal, "Entrada %"] = entrada_principal
     out.at[principal, "Entrada R$"] = float(banca) * entrada_principal
     out.at[principal, "Etiquetas"] = append_tag_texto(out.at[principal, "Etiquetas"], "Entrada principal única")
@@ -2170,6 +2266,8 @@ def manter_apenas_entrada_principal(
     for idx in candidatos:
         if idx == principal:
             continue
+        out.at[idx, "Entrada teórica %"] = 0.0
+        out.at[idx, "Entrada teórica R$"] = 0.0
         out.at[idx, "Entrada %"] = 0.0
         out.at[idx, "Entrada R$"] = 0.0
         out.at[idx, "Veredito"] = "CONFIRMAÇÃO"
@@ -2179,27 +2277,6 @@ def manter_apenas_entrada_principal(
         out.at[idx, "_prioridade_motivo"] = "sinal secundário sem nova exposição financeira"
         out.at[idx, "Etiquetas"] = append_tag_texto(out.at[idx, "Etiquetas"], "Confirmação sem entrada")
         out.at[idx, "Motivo"] = (str(out.at[idx, "Motivo"] or "") + " | valor preservado como confirmação; somente o mercado principal recebe entrada.").strip()
-    return limpar_dataframe_operacional(out)
-
-
-def aplicar_trava_calibracao(resultados: pd.DataFrame, calibracao_comprovada: bool = False) -> pd.DataFrame:
-    """Preserva o cálculo teórico, mas zera dinheiro real enquanto a calibração não for comprovada."""
-    if resultados is None or resultados.empty or calibracao_comprovada:
-        return resultados
-    out = resultados.copy()
-    mask = (
-        out["Veredito"].astype(str).eq("VALOR POSITIVO")
-        & (pd.to_numeric(out["Entrada %"], errors="coerce").fillna(0.0) > 0)
-    )
-    out.loc[mask, "Veredito"] = "ESTUDO"
-    out.loc[mask, "Status operacional"] = "ESTUDO — CALIBRAÇÃO NÃO COMPROVADA"
-    out.loc[mask, "Entrada %"] = 0.0
-    out.loc[mask, "Entrada R$"] = 0.0
-    out.loc[mask, "Prioridade"] = "—"
-    out.loc[mask, "_prioridade_score"] = 0
-    out.loc[mask, "_prioridade_motivo"] = "calibração preditiva ainda não comprovada"
-    out.loc[mask, "Etiquetas"] = out.loc[mask, "Etiquetas"].map(lambda x: append_tag_texto(x, "Calibração não comprovada"))
-    out.loc[mask, "Motivo"] = out.loc[mask, "Motivo"].astype(str) + " | entrada financeira zerada; o cálculo teórico permanece visível."
     return limpar_dataframe_operacional(out)
 
 
@@ -2401,11 +2478,15 @@ def avaliar_valor_planilha(
             and abs(float(diferenca_ajustada)) >= 0.10
         )
         if divergencia_critica and not odds_inconsistentes:
-            veredito = "ESTUDO"
-            status_operacional = "DIVERGÊNCIA CRÍTICA — SOMENTE ESTUDO"
-            entrada_pct = 0.0
             nivel_divergencia = "CRÍTICA"
-            motivo = motivo + f" | diferença de {abs(float(diferenca_ajustada)) * 100:.1f} pontos percentuais entre o modelo e o mercado ajustado; entrada financeira bloqueada."
+            if tem_valor and entrada_pct > 0:
+                fator_div = float(max(0.0, min(1.0, fator_reducao_divergencia)))
+                entrada_pct = entrada_pct * fator_div
+                status_operacional = "LIBERADO — DIVERGÊNCIA CRÍTICA"
+                motivo = motivo + (
+                    f" | diferença de {abs(float(diferenca_ajustada)) * 100:.1f} pontos percentuais entre o modelo e o mercado ajustado; "
+                    f"a divergência foi tratada como possível vantagem, com entrada reduzida para {fmt_pct(fator_div, 0)}."
+                )
 
         etiquetas: List[str] = []
         if not amostra_ok:
@@ -2471,8 +2552,8 @@ def avaliar_valor_planilha(
             "Cotação real": float(odd),
             "Margem positiva": margem,
             "Veredito": veredito,
-            "Entrada teórica %": entrada_pct_base if tem_valor else 0.0,
-            "Entrada teórica R$": float(banca) * (entrada_pct_base if tem_valor else 0.0) if banca > 0 else 0.0,
+            "Entrada teórica %": entrada_pct if tem_valor else 0.0,
+            "Entrada teórica R$": float(banca) * (entrada_pct if tem_valor else 0.0) if banca > 0 else 0.0,
             "_entrada_operacional_base": entrada_pct,
             "Entrada %": entrada_pct,
             "Entrada R$": float(banca) * entrada_pct if banca > 0 else 0.0,
@@ -2492,6 +2573,8 @@ def avaliar_valor_planilha(
         fator = teto_por_jogo / total_pct
         df.loc[mask_ev, "Entrada %"] = df.loc[mask_ev, "Entrada %"] * fator
         df.loc[mask_ev, "Entrada R$"] = df.loc[mask_ev, "Entrada %"] * float(banca)
+        df.loc[mask_ev, "Entrada teórica %"] = df.loc[mask_ev, "Entrada %"]
+        df.loc[mask_ev, "Entrada teórica R$"] = df.loc[mask_ev, "Entrada R$"]
         df.loc[mask_ev, "Motivo"] = df.loc[mask_ev, "Motivo"] + " | entrada ajustada proporcionalmente pelo limite total do jogo"
         for idx, row in df.loc[mask_ev].iterrows():
             prioridade_txt, prioridade_score, prioridade_motivo = prioridade_aposta(
@@ -2517,6 +2600,7 @@ def avaliar_valor_planilha(
     ordem_status = {
         "LIBERADO": 0,
         "LIBERADO — DIVERGÊNCIA FORTE": 1,
+        "LIBERADO — DIVERGÊNCIA CRÍTICA": 1,
         "LIBERADO — DIVERGÊNCIA EXTREMA": 2,
         "AMOSTRA BAIXA — ENTRADA REDUZIDA": 3,
         "AMOSTRA BAIXA — ESTUDO": 2,
@@ -2631,12 +2715,12 @@ def classificar_confianca_estimativa(modelo: Dict[str, object], resultados: pd.D
     else:
         motivos.append("projeção total em faixa extrema")
 
-    motivos.append("calibração preditiva ainda não comprovada")
+    motivos.append("validação histórica em acompanhamento")
     return {
         "nível": nivel,
         "pontos": pontos,
         "motivos": "; ".join(motivos),
-        "calibração": "Ainda não comprovada",
+        "calibração": "Em acompanhamento",
     }
 
 
@@ -2793,7 +2877,7 @@ def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
     out = limpar_dataframe_operacional(df)
     if "Mercado" in out.columns:
         out["Mercado"] = out["Mercado"].map(mercado_exibicao)
-    for col in ["_prioridade_score", "_prioridade_motivo", "_entrada_operacional_base"]:
+    for col in ["_prioridade_score", "_prioridade_motivo", "_entrada_operacional_base", "_coerencia_score", "Entrada teórica %", "Entrada teórica R$"]:
         if col in out.columns:
             out = out.drop(columns=[col])
     for col in ["Alerta de mercado", "Etiquetas", "Motivo", "Status operacional", "Prioridade"]:
@@ -2806,10 +2890,10 @@ def formatar_tabela_resultados(df: pd.DataFrame) -> pd.DataFrame:
     out["Cotação justa"] = out["Cotação justa"].map(lambda x: "-" if not np.isfinite(x) else fmt_num(x, 2))
     out["Cotação real"] = out["Cotação real"].map(lambda x: "-" if x is None or pd.isna(x) or float(x) <= 1.0 else fmt_num(x, 2))
     out["Margem positiva"] = out["Margem positiva"].map(lambda x: fmt_pct(x, 1))
-    for col in ["Entrada teórica %", "Entrada %"]:
+    for col in ["Entrada %"]:
         if col in out.columns:
             out[col] = out[col].map(lambda x: fmt_pct(x, 2))
-    for col in ["Entrada teórica R$", "Entrada R$"]:
+    for col in ["Entrada R$"]:
         if col in out.columns:
             out[col] = out[col].map(fmt_dinheiro)
     return out.rename(columns={
@@ -2826,7 +2910,7 @@ def formatar_tabela_resumo_operacional(df: pd.DataFrame) -> pd.DataFrame:
     cols = [
         "Mercado", "Prioridade", "Valor matemático", "Situação operacional",
         "Divergência mercado", "Probabilidade", "Prob. mercado ajustada", "Cotação justa", "Cotação real",
-        "Margem positiva", "Entrada teórica %", "Entrada teórica R$", "Entrada %", "Entrada R$", "Etiquetas",
+        "Margem positiva", "Direção algébrica", "Coerência interna", "Entrada %", "Entrada R$", "Etiquetas",
     ]
     return out[[c for c in cols if c in out.columns]].copy()
 
@@ -3025,7 +3109,7 @@ def extrair_odds_api(jogo: dict, casa_alvo: Optional[str] = None) -> Tuple[Dict[
     return odds_mediana, aviso
 
 # ============================================================
-# GOOGLE SHEETS OPCIONAL
+# GOOGLE SHEETS — PERSISTÊNCIA NÃO DESTRUTIVA
 # ============================================================
 
 def _segredo_para_dict(obj) -> dict:
@@ -3041,12 +3125,14 @@ def obter_config_google() -> Dict[str, object]:
         spreadsheet_id = str(cfg.get("spreadsheet_id", "")).strip()
         worksheet_catalogo = str(cfg.get("worksheet_catalogo", GOOGLE_SHEETS_WORKSHEET_CATALOGO)).strip() or GOOGLE_SHEETS_WORKSHEET_CATALOGO
         worksheet_auditoria = str(cfg.get("worksheet_auditoria", GOOGLE_SHEETS_WORKSHEET_AUDITORIA)).strip() or GOOGLE_SHEETS_WORKSHEET_AUDITORIA
+        worksheet_historico = str(cfg.get("worksheet_historico", GOOGLE_SHEETS_WORKSHEET_HISTORICO)).strip() or GOOGLE_SHEETS_WORKSHEET_HISTORICO
         service = _segredo_para_dict(st.secrets.get("gcp_service_account", {}))
         client_email = str(service.get("client_email", "")).strip()
         return {
             "spreadsheet_id": spreadsheet_id,
             "worksheet_catalogo": worksheet_catalogo,
             "worksheet_auditoria": worksheet_auditoria,
+            "worksheet_historico": worksheet_historico,
             "client_email": client_email,
             "configurado": bool(spreadsheet_id and client_email),
         }
@@ -3055,6 +3141,7 @@ def obter_config_google() -> Dict[str, object]:
             "spreadsheet_id": "",
             "worksheet_catalogo": GOOGLE_SHEETS_WORKSHEET_CATALOGO,
             "worksheet_auditoria": GOOGLE_SHEETS_WORKSHEET_AUDITORIA,
+            "worksheet_historico": GOOGLE_SHEETS_WORKSHEET_HISTORICO,
             "client_email": "",
             "configurado": False,
         }
@@ -3136,14 +3223,84 @@ def _salvar_cache_google(nome: str, df: pd.DataFrame, colunas: List[str]) -> Non
     st.session_state[_cache_time_key_google(nome)] = time.time()
 
 
-def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
-    """Obtém ou cria uma aba no Google Sheets sem fazer leituras desnecessárias.
+def _numero_coluna_excel(numero: int) -> str:
+    numero = max(1, int(numero))
+    letras = ""
+    while numero:
+        numero, resto = divmod(numero - 1, 26)
+        letras = chr(65 + resto) + letras
+    return letras
 
-    V19.4: o Streamlit reroda o script a cada clique. Antes, o app lia o Google
-    Sheets várias vezes por rerun e batia quota de leitura. Agora o Google fica em
-    modo economia: leitura só por cache ou sincronização manual, com cooldown quando
-    aparecer quota 429.
-    """
+
+def _valor_nativo_google(valor):
+    """Converte pandas/numpy para tipos nativos sem transformar decimais em texto."""
+    if valor is None:
+        return ""
+    try:
+        if pd.isna(valor):
+            return ""
+    except Exception:
+        pass
+    if isinstance(valor, np.generic):
+        valor = valor.item()
+    if isinstance(valor, pd.Timestamp):
+        return valor.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(valor, datetime):
+        return valor.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(valor, date):
+        return valor.strftime("%Y-%m-%d")
+    if isinstance(valor, (bool, int, float, str)):
+        return valor
+    return str(valor)
+
+
+def _linha_google(row: pd.Series, colunas: List[str]) -> List[object]:
+    return [_valor_nativo_google(row.get(col, "")) for col in colunas]
+
+
+def _texto_chave(valor: object) -> str:
+    txt = str(valor or "").strip().lower()
+    txt = re.sub(r"\s+", " ", txt)
+    return txt
+
+
+def _chave_linha(row: pd.Series, colunas_chave: List[str]) -> str:
+    partes = [_texto_chave(row.get(c, "")) for c in colunas_chave]
+    if any(partes):
+        return "|".join(partes)
+    bruto = "|".join(_texto_chave(row.get(c, "")) for c in row.index)
+    return hashlib.sha256(bruto.encode("utf-8")).hexdigest()
+
+
+def _fundir_sem_apagar(
+    dataframes: List[pd.DataFrame],
+    colunas: List[str],
+    colunas_chave: List[str],
+) -> pd.DataFrame:
+    partes = []
+    for df in dataframes:
+        if df is not None and not df.empty:
+            partes.append(normalizar_colunas(df, colunas))
+    if not partes:
+        return pd.DataFrame(columns=colunas)
+    base = pd.concat(partes, ignore_index=True)
+    base["_chave_sync"] = base.apply(lambda r: _chave_linha(r, colunas_chave), axis=1)
+    base = base.drop_duplicates("_chave_sync", keep="last").drop(columns=["_chave_sync"])
+    return normalizar_colunas(base, colunas)
+
+
+def _salvar_backup_versionado(df: pd.DataFrame, nome_base: str, colunas: List[str]) -> None:
+    garantir_logs()
+    base = normalizar_colunas(df, colunas)
+    caminho_atual = os.path.join("logs", f"{nome_base}.csv")
+    base.to_csv(caminho_atual, index=False, encoding="utf-8-sig")
+    carimbo = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    caminho_backup = os.path.join(DIRETORIO_BACKUPS, f"{nome_base}_{carimbo}.csv")
+    base.to_csv(caminho_backup, index=False, encoding="utf-8-sig")
+
+
+def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
+    """Obtém/cria a aba e escreve somente o cabeçalho. Nunca limpa os dados."""
     if _google_cooldown_ativo():
         return None
 
@@ -3152,7 +3309,6 @@ def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
         return None
 
     nome_limpo = str(nome).strip()
-
     try:
         try:
             from gspread.exceptions import WorksheetNotFound
@@ -3160,109 +3316,147 @@ def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
             WorksheetNotFound = Exception
 
         try:
-            return planilha.worksheet(nome_limpo)
+            aba = planilha.worksheet(nome_limpo)
         except WorksheetNotFound:
-            try:
-                aba = planilha.add_worksheet(
-                    title=nome_limpo,
-                    rows=linhas,
-                    cols=max(20, len(colunas) + 4),
-                )
-                # escreve cabeçalho somente na criação; não lê a aba só para checar vazio
-                aba.update("A1", [colunas], value_input_option="USER_ENTERED")
-                return aba
-            except Exception as exc_criar:
-                if "already exists" in str(exc_criar).lower() or "já existe" in str(exc_criar).lower():
-                    return planilha.worksheet(nome_limpo)
-                raise exc_criar
+            aba = planilha.add_worksheet(
+                title=nome_limpo,
+                rows=max(linhas, 1000),
+                cols=max(20, len(colunas) + 4),
+            )
+
+        # Cabeçalho com RAW: não deixa a localidade brasileira converter números/textos.
+        ultima_coluna = _numero_coluna_excel(len(colunas))
+        aba.update(f"A1:{ultima_coluna}1", [colunas], value_input_option="RAW")
+        return aba
     except Exception as exc:
         if _erro_quota_google(exc):
             _ativar_cooldown_google(exc)
             st.warning(
-                f"Planilhas Google atingiram o limite de consultas. Usarei cópia temporária e cópia local por {_segundos_cooldown_google()}s. "
-                "Isso não altera o motor da planilha."
+                f"Planilhas Google atingiram o limite de consultas. A cópia local foi preservada; "
+                f"nova tentativa será possível em {_segundos_cooldown_google()}s."
             )
         else:
-            st.warning(f"Não consegui acessar a aba {nome_limpo} nas Planilhas Google. Detalhe: {exc}")
+            st.warning(f"Não consegui acessar a aba {nome_limpo}. Detalhe: {exc}")
         return None
+
+
+def _ler_aba_google_direto(aba, colunas: List[str]) -> pd.DataFrame:
+    valores = aba.get_all_values()
+    if not valores or len(valores) == 1:
+        return pd.DataFrame(columns=colunas)
+    linhas = valores[1:]
+    largura = len(colunas)
+    ajustadas = []
+    for linha in linhas:
+        linha = list(linha[:largura]) + [""] * max(0, largura - len(linha))
+        if any(str(v).strip() for v in linha):
+            ajustadas.append(linha)
+    return normalizar_colunas(pd.DataFrame(ajustadas, columns=colunas), colunas)
 
 
 def carregar_google(nome: str, colunas: List[str], force: bool = False) -> Optional[pd.DataFrame]:
-    """Carrega uma aba do Google com cache agressivo.
-
-    Por padrão NÃO lê o Google a cada rerun. Para forçar leitura, use force=True
-    através dos botões de sincronização manual.
-    """
-    cache = _pegar_cache_google(nome, colunas, aceitar_vencido=True)
-
-    # Sem force, usa cache se existir e evita chamada ao Google. Se não existir cache,
-    # devolve None para cair no backup local. Isso impede estouro de quota no sidebar.
-    if not force:
+    """Lê o Google ao menos uma vez por sessão; cache é apenas aceleração, nunca fonte exclusiva."""
+    cache = _pegar_cache_google(nome, colunas, aceitar_vencido=not force)
+    if cache is not None and not force:
         return cache
 
     if _google_cooldown_ativo():
-        if cache is not None:
-            st.info(f"Planilhas Google em espera por {_segundos_cooldown_google()}s; usando a última cópia temporária.")
-            return cache
-        return None
+        return cache
 
     aba = obter_aba(nome, colunas)
     if aba is None:
         return cache
 
     try:
-        valores = aba.get_all_values()
-        if not valores:
-            df = pd.DataFrame(columns=colunas)
-            try:
-                aba.update("A1", [colunas], value_input_option="USER_ENTERED")
-            except Exception:
-                pass
-        else:
-            cabecalho = [str(c).strip() for c in valores[0]]
-            linhas = valores[1:]
-            df = pd.DataFrame(linhas, columns=cabecalho)
-            df = normalizar_colunas(df, colunas)
+        df = _ler_aba_google_direto(aba, colunas)
         _salvar_cache_google(nome, df, colunas)
         return df
     except Exception as exc:
         if _erro_quota_google(exc):
             _ativar_cooldown_google(exc)
-            st.warning(
-                f"Planilhas Google atingiram o limite de leitura. Usando cópia temporária e cópia local por {_segundos_cooldown_google()}s."
-            )
-        else:
-            st.warning(f"Não consegui ler {nome} nas Planilhas Google. Detalhe: {exc}")
+        st.warning(f"Não consegui ler {nome} nas Planilhas Google. Detalhe: {exc}")
         return cache
 
 
-def salvar_google(nome: str, df: pd.DataFrame, colunas: List[str]) -> bool:
+def salvar_google_sem_apagar(
+    nome: str,
+    df: pd.DataFrame,
+    colunas: List[str],
+    colunas_chave: List[str],
+) -> Tuple[bool, str, pd.DataFrame]:
+    """Faz atualização/inclusão por chave. Não usa clear(), não remove linhas e grava números em RAW."""
+    entrada = normalizar_colunas(df, colunas)
+    if entrada.empty:
+        return True, "nenhum registro novo", entrada
+
     if _google_cooldown_ativo():
-        _salvar_cache_google(nome, df, colunas)
-        return False
+        _salvar_cache_google(nome, entrada, colunas)
+        return False, f"Google temporariamente indisponível; cópia local preservada", entrada
 
     aba = obter_aba(nome, colunas)
     if aba is None:
-        _salvar_cache_google(nome, df, colunas)
-        return False
+        _salvar_cache_google(nome, entrada, colunas)
+        return False, "Google indisponível; cópia local preservada", entrada
 
     try:
-        base = normalizar_colunas(df, colunas).astype(str)
-        valores = [colunas] + base.values.tolist()
-        aba.clear()
-        aba.update("A1", valores, value_input_option="USER_ENTERED")
-        _salvar_cache_google(nome, base, colunas)
-        return True
+        remoto = _ler_aba_google_direto(aba, colunas)
+        mapa_remoto: Dict[str, Tuple[int, List[object]]] = {}
+        for pos, (_, row) in enumerate(remoto.iterrows(), start=2):
+            chave = _chave_linha(row, colunas_chave)
+            # Se já houver duplicata remota, preserva a primeira e jamais exclui a outra.
+            if chave not in mapa_remoto:
+                mapa_remoto[chave] = (pos, _linha_google(row, colunas))
+
+        novas: List[List[object]] = []
+        atualizacoes: List[Tuple[int, List[object]]] = []
+        vistos_entrada = set()
+
+        for _, row in entrada.iterrows():
+            chave = _chave_linha(row, colunas_chave)
+            if chave in vistos_entrada:
+                continue
+            vistos_entrada.add(chave)
+            valores = _linha_google(row, colunas)
+            if chave in mapa_remoto:
+                numero_linha, antigos = mapa_remoto[chave]
+                if [str(v) for v in antigos] != [str(v) for v in valores]:
+                    atualizacoes.append((numero_linha, valores))
+            else:
+                novas.append(valores)
+
+        ultima_coluna = _numero_coluna_excel(len(colunas))
+        for numero_linha, valores in atualizacoes:
+            aba.update(
+                f"A{numero_linha}:{ultima_coluna}{numero_linha}",
+                [valores],
+                value_input_option="RAW",
+            )
+
+        if novas:
+            try:
+                aba.append_rows(novas, value_input_option="RAW", insert_data_option="INSERT_ROWS")
+            except TypeError:
+                aba.append_rows(novas, value_input_option="RAW")
+
+        # Confirma diretamente na planilha após a escrita.
+        confirmado = _ler_aba_google_direto(aba, colunas)
+        consolidado = _fundir_sem_apagar([confirmado], colunas, colunas_chave)
+        _salvar_cache_google(nome, consolidado, colunas)
+
+        chaves_consolidadas = set(consolidado.apply(lambda r: _chave_linha(r, colunas_chave), axis=1))
+        chaves_entrada = set(entrada.apply(lambda r: _chave_linha(r, colunas_chave), axis=1))
+        faltantes = chaves_entrada - chaves_consolidadas
+        if faltantes:
+            raise RuntimeError(f"Falha de verificação: {len(faltantes)} registro(s) não apareceram após a sincronização.")
+
+        detalhe = f"{len(novas)} incluído(s), {len(atualizacoes)} atualizado(s), nenhum apagado; verificação concluída"
+        return True, detalhe, consolidado
     except Exception as exc:
-        _salvar_cache_google(nome, df, colunas)
+        _salvar_cache_google(nome, entrada, colunas)
         if _erro_quota_google(exc):
             _ativar_cooldown_google(exc)
-            st.warning(
-                f"Planilhas Google atingiram o limite de gravação. Os dados foram salvos na cópia local e serão enviados novamente depois."
-            )
-        else:
-            st.warning(f"Não consegui salvar {nome} nas Planilhas Google. Detalhe: {exc}")
-        return False
+        st.warning(f"Não consegui sincronizar {nome}. A cópia local foi mantida. Detalhe: {exc}")
+        return False, f"falha no Google; cópia local preservada: {exc}", entrada
 
 # ============================================================
 # AUDITORIA E CATÁLOGO
@@ -3280,10 +3474,27 @@ def carregar_auditoria_local() -> pd.DataFrame:
 
 def salvar_auditoria(df: pd.DataFrame) -> str:
     garantir_logs()
-    base = enriquecer_auditoria_probabilidades(df)
-    base.to_csv(ARQUIVO_AUDITORIA, index=False)
-    if google_configurado() and salvar_google(obter_config_google()["worksheet_auditoria"], base, COLUNAS_AUDITORIA):
-        return "Planilhas Google + cópia local"
+    entrada = enriquecer_auditoria_probabilidades(df)
+    local = carregar_auditoria_local()
+    consolidado_local = _fundir_sem_apagar(
+        [local, entrada], COLUNAS_AUDITORIA, ["ID"]
+    )
+    consolidado_local = enriquecer_auditoria_probabilidades(consolidado_local)
+    _salvar_backup_versionado(consolidado_local, "auditoria_tex_v19_1", COLUNAS_AUDITORIA)
+
+    if google_configurado():
+        cfg = obter_config_google()
+        ok, detalhe, consolidado_google = salvar_google_sem_apagar(
+            cfg["worksheet_auditoria"],
+            consolidado_local,
+            COLUNAS_AUDITORIA,
+            ["ID"],
+        )
+        if ok:
+            consolidado_google = enriquecer_auditoria_probabilidades(consolidado_google)
+            _salvar_backup_versionado(consolidado_google, "auditoria_tex_v19_1", COLUNAS_AUDITORIA)
+            return f"Planilhas Google + cópia local ({detalhe})"
+        return f"cópia local; sincronização pendente ({detalhe})"
     return "cópia local"
 
 
@@ -3291,13 +3502,20 @@ def carregar_auditoria(force_google: bool = False) -> pd.DataFrame:
     local = carregar_auditoria_local()
     if google_configurado():
         cfg = obter_config_google()
-        df_g = carregar_google(cfg["worksheet_auditoria"], COLUNAS_AUDITORIA, force=force_google)
-        if df_g is not None:
-            if df_g.empty and force_google and not local.empty:
-                # só empurra backup local para o Google quando o usuário pediu sincronização
-                salvar_google(cfg["worksheet_auditoria"], local, COLUNAS_AUDITORIA)
-                return local
-            return enriquecer_auditoria_probabilidades(df_g)
+        remoto = carregar_google(
+            cfg["worksheet_auditoria"],
+            COLUNAS_AUDITORIA,
+            force=force_google,
+        )
+        consolidado = _fundir_sem_apagar(
+            [local, remoto if remoto is not None else pd.DataFrame()],
+            COLUNAS_AUDITORIA,
+            ["ID"],
+        )
+        consolidado = enriquecer_auditoria_probabilidades(consolidado)
+        if force_google and not consolidado.empty:
+            salvar_auditoria(consolidado)
+        return consolidado
     return enriquecer_auditoria_probabilidades(local)
 
 
@@ -3394,10 +3612,29 @@ def carregar_catalogo_local() -> pd.DataFrame:
 
 def salvar_catalogo(df: pd.DataFrame) -> str:
     garantir_logs()
-    base = enriquecer_catalogo_probabilidades(df)
-    base.to_csv(ARQUIVO_CATALOGO, index=False)
-    if google_configurado() and salvar_google(obter_config_google()["worksheet_catalogo"], base, COLUNAS_CATALOGO):
-        return "Planilhas Google + cópia local"
+    entrada = enriquecer_catalogo_probabilidades(df)
+    local = carregar_catalogo_local()
+    consolidado_local = _fundir_sem_apagar(
+        [local, entrada],
+        COLUNAS_CATALOGO,
+        ["ID Coleta", "Mercado", "Seleção"],
+    )
+    consolidado_local = enriquecer_catalogo_probabilidades(consolidado_local)
+    _salvar_backup_versionado(consolidado_local, "catalogo_odds_tex_v19_1", COLUNAS_CATALOGO)
+
+    if google_configurado():
+        cfg = obter_config_google()
+        ok, detalhe, consolidado_google = salvar_google_sem_apagar(
+            cfg["worksheet_catalogo"],
+            consolidado_local,
+            COLUNAS_CATALOGO,
+            ["ID Coleta", "Mercado", "Seleção"],
+        )
+        if ok:
+            consolidado_google = enriquecer_catalogo_probabilidades(consolidado_google)
+            _salvar_backup_versionado(consolidado_google, "catalogo_odds_tex_v19_1", COLUNAS_CATALOGO)
+            return f"Planilhas Google + cópia local ({detalhe})"
+        return f"cópia local; sincronização pendente ({detalhe})"
     return "cópia local"
 
 
@@ -3405,13 +3642,31 @@ def carregar_catalogo(force_google: bool = False) -> pd.DataFrame:
     local = carregar_catalogo_local()
     if google_configurado():
         cfg = obter_config_google()
-        df_g = carregar_google(cfg["worksheet_catalogo"], COLUNAS_CATALOGO, force=force_google)
-        if df_g is not None:
-            if df_g.empty and force_google and not local.empty:
-                salvar_google(cfg["worksheet_catalogo"], local, COLUNAS_CATALOGO)
-                return local
-            return enriquecer_catalogo_probabilidades(df_g)
+        remoto = carregar_google(
+            cfg["worksheet_catalogo"],
+            COLUNAS_CATALOGO,
+            force=force_google,
+        )
+        consolidado = _fundir_sem_apagar(
+            [local, remoto if remoto is not None else pd.DataFrame()],
+            COLUNAS_CATALOGO,
+            ["ID Coleta", "Mercado", "Seleção"],
+        )
+        consolidado = enriquecer_catalogo_probabilidades(consolidado)
+        if force_google and not consolidado.empty:
+            salvar_catalogo(consolidado)
+        return consolidado
     return enriquecer_catalogo_probabilidades(local)
+
+
+def catalogo_recuperacao_dataframe() -> pd.DataFrame:
+    base = pd.DataFrame(CATALOGO_RECUPERACAO_2026)
+    return enriquecer_catalogo_probabilidades(base)
+
+
+def restaurar_catalogo_recuperado() -> str:
+    """Insere as 49 cotações recuperadas sem duplicar e sem apagar qualquer linha."""
+    return salvar_catalogo(catalogo_recuperacao_dataframe())
 
 
 def registrar_odds_catalogo(
@@ -3428,16 +3683,19 @@ def registrar_odds_catalogo(
     hora_jogo: str,
     origem: str,
     observacao: str,
+    id_coleta: Optional[str] = None,
+    registrado_em: Optional[str] = None,
 ) -> pd.DataFrame:
     base = normalizar_colunas(catalogo, COLUNAS_CATALOGO)
-    coleta = str(uuid.uuid4())[:8]
+    coleta = str(id_coleta or uuid.uuid4().hex[:8])
+    momento = str(registrado_em or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     linhas = []
     for mercado, odd in odds.items():
         if not odd_valida(odd):
             continue
         linhas.append({
             "ID Coleta": coleta,
-            "Registrado em": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Registrado em": momento,
             "Casa de apostas": casa_apostas,
             "Liga": liga,
             "Jogo": jogo,
@@ -3457,6 +3715,176 @@ def registrar_odds_catalogo(
         base = pd.concat([base, pd.DataFrame(linhas)], ignore_index=True)
     return enriquecer_catalogo_probabilidades(base)
 
+
+
+def carregar_historico_analises_local() -> pd.DataFrame:
+    garantir_logs()
+    if os.path.exists(ARQUIVO_HISTORICO_ANALISES):
+        try:
+            return normalizar_colunas(pd.read_csv(ARQUIVO_HISTORICO_ANALISES), COLUNAS_HISTORICO_ANALISES)
+        except Exception:
+            return pd.DataFrame(columns=COLUNAS_HISTORICO_ANALISES)
+    return pd.DataFrame(columns=COLUNAS_HISTORICO_ANALISES)
+
+
+def salvar_historico_analises(df: pd.DataFrame) -> str:
+    entrada = normalizar_colunas(df, COLUNAS_HISTORICO_ANALISES)
+    local = carregar_historico_analises_local()
+    consolidado_local = _fundir_sem_apagar(
+        [local, entrada],
+        COLUNAS_HISTORICO_ANALISES,
+        ["ID Análise", "Mercado"],
+    )
+    _salvar_backup_versionado(
+        consolidado_local,
+        "historico_analises_tex_v20_3_1",
+        COLUNAS_HISTORICO_ANALISES,
+    )
+
+    if google_configurado():
+        cfg = obter_config_google()
+        ok, detalhe, consolidado_google = salvar_google_sem_apagar(
+            cfg["worksheet_historico"],
+            consolidado_local,
+            COLUNAS_HISTORICO_ANALISES,
+            ["ID Análise", "Mercado"],
+        )
+        if ok:
+            _salvar_backup_versionado(
+                consolidado_google,
+                "historico_analises_tex_v20_3_1",
+                COLUNAS_HISTORICO_ANALISES,
+            )
+            return f"Planilhas Google + cópia local ({detalhe})"
+        return f"cópia local; sincronização pendente ({detalhe})"
+    return "cópia local"
+
+
+def carregar_historico_analises(force_google: bool = False) -> pd.DataFrame:
+    local = carregar_historico_analises_local()
+    if google_configurado():
+        cfg = obter_config_google()
+        remoto = carregar_google(
+            cfg["worksheet_historico"],
+            COLUNAS_HISTORICO_ANALISES,
+            force=force_google,
+        )
+        consolidado = _fundir_sem_apagar(
+            [local, remoto if remoto is not None else pd.DataFrame()],
+            COLUNAS_HISTORICO_ANALISES,
+            ["ID Análise", "Mercado"],
+        )
+        if force_google and not consolidado.empty:
+            salvar_historico_analises(consolidado)
+        return consolidado
+    return local
+
+
+def registrar_historico_analise(
+    id_analise: str,
+    id_coleta: str,
+    liga: str,
+    jogo: str,
+    time_casa: str,
+    time_fora: str,
+    data_jogo: date,
+    hora_jogo: str,
+    casa_apostas: str,
+    origem: str,
+    odds: Dict[str, float],
+    calc: Dict[str, object],
+    resultados: pd.DataFrame,
+    estabilidade: Optional[Dict[str, object]],
+    config: Dict[str, object],
+) -> pd.DataFrame:
+    p_oper = calc.get("probabilidades", {}) or {}
+    p_pois = calc.get("probabilidades_poisson", {}) or {}
+    p_emp = calc.get("probabilidades_empiricas", {}) or {}
+    metricas_odds = metricas_probabilidade_das_odds(odds)
+    resultado_por_mercado = {}
+    if resultados is not None and not resultados.empty and "Mercado" in resultados.columns:
+        resultado_por_mercado = {
+            str(r.get("Mercado")): r for _, r in resultados.iterrows()
+        }
+
+    nivel_estabilidade = ""
+    if isinstance(estabilidade, dict):
+        nivel_estabilidade = str(estabilidade.get("nivel", ""))
+
+    linhas = []
+    momento = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for mercado in MERCADOS_NUCLEO:
+        r = resultado_por_mercado.get(mercado)
+        metrica = metricas_odds.get(mercado, {}) or {}
+        prob_mercado = metrica.get("prob_ajustada")
+        odd = odds.get(mercado)
+        situacao = ""
+        entrada = 0.0
+        cotacao_justa = ""
+        ev = ""
+        if r is not None:
+            situacao = texto_limpo_para_tela(r.get("Status operacional", r.get("Veredito", "")))
+            entrada_num = pd.to_numeric(r.get("Entrada %", 0.0), errors="coerce")
+            entrada = 0.0 if pd.isna(entrada_num) else float(entrada_num)
+            cotacao_justa = pd.to_numeric(r.get("Cotação justa", np.nan), errors="coerce")
+            ev = pd.to_numeric(r.get("Margem positiva", np.nan), errors="coerce")
+            if pd.isna(cotacao_justa):
+                cotacao_justa = ""
+            if pd.isna(ev):
+                ev = ""
+            elif isinstance(ev, (float, np.floating)):
+                ev = float(ev) * 100.0
+
+        linhas.append({
+            "ID Análise": id_analise,
+            "ID Coleta": id_coleta,
+            "Registrado em": momento,
+            "Liga": liga,
+            "Jogo": jogo,
+            "Mandante": time_casa,
+            "Visitante": time_fora,
+            "Data do jogo": data_jogo.strftime("%Y-%m-%d") if isinstance(data_jogo, date) else str(data_jogo),
+            "Hora do jogo": hora_jogo,
+            "Casa de apostas": casa_apostas,
+            "Origem": origem,
+            "Mercado": mercado,
+            "Cotação": float(odd) if odd_valida(odd) else "",
+            "Probabilidade operacional %": round(float(p_oper.get(mercado, 0.0)) * 100.0, 4),
+            "Probabilidade Poisson %": round(float(p_pois.get(mercado, 0.0)) * 100.0, 4),
+            "Probabilidade empírica %": round(float(p_emp.get(mercado, 0.0)) * 100.0, 4) if mercado in p_emp else "",
+            "Probabilidade de mercado ajustada %": round(float(prob_mercado) * 100.0, 4) if prob_mercado is not None else "",
+            "Cotação justa": cotacao_justa,
+            "Valor esperado %": ev,
+            "Gols projetados casa": round(float(calc.get("gols_esperados_casa", 0.0)), 4),
+            "Gols projetados fora": round(float(calc.get("gols_esperados_fora", 0.0)), 4),
+            "Gols projetados total": round(float(calc.get("gols_total_esperado", 0.0)), 4),
+            "Chance mandante marcar %": round(float(calc.get("prob_casa_marcar", 0.0)) * 100.0, 4),
+            "Chance visitante marcar %": round(float(calc.get("prob_fora_marcar", 0.0)) * 100.0, 4),
+            "Amostra casa": int(calc.get("jogos_casa", 0)),
+            "Amostra fora": int(calc.get("jogos_fora", 0)),
+            "Estabilidade": nivel_estabilidade,
+            "Situação": situacao,
+            "Entrada %": round(float(entrada) * 100.0, 4),
+            "Versão do modelo": VERSAO_MODELO,
+            "Configuração JSON": json.dumps(config, ensure_ascii=False, default=str, sort_keys=True),
+        })
+    return normalizar_colunas(pd.DataFrame(linhas), COLUNAS_HISTORICO_ANALISES)
+
+
+def importar_catalogo_arquivo(conteudo: bytes, nome_arquivo: str) -> pd.DataFrame:
+    """Importa CSV/TSV sem apagar nada; o salvamento posterior deduplica por ID+mercado+seleção."""
+    texto = conteudo.decode("utf-8-sig", errors="replace")
+    separador = "\t" if ("\t" in texto.splitlines()[0]) else ","
+    try:
+        base = pd.read_csv(io.StringIO(texto), sep=separador, dtype=str)
+    except Exception:
+        base = pd.read_csv(io.StringIO(texto), sep=None, engine="python", dtype=str)
+    base = base.loc[:, ~base.columns.astype(str).str.startswith("Unnamed")].copy()
+    for col in ["Cotação", "Banca no momento"]:
+        if col in base.columns:
+            base[col] = base[col].map(texto_para_float)
+    return enriquecer_catalogo_probabilidades(base)
+
 # ============================================================
 # UI
 # ============================================================
@@ -3464,7 +3892,7 @@ def registrar_odds_catalogo(
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX ESTATÍSTICAS V20.2</div>
+        <div class="hero-title">TEX ESTATÍSTICAS V20.3.1</div>
         <div class="hero-sub">
             Painel operacional limpo: planilha pura, Poisson auditável, regressão leve à média, teste de estabilidade, cotação justa e gestão de risco.
             A tela principal mostra só o que importa; o detalhe técnico fica recolhido para conferência.
@@ -3488,10 +3916,17 @@ with st.sidebar:
     cfg_sidebar = obter_config_google()
     force_sync_sidebar = False
     if cfg_sidebar.get("configurado"):
-        st.caption("Planilhas Google em modo econômico: a planilha não é lida a cada clique para evitar o limite de consultas.")
+        st.caption("Persistência não destrutiva ativa: novos registros são incluídos/atualizados por chave; nenhuma aba é limpa.")
+        if not st.session_state.get("_catalogo_recuperado_49_sincronizado", False):
+            destino_recuperacao = restaurar_catalogo_recuperado()
+            st.session_state["_catalogo_recuperado_49_sincronizado"] = True
+            st.success(f"Catálogo histórico recuperado e conferido. Destino: {destino_recuperacao}.")
         force_sync_sidebar = st.button("🔄 Sincronizar auditoria agora", key="sync_auditoria_sidebar")
         if _google_cooldown_ativo():
-            st.warning(f"Planilhas Google em espera por {_segundos_cooldown_google()}s. Usando cópia temporária e cópia local.")
+            st.warning(f"Planilhas Google em espera por {_segundos_cooldown_google()}s. A cópia local e os backups permanecem preservados.")
+    elif not st.session_state.get("_catalogo_recuperado_49_local", False):
+        restaurar_catalogo_recuperado()
+        st.session_state["_catalogo_recuperado_49_local"] = True
 
     auditoria_sidebar = carregar_auditoria(force_google=force_sync_sidebar)
     banca_auditada = banca_atual(banca_inicial, auditoria_sidebar)
@@ -3554,7 +3989,7 @@ with st.sidebar:
     teste_estabilidade_ativo = st.checkbox(
         "Comparar estabilidade em 5/8/12 jogos",
         value=True,
-        help="As janelas agora podem bloquear um mercado de gols quando mudam de lado, e não apenas emitir aviso.",
+        help="As janelas medem estabilidade. Quando mudam de lado, a entrada é reduzida, mas a análise não é congelada automaticamente.",
     )
     peso_prob_empirica_pct = st.slider(
         "Peso das frequências reais em gols/ambas marcam",
@@ -3566,26 +4001,20 @@ with st.sidebar:
         help="Combina Poisson com frequências suavizadas do mandante em casa, visitante fora e liga. Resultado final 1X2 permanece Poisson.",
     )
     peso_prob_empirica = peso_prob_empirica_pct / 100.0
-    usar_coerencia_btts_individual = st.checkbox(
-        "Usar chance individual de marcar na coerência de ambas marcam",
+    usar_direcao_algebrica_gols = st.checkbox(
+        "Usar a soma projetada para escolher Mais ou Menos de 2,5",
         value=True,
-        help="A trava usa a chance de cada equipe marcar pelo menos uma vez. O placar arredondado fica apenas como informação visual.",
+        help="Com a opção ativa, total projetado igual ou superior a 2,50 aponta Mais de 2,5; abaixo de 2,50 aponta Menos de 2,5.",
     )
-    limiar_btts_individual_pct = st.slider(
-        "Chance individual mínima para sustentar Ambas marcam — Sim",
-        min_value=50.0,
-        max_value=70.0,
-        value=55.0,
-        step=1.0,
-        format="%.0f%%",
-        disabled=not usar_coerencia_btts_individual,
-        help="Com 55%, as duas equipes precisam ter pelo menos 55% de chance individual de marcar, com confirmação de Poisson e frequência real.",
-    )
-    limiar_btts_individual = limiar_btts_individual_pct / 100.0
-    bloquear_conflito_modelos = st.checkbox(
-        "Bloquear gols quando Poisson e frequência real discordam",
+    usar_direcao_algebrica_btts = st.checkbox(
+        "Usar o placar algébrico arredondado para escolher Ambas marcam",
         value=True,
-        help="Aplica somente quando os dois métodos apontam lados opostos e diferem em pelo menos 10 pontos percentuais.",
+        help="O arredondamento é aritmético: se os dois lados resultarem em pelo menos 1 gol, aponta Sim; se algum resultar em zero, aponta Não.",
+    )
+    reduzir_conflito_modelos = st.checkbox(
+        "Reduzir a entrada quando componentes internos discordarem",
+        value=True,
+        help="A soma algébrica continua escolhendo o lado; divergências de Poisson, frequência real ou janelas apenas reduzem a entrada, sem congelar toda a análise.",
     )
 
     st.divider()
@@ -3616,7 +4045,7 @@ with st.sidebar:
     teto_por_entrada = teto_por_entrada_pct / 100.0
     teto_por_jogo = teto_por_jogo_pct / 100.0
     fator_reducao_divergencia_pct = st.slider(
-        "Entrada em divergência extrema com mercado",
+        "Redução da entrada em divergência forte com o mercado",
         min_value=10.0,
         max_value=100.0,
         value=50.0,
@@ -3636,19 +4065,14 @@ with st.sidebar:
         value=False,
         help="Desmarcado por padrão. Quando desmarcado, o aplicativo escolhe uma única entrada principal e transforma as demais em sinais de confirmação.",
     )
-    calibracao_comprovada = st.checkbox(
-        "Habilitar entrada financeira — calibração externa comprovada",
-        value=False,
-        help="Enquanto estiver desmarcado, o aplicativo mostra a entrada teórica, mas mantém a entrada financeira em zero.",
-    )
-    st.caption("O padrão é informar cotações reais. O modo somente probabilidades vem desmarcado; a entrada financeira só é habilitada após confirmação explícita de calibração.")
+    st.caption("O padrão é informar cotações reais. O modo somente probabilidades vem desmarcado. A entrada é calculada depois da direção algébrica, das travas de coerência e da escolha de um único mercado principal.")
 
     st.divider()
     st.header("Cotações")
     casa_apostas = st.selectbox("Casa de apostas", ["Pixbet", "Pinnacle", "Bet365", "Betano", "Superbet", "KTO", "Outra"])
     chave_api = st.text_input("Chave da fonte automática de cotações", value=os.getenv("ODDS_API_KEY", ""), type="password")
 
-aba_analisar, aba_diagnostico, aba_scout, aba_auditoria, aba_catalogo, aba_calendario = st.tabs(["🎯 Analisar jogo", "🧪 Diagnóstico da liga", "🔎 Análise complementar", "📒 Auditoria", "📊 Catálogo", "🗓️ Ligas"])
+aba_analisar, aba_diagnostico, aba_scout, aba_auditoria, aba_catalogo, aba_historico, aba_calendario = st.tabs(["🎯 Analisar jogo", "🧪 Diagnóstico da liga", "🔎 Análise complementar", "📒 Auditoria", "📊 Catálogo", "🧾 Histórico de análises", "🗓️ Ligas"])
 
 with st.spinner("Carregando base da liga..."):
     df_liga_bruta = carregar_dados_liga(LIGAS_CSV[liga_sel], 0)
@@ -3706,22 +4130,25 @@ with aba_analisar:
         else:
             jogo_nome = f"{time_casa} x {time_fora}"
             odds = coletar_odds_manuais("manual")
+            st.caption("Ao analisar, todas as cotações válidas serão gravadas automaticamente no catálogo e nunca substituirão o histórico.")
             c1, c2 = st.columns(2)
             with c1:
-                botao_analisar = st.button("ANALISAR PELA PLANILHA", type="primary")
+                botao_analisar = st.button("ANALISAR E SALVAR COTAÇÕES", type="primary")
             with c2:
-                if st.button("SALVAR COTAÇÕES NO CATÁLOGO"):
+                if st.button("SALVAR COTAÇÕES SEM ANALISAR"):
                     if not odds:
                         st.error("Nenhuma cotação válida para salvar.")
                     else:
-                        catalogo = carregar_catalogo()
-                        catalogo = registrar_odds_catalogo(
-                            catalogo, liga_sel, jogo_nome, time_casa, time_fora, casa_apostas, odds,
+                        id_snapshot = uuid.uuid4().hex[:8]
+                        snapshot = registrar_odds_catalogo(
+                            pd.DataFrame(columns=COLUNAS_CATALOGO),
+                            liga_sel, jogo_nome, time_casa, time_fora, casa_apostas, odds,
                             banca_usada, "Planilha Pura", data_jogo_catalogo, hora_jogo_catalogo,
                             "Manual", "Cotações salvas sem obrigação de aposta",
+                            id_coleta=id_snapshot,
                         )
-                        destino = salvar_catalogo(catalogo)
-                        st.success(f"Cotações salvas. Destino: {destino}.")
+                        destino = salvar_catalogo(snapshot)
+                        st.success(f"Cotações preservadas. Destino: {destino}.")
 
     else:
         if not chave_api:
@@ -3779,7 +4206,7 @@ with aba_analisar:
                             else:
                                 st.info(aviso_api)
                         st.info(f"Mercados com cotação encontrados: {len(odds)}")
-                        botao_analisar = st.button("ANALISAR PELA PLANILHA", type="primary")
+                        botao_analisar = st.button("ANALISAR E SALVAR COTAÇÕES", type="primary")
 
     if botao_analisar:
         if not odds and not somente_probabilidades:
@@ -3787,6 +4214,20 @@ with aba_analisar:
         elif time_casa == time_fora:
             st.error("Mandante e visitante não podem ser iguais.")
         else:
+            id_analise = uuid.uuid4().hex
+            id_coleta_analise = uuid.uuid4().hex[:8] if odds else ""
+            destino_catalogo_automatico = "sem cotações"
+            if odds:
+                snapshot_catalogo = registrar_odds_catalogo(
+                    pd.DataFrame(columns=COLUNAS_CATALOGO),
+                    liga_sel, jogo_nome, time_casa, time_fora, casa_apostas, odds,
+                    banca_usada, "Planilha Pura", data_jogo_catalogo, hora_jogo_catalogo,
+                    origem, "Cotações preservadas automaticamente no momento da análise",
+                    id_coleta=id_coleta_analise,
+                )
+                destino_catalogo_automatico = salvar_catalogo(snapshot_catalogo)
+                st.success(f"Cotações preservadas automaticamente. Destino: {destino_catalogo_automatico}.")
+
             df_modelo, jogos_futuros_removidos = filtrar_base_antes_do_jogo(df_liga, data_jogo_catalogo)
             if df_modelo.empty:
                 st.error("A base ficou vazia após o corte anterior à data do jogo. Confira a data selecionada.")
@@ -3819,9 +4260,9 @@ with aba_analisar:
                 )
                 resultados = aplicar_travas_coerencia(
                     resultados, calc, estabilidade,
-                    usar_coerencia_btts_individual=usar_coerencia_btts_individual,
-                    limiar_btts_individual=limiar_btts_individual,
-                    bloquear_conflito_modelos=bloquear_conflito_modelos,
+                    usar_direcao_algebrica_gols=usar_direcao_algebrica_gols,
+                    usar_direcao_algebrica_btts=usar_direcao_algebrica_btts,
+                    reduzir_conflito_modelos=reduzir_conflito_modelos,
                 )
                 resultados = ajustar_exposicao_correlacionada(resultados, banca_usada, politica_correlacao)
                 resultados = manter_apenas_entrada_principal(
@@ -3833,7 +4274,7 @@ with aba_analisar:
                 if somente_probabilidades:
                     resultados = aplicar_modo_estudo(resultados)
                 else:
-                    resultados = aplicar_trava_calibracao(resultados, calibracao_comprovada=calibracao_comprovada)
+                    resultados = limpar_dataframe_operacional(resultados)
             else:
                 resultados = pd.DataFrame()
 
@@ -3843,7 +4284,8 @@ with aba_analisar:
             resultados = limpar_dataframe_operacional(resultados)
 
             st.session_state["ultima_analise_v20"] = {
-                "id": str(pd.Timestamp.now().value),
+                "id": id_analise,
+                "id_coleta": id_coleta_analise,
                 "liga": liga_sel,
                 "jogo": jogo_nome,
                 "time_casa": time_casa,
@@ -3873,9 +4315,11 @@ with aba_analisar:
                     "regressao_media_ativa": regressao_media_ativa,
                     "peso_media_liga": peso_media_liga,
                     "teste_estabilidade_ativo": teste_estabilidade_ativo,
+                    "usar_direcao_algebrica_gols": usar_direcao_algebrica_gols,
+                    "usar_direcao_algebrica_btts": usar_direcao_algebrica_btts,
+                    "reduzir_conflito_modelos": reduzir_conflito_modelos,
                     "politica_correlacao": politica_correlacao,
                     "permitir_multiplas_entradas": permitir_multiplas_entradas,
-                    "calibracao_comprovada": calibracao_comprovada,
                     "peso_prob_empirica": peso_prob_empirica,
                     "usar_coerencia_btts_individual": usar_coerencia_btts_individual,
                     "limiar_btts_individual": limiar_btts_individual,
@@ -3884,6 +4328,26 @@ with aba_analisar:
                     "jogos_futuros_removidos": jogos_futuros_removidos,
                 },
             }
+
+            historico_analise = registrar_historico_analise(
+                id_analise=id_analise,
+                id_coleta=id_coleta_analise,
+                liga=liga_sel,
+                jogo=jogo_nome,
+                time_casa=time_casa,
+                time_fora=time_fora,
+                data_jogo=data_jogo_catalogo,
+                hora_jogo=hora_jogo_catalogo,
+                casa_apostas=casa_apostas,
+                origem=origem,
+                odds=odds,
+                calc=calc,
+                resultados=resultados,
+                estabilidade=estabilidade,
+                config=st.session_state["ultima_analise_v20"]["config"],
+            )
+            destino_historico = salvar_historico_analises(historico_analise)
+            st.info(f"Probabilidades da análise preservadas no histórico. Destino: {destino_historico}.")
 
     analise = st.session_state.get("ultima_analise_v20")
     if analise:
@@ -3901,7 +4365,7 @@ with aba_analisar:
             <div class="analysis-head">
                 <div class="analysis-kicker">Análise operacional</div>
                 <div class="analysis-title">{html.escape(str(analise['jogo']))}</div>
-                <div class="version-pill">Versão carregada: TEX ESTATÍSTICAS V20.2 — motor responsável, uma entrada por jogo e português integral</div>
+                <div class="version-pill">Versão carregada: TEX ESTATÍSTICAS V20.3.1 — direção algébrica, coerência interna e uma entrada principal</div>
             </div>
             ''',
             unsafe_allow_html=True,
@@ -3917,7 +4381,7 @@ with aba_analisar:
             else:
                 st.warning(f"Amostra baixa: {analise.get('motivo_bloqueio', '')} Política atual: permitir com entrada reduzida para {fmt_pct(fator_amostra_atual, 0)}.")
         else:
-            st.success("Qualidade mínima dos dados aprovada. Isso não comprova calibração preditiva; as demais travas continuam obrigatórias.")
+            st.success("Qualidade mínima dos dados aprovada. A entrada será decidida pela direção algébrica, coerência interna, valor esperado e limite por jogo.")
 
         periodo_base = analise.get("config", {}).get("periodo_base") or resumo_base_dados(df_liga)
         st.markdown(f'<div class="base-info">{html.escape(texto_base_dados(periodo_base, analise.get("config", {}).get("janela", "-")))}</div>', unsafe_allow_html=True)
@@ -3950,7 +4414,7 @@ with aba_analisar:
 
         conf = classificar_confianca_estimativa(calc, resultados)
         render_botao_confianca(conf)
-        st.info("Qualidade dos dados descreve o tamanho e a consistência do recorte. Calibração preditiva: ainda não comprovada.")
+        st.info("Qualidade dos dados descreve o tamanho e a consistência do recorte. A validação histórica continua sendo acompanhada, mas não paralisa o motor.")
 
         if calc.get("regressao_media_ativa"):
             st.info(f"Ajuste à média da liga ativo: {fmt_pct(float(calc.get('peso_media_liga', 0.0)), 0)} da média da liga e {fmt_pct(1.0 - float(calc.get('peso_media_liga', 0.0)), 0)} do recorte recente.")
@@ -4158,12 +4622,12 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V20.2 Motor Responsável | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Lista de conferência: {'CONCLUÍDA' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
+                            observacao=(obs + f" | V20.3.1 Direção Algébrica | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Lista de conferência: {'CONCLUÍDA' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
                             etiquetas=str(r.get("Etiquetas", "")),
                             prob_mercado_bruta=float(r.get("Prob. mercado bruta")) if pd.notna(r.get("Prob. mercado bruta")) else None,
                             prob_mercado_ajustada=float(r.get("Prob. mercado ajustada")) if pd.notna(r.get("Prob. mercado ajustada")) else None,
                             margem_mercado=float(r.get("Margem do mercado")) if pd.notna(r.get("Margem do mercado")) else None,
-                            fonte_probabilidade="Motor V20.2: Poisson para resultado final; combinação de Poisson e frequência empírica para gols e ambas marcam; corte temporal anterior ao jogo",
+                            fonte_probabilidade="Motor V20.3.1: direção algébrica para gols e ambas marcam; Poisson e frequência empírica como confirmação; corte temporal anterior ao jogo",
                             versao_modelo=VERSAO_MODELO,
                         )
                     destino = salvar_auditoria(auditoria)
@@ -4197,7 +4661,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura responsável: aderência ruim significa que a Poisson simples descreve pior a distribuição de gols da liga; nessas condições, o resultado deve permanecer em estudo e não servir isoladamente para entrada financeira. "
-        "Na V20.2, aderência ruim ou sobredispersão reduzem a confiança dos mercados derivados de gols; conflito entre métodos e mudança de lado nas janelas impedem a entrada."
+        "Na V20.3.1, a soma projetada e o placar algébrico escolhem a direção. Poisson, frequência real, estabilidade e sobredispersão confirmam ou reduzem a entrada; divergência contra o mercado não bloqueia sozinha."
     )
 
 
@@ -4237,15 +4701,41 @@ with aba_catalogo:
     st.subheader("Catálogo de cotações")
     cfg = obter_config_google()
     if cfg.get("configurado"):
-        st.success(f"Planilhas Google ativas. Aba: {cfg['worksheet_catalogo']}.")
+        st.success(f"Planilhas Google ativas. Aba: {cfg['worksheet_catalogo']}. Gravação não destrutiva e valores numéricos em formato bruto.")
     else:
-        st.warning("Planilhas Google não configuradas. A cópia local pode ser perdida quando o serviço de hospedagem reiniciar.")
+        st.warning("Planilhas Google não configuradas. Os dados ficam em cópia local e backups, mas a hospedagem pode apagar arquivos locais ao reiniciar.")
+
+    with st.expander("Recuperação, importação e conferência do catálogo", expanded=False):
+        st.info("Nenhuma operação desta seção apaga linhas. Registros são identificados por ID da coleta + mercado + seleção.")
+        c_rec1, c_rec2 = st.columns(2)
+        with c_rec1:
+            if st.button("RESTAURAR AS 49 COTAÇÕES RECUPERADAS", key="restaurar_49_catalogo"):
+                destino = restaurar_catalogo_recuperado()
+                st.success(f"Recuperação concluída sem apagar linhas. Destino: {destino}.")
+        with c_rec2:
+            st.metric("Registros do pacote recuperado", len(CATALOGO_RECUPERACAO_2026))
+
+        arquivo_importacao = st.file_uploader(
+            "Importar outro catálogo CSV ou TXT",
+            type=["csv", "txt", "tsv"],
+            key="importar_catalogo_seguro",
+            help="A importação é incremental e deduplicada. Nenhuma aba é limpa.",
+        )
+        if arquivo_importacao is not None:
+            try:
+                importado = importar_catalogo_arquivo(arquivo_importacao.getvalue(), arquivo_importacao.name)
+                st.dataframe(importado.head(20), use_container_width=True, hide_index=True)
+                if st.button("IMPORTAR SEM APAGAR", key="confirmar_importacao_catalogo"):
+                    destino = salvar_catalogo(importado)
+                    st.success(f"{len(importado)} linha(s) processada(s). Destino: {destino}.")
+            except Exception as exc:
+                st.error(f"Não consegui ler o arquivo de importação: {exc}")
 
     force_sync_catalogo = False
     if cfg.get("configurado"):
         force_sync_catalogo = st.button("🔄 Sincronizar catálogo do Google", key="sync_catalogo_tab")
         if _google_cooldown_ativo():
-            st.info(f"Planilhas Google em espera por {_segundos_cooldown_google()}s; mostrando cópia temporária e cópia local.")
+            st.info(f"Planilhas Google em espera por {_segundos_cooldown_google()}s; cópia local e backups continuam preservados.")
 
     catalogo = carregar_catalogo(force_google=force_sync_catalogo)
     if catalogo.empty:
@@ -4274,18 +4764,79 @@ with aba_catalogo:
         csv = filtrado.to_csv(index=False).encode("utf-8-sig")
         d1, d2 = st.columns(2)
         with d1:
-            st.download_button("BAIXAR CATÁLOGO EM CSV", data=csv, file_name="catalogo_cotacoes_tex_v20_2.csv", mime="text/csv")
+            st.download_button("BAIXAR CATÁLOGO EM CSV", data=csv, file_name="catalogo_cotacoes_tex_v20_3_1.csv", mime="text/csv")
         with d2:
             excel = dataframe_para_excel_bytes(filtrado, "Catálogo de cotações")
             if excel is not None:
                 st.download_button(
                     "BAIXAR CATÁLOGO EXCEL",
                     data=excel,
-                    file_name="catalogo_cotacoes_tex_v20_2.xlsx",
+                    file_name="catalogo_cotacoes_tex_v20_3_1.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             else:
                 st.caption("A exportação em Excel não está disponível neste ambiente; o arquivo CSV continua completo.")
+
+
+with aba_historico:
+    st.subheader("Histórico de análises do motor")
+    cfg_hist = obter_config_google()
+    if cfg_hist.get("configurado"):
+        st.success(f"Planilhas Google ativas. Aba: {cfg_hist['worksheet_historico']}. Cada análise salva cotações, probabilidades e projeções.")
+    else:
+        st.warning("Planilhas Google não configuradas. O histórico fica apenas nas cópias locais e backups.")
+
+    forcar_hist = False
+    if cfg_hist.get("configurado"):
+        forcar_hist = st.button("🔄 Sincronizar histórico do Google", key="sync_historico_tab")
+    historico_modelo = carregar_historico_analises(force_google=forcar_hist)
+    if historico_modelo.empty:
+        st.info("Ainda não há análises registradas nesta versão.")
+    else:
+        h1, h2, h3 = st.columns(3)
+        with h1:
+            filtro_hist_liga = st.multiselect(
+                "Liga do histórico",
+                sorted(historico_modelo["Liga"].dropna().astype(str).unique().tolist()),
+                key="filtro_hist_liga",
+            )
+        with h2:
+            filtro_hist_mercado = st.multiselect(
+                "Mercado do histórico",
+                sorted(historico_modelo["Mercado"].dropna().astype(str).unique().tolist()),
+                key="filtro_hist_mercado",
+            )
+        with h3:
+            busca_hist = st.text_input("Buscar jogo no histórico", value="", key="busca_hist")
+        hist_filtrado = historico_modelo.copy()
+        if filtro_hist_liga:
+            hist_filtrado = hist_filtrado[hist_filtrado["Liga"].isin(filtro_hist_liga)]
+        if filtro_hist_mercado:
+            hist_filtrado = hist_filtrado[hist_filtrado["Mercado"].isin(filtro_hist_mercado)]
+        if busca_hist.strip():
+            termo = busca_hist.strip().lower()
+            hist_filtrado = hist_filtrado[
+                hist_filtrado["Jogo"].astype(str).str.lower().str.contains(termo, na=False)
+            ]
+        st.dataframe(hist_filtrado.tail(1000), use_container_width=True, hide_index=True)
+        csv_hist = hist_filtrado.to_csv(index=False).encode("utf-8-sig")
+        h_d1, h_d2 = st.columns(2)
+        with h_d1:
+            st.download_button(
+                "BAIXAR HISTÓRICO EM CSV",
+                data=csv_hist,
+                file_name="historico_analises_tex_v20_3_1.csv",
+                mime="text/csv",
+            )
+        with h_d2:
+            excel_hist = dataframe_para_excel_bytes(hist_filtrado, "Histórico de análises")
+            if excel_hist is not None:
+                st.download_button(
+                    "BAIXAR HISTÓRICO EM EXCEL",
+                    data=excel_hist,
+                    file_name="historico_analises_tex_v20_3_1.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 
 with aba_auditoria:
     st.subheader("Auditoria")
@@ -4426,14 +4977,14 @@ with aba_auditoria:
         csv = auditoria.to_csv(index=False).encode("utf-8-sig")
         d1, d2 = st.columns(2)
         with d1:
-            st.download_button("BAIXAR AUDITORIA EM CSV", data=csv, file_name="auditoria_tex_v20_2.csv", mime="text/csv")
+            st.download_button("BAIXAR AUDITORIA EM CSV", data=csv, file_name="auditoria_tex_v20_3_1.csv", mime="text/csv")
         with d2:
             excel = dataframe_para_excel_bytes(auditoria, "Auditoria")
             if excel is not None:
                 st.download_button(
                     "BAIXAR AUDITORIA EXCEL",
                     data=excel,
-                    file_name="auditoria_tex_v20_2.xlsx",
+                    file_name="auditoria_tex_v20_3_1.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             else:
