@@ -19,7 +19,7 @@ import streamlit as st
 from scipy.stats import poisson, chi2
 
 # ============================================================
-# TEX ESTATÍSTICAS V20.3.1 — DIREÇÃO ALGÉBRICA E COERÊNCIA INTERNA
+# TEX ESTATÍSTICAS V20.3.3 — DIREÇÃO ALGÉBRICA E COERÊNCIA INTERNA
 # ============================================================
 # Objetivo desta versão:
 # - manter o cálculo auditável de forças e Poisson;
@@ -30,7 +30,7 @@ from scipy.stats import poisson, chi2
 # - tratar estabilidade, odds incoerentes e lados opostos como travas reais, não meros avisos.
 # ============================================================
 
-st.set_page_config(page_title="TEX ESTATÍSTICAS — V20.3.1 Direção Algébrica", layout="wide")
+st.set_page_config(page_title="TEX ESTATÍSTICAS — V20.3.3 Direção Algébrica", layout="wide")
 
 # ============================================================
 # VISUAL
@@ -303,7 +303,7 @@ MERCADOS_NUCLEO = [
     "Ambos marcam - Não",
 ]
 
-VERSAO_MODELO = "TEX ESTATÍSTICAS V20.3.1"
+VERSAO_MODELO = "TEX ESTATÍSTICAS V20.3.3"
 
 COLUNAS_HISTORICO_ANALISES = [
     "ID Análise", "ID Coleta", "Registrado em", "Liga", "Jogo", "Mandante", "Visitante",
@@ -336,7 +336,7 @@ COLUNAS_CATALOGO = [
 
 ARQUIVO_AUDITORIA = "logs/auditoria_tex_v19_1.csv"  # mantém histórico da V19
 ARQUIVO_CATALOGO = "logs/catalogo_odds_tex_v19_1.csv"  # mantém histórico da V19
-ARQUIVO_HISTORICO_ANALISES = "logs/historico_analises_tex_v20_3_1.csv"
+ARQUIVO_HISTORICO_ANALISES = "logs/historico_analises_tex_v20_3_3.csv"
 DIRETORIO_BACKUPS = "logs/backups"
 GOOGLE_SHEETS_WORKSHEET_CATALOGO = "catalogo_odds"
 GOOGLE_SHEETS_WORKSHEET_AUDITORIA = "auditoria_entradas"
@@ -1490,7 +1490,7 @@ def gerar_resumo_compartilhavel(
     cfg = analise.get("config", {}) or {}
     periodo = cfg.get("periodo_base", {}) or {}
     linhas: List[str] = []
-    linhas.append("RESUMO — TEX ESTATÍSTICAS V20.3.1")
+    linhas.append("RESUMO — TEX ESTATÍSTICAS V20.3.3")
     linhas.append(f"Jogo: {analise.get('jogo', '-')}")
     linhas.append(f"Liga: {analise.get('liga', '-')} | Casa de apostas: {analise.get('casa_apostas', '-')} | Origem das cotações: {analise.get('origem', '-')}")
     linhas.append(
@@ -3299,8 +3299,18 @@ def _salvar_backup_versionado(df: pd.DataFrame, nome_base: str, colunas: List[st
     base.to_csv(caminho_backup, index=False, encoding="utf-8-sig")
 
 
-def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
-    """Obtém/cria a aba e escreve somente o cabeçalho. Nunca limpa os dados."""
+def obter_aba(
+    nome: str,
+    colunas: List[str],
+    linhas: int = 1000,
+    criar_se_ausente: bool = False,
+):
+    """Obtém a aba sem escrever em abas existentes.
+
+    Leitura nunca gera escrita. O cabeçalho só é criado quando a própria aba é
+    criada pelo aplicativo. Isso evita gastar uma requisição de escrita em cada
+    rerun do Streamlit.
+    """
     if _google_cooldown_ativo():
         return None
 
@@ -3315,24 +3325,28 @@ def obter_aba(nome: str, colunas: List[str], linhas: int = 1000):
         except Exception:
             WorksheetNotFound = Exception
 
+        criada = False
         try:
             aba = planilha.worksheet(nome_limpo)
         except WorksheetNotFound:
+            if not criar_se_ausente:
+                return None
             aba = planilha.add_worksheet(
                 title=nome_limpo,
                 rows=max(linhas, 1000),
                 cols=max(20, len(colunas) + 4),
             )
+            criada = True
 
-        # Cabeçalho com RAW: não deixa a localidade brasileira converter números/textos.
-        ultima_coluna = _numero_coluna_excel(len(colunas))
-        aba.update(f"A1:{ultima_coluna}1", [colunas], value_input_option="RAW")
+        if criada:
+            ultima_coluna = _numero_coluna_excel(len(colunas))
+            aba.update(f"A1:{ultima_coluna}1", [colunas], value_input_option="RAW")
         return aba
     except Exception as exc:
         if _erro_quota_google(exc):
             _ativar_cooldown_google(exc)
             st.warning(
-                f"Planilhas Google atingiram o limite de consultas. A cópia local foi preservada; "
+                f"Planilhas Google atingiram o limite de requisições. A cópia local foi preservada; "
                 f"nova tentativa será possível em {_segundos_cooldown_google()}s."
             )
         else:
@@ -3363,7 +3377,7 @@ def carregar_google(nome: str, colunas: List[str], force: bool = False) -> Optio
     if _google_cooldown_ativo():
         return cache
 
-    aba = obter_aba(nome, colunas)
+    aba = obter_aba(nome, colunas, criar_se_ausente=False)
     if aba is None:
         return cache
 
@@ -3378,22 +3392,100 @@ def carregar_google(nome: str, colunas: List[str], force: bool = False) -> Optio
         return cache
 
 
-def salvar_google_sem_apagar(
+def salvar_catalogo_google_append_unico(
     nome: str,
     df: pd.DataFrame,
     colunas: List[str],
     colunas_chave: List[str],
 ) -> Tuple[bool, str, pd.DataFrame]:
-    """Faz atualização/inclusão por chave. Não usa clear(), não remove linhas e grava números em RAW."""
+    """Grava o catálogo com no máximo UMA escrita remota por clique.
+
+    A aba precisa existir. O aplicativo lê as chaves atuais e, se houver linhas
+    novas, envia todas de uma vez por append_rows. Não há clear, update de linha,
+    batch_update, sobrescrita nem regravação do catálogo completo.
+    """
     entrada = normalizar_colunas(df, colunas)
     if entrada.empty:
         return True, "nenhum registro novo", entrada
 
     if _google_cooldown_ativo():
         _salvar_cache_google(nome, entrada, colunas)
-        return False, f"Google temporariamente indisponível; cópia local preservada", entrada
+        return False, "Google temporariamente indisponível; cópia local preservada", entrada
 
-    aba = obter_aba(nome, colunas)
+    # Para garantir uma única escrita, esta rotina não cria a aba nem regrava cabeçalho.
+    aba = obter_aba(nome, colunas, criar_se_ausente=False)
+    if aba is None:
+        return False, (
+            f"a aba '{nome}' não foi encontrada; crie-a uma única vez com o cabeçalho "
+            "antes de salvar cotações"
+        ), entrada
+
+    try:
+        remoto = _ler_aba_google_direto(aba, colunas)
+        chaves_remotas = set()
+        if not remoto.empty:
+            chaves_remotas = set(
+                remoto.apply(lambda r: _chave_linha(r, colunas_chave), axis=1)
+            )
+
+        novas: List[List[object]] = []
+        vistos = set()
+        for _, row in entrada.iterrows():
+            chave = _chave_linha(row, colunas_chave)
+            if chave in vistos or chave in chaves_remotas:
+                continue
+            vistos.add(chave)
+            novas.append(_linha_google(row, colunas))
+
+        if not novas:
+            consolidado = _fundir_sem_apagar([remoto], colunas, colunas_chave)
+            _salvar_cache_google(nome, consolidado, colunas)
+            return True, "0 incluído(s); o lote já existia; 0 apagado(s)", consolidado
+
+        # ÚNICA escrita remota deste clique: todas as linhas seguem no mesmo lote.
+        try:
+            aba.append_rows(novas, value_input_option="RAW", insert_data_option="INSERT_ROWS")
+        except TypeError:
+            aba.append_rows(novas, value_input_option="RAW")
+
+        # Consolidação local sem uma segunda escrita e sem alterar o histórico remoto.
+        novas_df = normalizar_colunas(pd.DataFrame(novas, columns=colunas), colunas)
+        consolidado = _fundir_sem_apagar([remoto, novas_df], colunas, colunas_chave)
+        _salvar_cache_google(nome, consolidado, colunas)
+        return True, f"{len(novas)} incluído(s) em 1 gravação; 0 alterado(s); 0 apagado(s)", consolidado
+    except Exception as exc:
+        _salvar_cache_google(nome, entrada, colunas)
+        if _erro_quota_google(exc):
+            _ativar_cooldown_google(exc)
+        st.warning(f"Não consegui salvar o catálogo. A cópia local foi mantida. Detalhe: {exc}")
+        return False, f"falha no Google; cópia local preservada: {exc}", entrada
+
+
+def salvar_google_sem_apagar(
+    nome: str,
+    df: pd.DataFrame,
+    colunas: List[str],
+    colunas_chave: List[str],
+    modo: str = "atualizar",
+) -> Tuple[bool, str, pd.DataFrame]:
+    """Sincroniza sem limpar a aba e com no máximo duas escritas por operação.
+
+    modo="acrescentar": histórico imutável. Chaves já existentes nunca são
+    sobrescritas; somente registros ausentes são acrescentados em um único lote.
+
+    modo="atualizar": usado apenas onde a mesma linha precisa evoluir, como o
+    resultado de uma entrada da auditoria. Todas as linhas alteradas são enviadas
+    por uma única requisição em lote.
+    """
+    entrada = normalizar_colunas(df, colunas)
+    if entrada.empty:
+        return True, "nenhum registro novo", entrada
+
+    if _google_cooldown_ativo():
+        _salvar_cache_google(nome, entrada, colunas)
+        return False, "Google temporariamente indisponível; cópia local preservada", entrada
+
+    aba = obter_aba(nome, colunas, criar_se_ausente=True)
     if aba is None:
         _salvar_cache_google(nome, entrada, colunas)
         return False, "Google indisponível; cópia local preservada", entrada
@@ -3403,13 +3495,14 @@ def salvar_google_sem_apagar(
         mapa_remoto: Dict[str, Tuple[int, List[object]]] = {}
         for pos, (_, row) in enumerate(remoto.iterrows(), start=2):
             chave = _chave_linha(row, colunas_chave)
-            # Se já houver duplicata remota, preserva a primeira e jamais exclui a outra.
             if chave not in mapa_remoto:
                 mapa_remoto[chave] = (pos, _linha_google(row, colunas))
 
         novas: List[List[object]] = []
         atualizacoes: List[Tuple[int, List[object]]] = []
+        conflitos_preservados = 0
         vistos_entrada = set()
+        somente_acrescentar = str(modo).strip().lower() == "acrescentar"
 
         for _, row in entrada.iterrows():
             chave = _chave_linha(row, colunas_chave)
@@ -3419,18 +3512,29 @@ def salvar_google_sem_apagar(
             valores = _linha_google(row, colunas)
             if chave in mapa_remoto:
                 numero_linha, antigos = mapa_remoto[chave]
-                if [str(v) for v in antigos] != [str(v) for v in valores]:
-                    atualizacoes.append((numero_linha, valores))
+                diferentes = [str(v) for v in antigos] != [str(v) for v in valores]
+                if diferentes:
+                    if somente_acrescentar:
+                        # Catálogo e histórico são imutáveis: nunca reescreva o passado.
+                        conflitos_preservados += 1
+                    else:
+                        atualizacoes.append((numero_linha, valores))
             else:
                 novas.append(valores)
 
         ultima_coluna = _numero_coluna_excel(len(colunas))
-        for numero_linha, valores in atualizacoes:
-            aba.update(
-                f"A{numero_linha}:{ultima_coluna}{numero_linha}",
-                [valores],
-                value_input_option="RAW",
-            )
+        if atualizacoes:
+            pacote = [
+                {
+                    "range": f"A{numero_linha}:{ultima_coluna}{numero_linha}",
+                    "values": [valores],
+                }
+                for numero_linha, valores in atualizacoes
+            ]
+            try:
+                aba.batch_update(pacote, value_input_option="RAW")
+            except TypeError:
+                aba.batch_update(pacote, raw=True)
 
         if novas:
             try:
@@ -3438,7 +3542,7 @@ def salvar_google_sem_apagar(
             except TypeError:
                 aba.append_rows(novas, value_input_option="RAW")
 
-        # Confirma diretamente na planilha após a escrita.
+        # Uma única leitura de confirmação; nenhuma nova escrita é provocada.
         confirmado = _ler_aba_google_direto(aba, colunas)
         consolidado = _fundir_sem_apagar([confirmado], colunas, colunas_chave)
         _salvar_cache_google(nome, consolidado, colunas)
@@ -3449,7 +3553,10 @@ def salvar_google_sem_apagar(
         if faltantes:
             raise RuntimeError(f"Falha de verificação: {len(faltantes)} registro(s) não apareceram após a sincronização.")
 
-        detalhe = f"{len(novas)} incluído(s), {len(atualizacoes)} atualizado(s), nenhum apagado; verificação concluída"
+        detalhe = (
+            f"{len(novas)} incluído(s), {len(atualizacoes)} atualizado(s), "
+            f"{conflitos_preservados} conflito(s) histórico(s) preservado(s), nenhum apagado"
+        )
         return True, detalhe, consolidado
     except Exception as exc:
         _salvar_cache_google(nome, entrada, colunas)
@@ -3489,6 +3596,7 @@ def salvar_auditoria(df: pd.DataFrame) -> str:
             consolidado_local,
             COLUNAS_AUDITORIA,
             ["ID"],
+            modo="atualizar",
         )
         if ok:
             consolidado_google = enriquecer_auditoria_probabilidades(consolidado_google)
@@ -3513,8 +3621,6 @@ def carregar_auditoria(force_google: bool = False) -> pd.DataFrame:
             ["ID"],
         )
         consolidado = enriquecer_auditoria_probabilidades(consolidado)
-        if force_google and not consolidado.empty:
-            salvar_auditoria(consolidado)
         return consolidado
     return enriquecer_auditoria_probabilidades(local)
 
@@ -3611,30 +3717,89 @@ def carregar_catalogo_local() -> pd.DataFrame:
 
 
 def salvar_catalogo(df: pd.DataFrame) -> str:
+
+    """Salva somente o lote recebido e nunca regrava o catálogo inteiro.
+
+
+    Contrato operacional:
+
+    - esta função só deve ser chamada por uma ação explícita do usuário;
+
+    - no Google, executa no máximo UMA escrita por clique;
+
+    - a escrita é somente de acréscimo (append);
+
+    - nenhuma linha histórica é atualizada, substituída ou apagada;
+
+    - a leitura remota serve apenas para evitar duplicação da mesma chave.
+
+    """
+
     garantir_logs()
+
     entrada = enriquecer_catalogo_probabilidades(df)
+
+    if entrada.empty:
+
+        return "nenhuma cotação válida"
+
+
+    # A cópia local recebe o novo lote e mantém tudo o que já existia.
+
     local = carregar_catalogo_local()
+
     consolidado_local = _fundir_sem_apagar(
+
         [local, entrada],
+
         COLUNAS_CATALOGO,
+
         ["ID Coleta", "Mercado", "Seleção"],
+
     )
+
     consolidado_local = enriquecer_catalogo_probabilidades(consolidado_local)
+
     _salvar_backup_versionado(consolidado_local, "catalogo_odds_tex_v19_1", COLUNAS_CATALOGO)
 
+
     if google_configurado():
+
         cfg = obter_config_google()
-        ok, detalhe, consolidado_google = salvar_google_sem_apagar(
+
+        # Envia SOMENTE o lote do clique atual. A função abaixo lê as chaves
+
+        # existentes e faz um único append_rows com as linhas realmente novas.
+
+        ok, detalhe, consolidado_google = salvar_catalogo_google_append_unico(
             cfg["worksheet_catalogo"],
-            consolidado_local,
+            entrada,
             COLUNAS_CATALOGO,
             ["ID Coleta", "Mercado", "Seleção"],
         )
+
         if ok:
+
             consolidado_google = enriquecer_catalogo_probabilidades(consolidado_google)
-            _salvar_backup_versionado(consolidado_google, "catalogo_odds_tex_v19_1", COLUNAS_CATALOGO)
+
+            # O backup local é atualizado sem provocar nova escrita no Google.
+
+            backup_consolidado = _fundir_sem_apagar(
+
+                [consolidado_local, consolidado_google],
+
+                COLUNAS_CATALOGO,
+
+                ["ID Coleta", "Mercado", "Seleção"],
+
+            )
+
+            _salvar_backup_versionado(backup_consolidado, "catalogo_odds_tex_v19_1", COLUNAS_CATALOGO)
+
             return f"Planilhas Google + cópia local ({detalhe})"
+
         return f"cópia local; sincronização pendente ({detalhe})"
+
     return "cópia local"
 
 
@@ -3653,8 +3818,6 @@ def carregar_catalogo(force_google: bool = False) -> pd.DataFrame:
             ["ID Coleta", "Mercado", "Seleção"],
         )
         consolidado = enriquecer_catalogo_probabilidades(consolidado)
-        if force_google and not consolidado.empty:
-            salvar_catalogo(consolidado)
         return consolidado
     return enriquecer_catalogo_probabilidades(local)
 
@@ -3664,8 +3827,23 @@ def catalogo_recuperacao_dataframe() -> pd.DataFrame:
     return enriquecer_catalogo_probabilidades(base)
 
 
+def preparar_catalogo_recuperado_local() -> str:
+    """Garante as 49 cotações na cópia local sem fazer qualquer chamada ao Google."""
+    recuperado = catalogo_recuperacao_dataframe()
+    local = carregar_catalogo_local()
+    consolidado = _fundir_sem_apagar(
+        [local, recuperado],
+        COLUNAS_CATALOGO,
+        ["ID Coleta", "Mercado", "Seleção"],
+    )
+    consolidado = enriquecer_catalogo_probabilidades(consolidado)
+    _salvar_backup_versionado(consolidado, "catalogo_odds_tex_v19_1", COLUNAS_CATALOGO)
+    return f"cópia local com {len(consolidado)} registro(s)"
+
+
 def restaurar_catalogo_recuperado() -> str:
-    """Insere as 49 cotações recuperadas sem duplicar e sem apagar qualquer linha."""
+    """Envia ao Google somente as cotações ausentes, em um único lote e sem sobrescrever."""
+    preparar_catalogo_recuperado_local()
     return salvar_catalogo(catalogo_recuperacao_dataframe())
 
 
@@ -3737,7 +3915,7 @@ def salvar_historico_analises(df: pd.DataFrame) -> str:
     )
     _salvar_backup_versionado(
         consolidado_local,
-        "historico_analises_tex_v20_3_1",
+        "historico_analises_tex_v20_3_3",
         COLUNAS_HISTORICO_ANALISES,
     )
 
@@ -3748,11 +3926,12 @@ def salvar_historico_analises(df: pd.DataFrame) -> str:
             consolidado_local,
             COLUNAS_HISTORICO_ANALISES,
             ["ID Análise", "Mercado"],
+            modo="acrescentar",
         )
         if ok:
             _salvar_backup_versionado(
                 consolidado_google,
-                "historico_analises_tex_v20_3_1",
+                "historico_analises_tex_v20_3_3",
                 COLUNAS_HISTORICO_ANALISES,
             )
             return f"Planilhas Google + cópia local ({detalhe})"
@@ -3774,8 +3953,6 @@ def carregar_historico_analises(force_google: bool = False) -> pd.DataFrame:
             COLUNAS_HISTORICO_ANALISES,
             ["ID Análise", "Mercado"],
         )
-        if force_google and not consolidado.empty:
-            salvar_historico_analises(consolidado)
         return consolidado
     return local
 
@@ -3892,7 +4069,7 @@ def importar_catalogo_arquivo(conteudo: bytes, nome_arquivo: str) -> pd.DataFram
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">TEX ESTATÍSTICAS V20.3.1</div>
+        <div class="hero-title">TEX ESTATÍSTICAS V20.3.3</div>
         <div class="hero-sub">
             Painel operacional limpo: planilha pura, Poisson auditável, regressão leve à média, teste de estabilidade, cotação justa e gestão de risco.
             A tela principal mostra só o que importa; o detalhe técnico fica recolhido para conferência.
@@ -3916,16 +4093,19 @@ with st.sidebar:
     cfg_sidebar = obter_config_google()
     force_sync_sidebar = False
     if cfg_sidebar.get("configurado"):
-        st.caption("Persistência não destrutiva ativa: novos registros são incluídos/atualizados por chave; nenhuma aba é limpa.")
-        if not st.session_state.get("_catalogo_recuperado_49_sincronizado", False):
-            destino_recuperacao = restaurar_catalogo_recuperado()
-            st.session_state["_catalogo_recuperado_49_sincronizado"] = True
-            st.success(f"Catálogo histórico recuperado e conferido. Destino: {destino_recuperacao}.")
-        force_sync_sidebar = st.button("🔄 Sincronizar auditoria agora", key="sync_auditoria_sidebar")
+        st.caption("Catálogo somente de acréscimo: nenhuma gravação ocorre ao analisar. Um único lote é enviado apenas ao clicar em SALVAR COTAÇÕES; nenhuma linha antiga é alterada ou apagada.")
+        if not st.session_state.get("_catalogo_recuperado_49_local", False):
+            destino_recuperacao = preparar_catalogo_recuperado_local()
+            st.session_state["_catalogo_recuperado_49_local"] = True
+            st.info(
+                f"Catálogo recuperado preservado em {destino_recuperacao}. "
+                "O Google só será alterado quando você usar o botão de restauração na aba Catálogo."
+            )
+        force_sync_sidebar = st.button("🔄 Atualizar leitura da auditoria", key="sync_auditoria_sidebar")
         if _google_cooldown_ativo():
             st.warning(f"Planilhas Google em espera por {_segundos_cooldown_google()}s. A cópia local e os backups permanecem preservados.")
     elif not st.session_state.get("_catalogo_recuperado_49_local", False):
-        restaurar_catalogo_recuperado()
+        preparar_catalogo_recuperado_local()
         st.session_state["_catalogo_recuperado_49_local"] = True
 
     auditoria_sidebar = carregar_auditoria(force_google=force_sync_sidebar)
@@ -4108,6 +4288,7 @@ with aba_analisar:
     data_jogo_catalogo = date.today()
     hora_jogo_catalogo = ""
     botao_analisar = False
+    botao_salvar_cotacoes = False
 
     if modo == "Manual":
         st.markdown("### Jogo")
@@ -4130,25 +4311,12 @@ with aba_analisar:
         else:
             jogo_nome = f"{time_casa} x {time_fora}"
             odds = coletar_odds_manuais("manual")
-            st.caption("Ao analisar, todas as cotações válidas serão gravadas automaticamente no catálogo e nunca substituirão o histórico.")
+            st.caption("ANALISAR JOGO não grava nada. O catálogo só recebe dados quando você clicar em SALVAR COTAÇÕES.")
             c1, c2 = st.columns(2)
             with c1:
-                botao_analisar = st.button("ANALISAR E SALVAR COTAÇÕES", type="primary")
+                botao_analisar = st.button("ANALISAR JOGO", type="primary")
             with c2:
-                if st.button("SALVAR COTAÇÕES SEM ANALISAR"):
-                    if not odds:
-                        st.error("Nenhuma cotação válida para salvar.")
-                    else:
-                        id_snapshot = uuid.uuid4().hex[:8]
-                        snapshot = registrar_odds_catalogo(
-                            pd.DataFrame(columns=COLUNAS_CATALOGO),
-                            liga_sel, jogo_nome, time_casa, time_fora, casa_apostas, odds,
-                            banca_usada, "Planilha Pura", data_jogo_catalogo, hora_jogo_catalogo,
-                            "Manual", "Cotações salvas sem obrigação de aposta",
-                            id_coleta=id_snapshot,
-                        )
-                        destino = salvar_catalogo(snapshot)
-                        st.success(f"Cotações preservadas. Destino: {destino}.")
+                botao_salvar_cotacoes = st.button("SALVAR COTAÇÕES")
 
     else:
         if not chave_api:
@@ -4206,7 +4374,33 @@ with aba_analisar:
                             else:
                                 st.info(aviso_api)
                         st.info(f"Mercados com cotação encontrados: {len(odds)}")
-                        botao_analisar = st.button("ANALISAR E SALVAR COTAÇÕES", type="primary")
+                        st.caption("ANALISAR JOGO não grava nada. O catálogo só recebe dados quando você clicar em SALVAR COTAÇÕES.")
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            botao_analisar = st.button("ANALISAR JOGO", type="primary", key="api_analisar")
+                        with c2:
+                            botao_salvar_cotacoes = st.button("SALVAR COTAÇÕES", key="api_salvar_cotacoes")
+
+    if botao_salvar_cotacoes:
+        if not odds:
+            st.error("Nenhuma cotação válida para salvar.")
+        elif time_casa == time_fora:
+            st.error("Mandante e visitante não podem ser iguais.")
+        else:
+            id_snapshot = uuid.uuid4().hex[:8]
+            snapshot = registrar_odds_catalogo(
+                pd.DataFrame(columns=COLUNAS_CATALOGO),
+                liga_sel, jogo_nome, time_casa, time_fora, casa_apostas, odds,
+                banca_usada, "Planilha Pura", data_jogo_catalogo, hora_jogo_catalogo,
+                origem, "Lote salvo por clique explícito; histórico somente de acréscimo",
+                id_coleta=id_snapshot,
+            )
+            destino = salvar_catalogo(snapshot)
+            st.session_state["ultima_coleta_catalogo_salva"] = id_snapshot
+            st.success(
+                f"Uma coleta com {len(snapshot)} cotação(ões) foi processada. O Google recebeu no máximo uma gravação em lote. "
+                f"Nenhuma linha antiga foi alterada ou apagada. Destino: {destino}."
+            )
 
     if botao_analisar:
         if not odds and not somente_probabilidades:
@@ -4215,18 +4409,7 @@ with aba_analisar:
             st.error("Mandante e visitante não podem ser iguais.")
         else:
             id_analise = uuid.uuid4().hex
-            id_coleta_analise = uuid.uuid4().hex[:8] if odds else ""
-            destino_catalogo_automatico = "sem cotações"
-            if odds:
-                snapshot_catalogo = registrar_odds_catalogo(
-                    pd.DataFrame(columns=COLUNAS_CATALOGO),
-                    liga_sel, jogo_nome, time_casa, time_fora, casa_apostas, odds,
-                    banca_usada, "Planilha Pura", data_jogo_catalogo, hora_jogo_catalogo,
-                    origem, "Cotações preservadas automaticamente no momento da análise",
-                    id_coleta=id_coleta_analise,
-                )
-                destino_catalogo_automatico = salvar_catalogo(snapshot_catalogo)
-                st.success(f"Cotações preservadas automaticamente. Destino: {destino_catalogo_automatico}.")
+            id_coleta_analise = str(st.session_state.get("ultima_coleta_catalogo_salva", "")) if odds else ""
 
             df_modelo, jogos_futuros_removidos = filtrar_base_antes_do_jogo(df_liga, data_jogo_catalogo)
             if df_modelo.empty:
@@ -4346,8 +4529,8 @@ with aba_analisar:
                 estabilidade=estabilidade,
                 config=st.session_state["ultima_analise_v20"]["config"],
             )
-            destino_historico = salvar_historico_analises(historico_analise)
-            st.info(f"Probabilidades da análise preservadas no histórico. Destino: {destino_historico}.")
+            st.session_state["historico_analise_pendente"] = historico_analise
+            st.info("Análise concluída sem qualquer gravação automática no Google. O histórico da análise ficou apenas na sessão até uma ação explícita de salvamento.")
 
     analise = st.session_state.get("ultima_analise_v20")
     if analise:
@@ -4365,7 +4548,7 @@ with aba_analisar:
             <div class="analysis-head">
                 <div class="analysis-kicker">Análise operacional</div>
                 <div class="analysis-title">{html.escape(str(analise['jogo']))}</div>
-                <div class="version-pill">Versão carregada: TEX ESTATÍSTICAS V20.3.1 — direção algébrica, coerência interna e uma entrada principal</div>
+                <div class="version-pill">Versão carregada: TEX ESTATÍSTICAS V20.3.3 — direção algébrica, coerência interna e uma entrada principal</div>
             </div>
             ''',
             unsafe_allow_html=True,
@@ -4622,12 +4805,12 @@ with aba_analisar:
                             entrada_rs=float(r["Entrada R$"]),
                             banca_antes=float(analise["banca"]),
                             origem=str(analise["origem"]),
-                            observacao=(obs + f" | V20.3.1 Direção Algébrica | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Lista de conferência: {'CONCLUÍDA' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
+                            observacao=(obs + f" | V20.3.3 Direção Algébrica | Janela {analise['config']['janela']} | Cálculo proporcional {analise['config']['fracao_kelly']} | Amostra: {analise['config'].get('politica_amostra_baixa', '-')} | Lista de conferência: {'CONCLUÍDA' if st.session_state.get(f'checklist_operacional_ok_{analise["id"]}', False) else 'PENDENTE'}").strip(),
                             etiquetas=str(r.get("Etiquetas", "")),
                             prob_mercado_bruta=float(r.get("Prob. mercado bruta")) if pd.notna(r.get("Prob. mercado bruta")) else None,
                             prob_mercado_ajustada=float(r.get("Prob. mercado ajustada")) if pd.notna(r.get("Prob. mercado ajustada")) else None,
                             margem_mercado=float(r.get("Margem do mercado")) if pd.notna(r.get("Margem do mercado")) else None,
-                            fonte_probabilidade="Motor V20.3.1: direção algébrica para gols e ambas marcam; Poisson e frequência empírica como confirmação; corte temporal anterior ao jogo",
+                            fonte_probabilidade="Motor V20.3.3: direção algébrica para gols e ambas marcam; Poisson e frequência empírica como confirmação; corte temporal anterior ao jogo",
                             versao_modelo=VERSAO_MODELO,
                         )
                     destino = salvar_auditoria(auditoria)
@@ -4661,7 +4844,7 @@ with aba_diagnostico:
 
     st.info(
         "Leitura responsável: aderência ruim significa que a Poisson simples descreve pior a distribuição de gols da liga; nessas condições, o resultado deve permanecer em estudo e não servir isoladamente para entrada financeira. "
-        "Na V20.3.1, a soma projetada e o placar algébrico escolhem a direção. Poisson, frequência real, estabilidade e sobredispersão confirmam ou reduzem a entrada; divergência contra o mercado não bloqueia sozinha."
+        "Na V20.3.3, a soma projetada e o placar algébrico escolhem a direção. Poisson, frequência real, estabilidade e sobredispersão confirmam ou reduzem a entrada; divergência contra o mercado não bloqueia sozinha."
     )
 
 
@@ -4701,7 +4884,7 @@ with aba_catalogo:
     st.subheader("Catálogo de cotações")
     cfg = obter_config_google()
     if cfg.get("configurado"):
-        st.success(f"Planilhas Google ativas. Aba: {cfg['worksheet_catalogo']}. Gravação não destrutiva e valores numéricos em formato bruto.")
+        st.success(f"Planilhas Google ativas. Aba: {cfg['worksheet_catalogo']}. O catálogo é somente de acréscimo e recebe no máximo uma escrita por clique em SALVAR COTAÇÕES.")
     else:
         st.warning("Planilhas Google não configuradas. Os dados ficam em cópia local e backups, mas a hospedagem pode apagar arquivos locais ao reiniciar.")
 
@@ -4709,7 +4892,7 @@ with aba_catalogo:
         st.info("Nenhuma operação desta seção apaga linhas. Registros são identificados por ID da coleta + mercado + seleção.")
         c_rec1, c_rec2 = st.columns(2)
         with c_rec1:
-            if st.button("RESTAURAR AS 49 COTAÇÕES RECUPERADAS", key="restaurar_49_catalogo"):
+            if st.button("SINCRONIZAR AS 49 COTAÇÕES AUSENTES", key="restaurar_49_catalogo"):
                 destino = restaurar_catalogo_recuperado()
                 st.success(f"Recuperação concluída sem apagar linhas. Destino: {destino}.")
         with c_rec2:
@@ -4764,14 +4947,14 @@ with aba_catalogo:
         csv = filtrado.to_csv(index=False).encode("utf-8-sig")
         d1, d2 = st.columns(2)
         with d1:
-            st.download_button("BAIXAR CATÁLOGO EM CSV", data=csv, file_name="catalogo_cotacoes_tex_v20_3_1.csv", mime="text/csv")
+            st.download_button("BAIXAR CATÁLOGO EM CSV", data=csv, file_name="catalogo_cotacoes_tex_v20_3_3.csv", mime="text/csv")
         with d2:
             excel = dataframe_para_excel_bytes(filtrado, "Catálogo de cotações")
             if excel is not None:
                 st.download_button(
                     "BAIXAR CATÁLOGO EXCEL",
                     data=excel,
-                    file_name="catalogo_cotacoes_tex_v20_3_1.xlsx",
+                    file_name="catalogo_cotacoes_tex_v20_3_3.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             else:
@@ -4780,6 +4963,13 @@ with aba_catalogo:
 
 with aba_historico:
     st.subheader("Histórico de análises do motor")
+    pendente = st.session_state.get("historico_analise_pendente")
+    if isinstance(pendente, pd.DataFrame) and not pendente.empty:
+        st.info("Existe uma análise concluída ainda não salva. Nenhuma gravação ocorre sem o botão abaixo.")
+        if st.button("SALVAR ESTA ANÁLISE NO HISTÓRICO", key="salvar_historico_explicito"):
+            destino_historico = salvar_historico_analises(pendente)
+            st.success(f"Análise salva por ação explícita. Destino: {destino_historico}.")
+            st.session_state.pop("historico_analise_pendente", None)
     cfg_hist = obter_config_google()
     if cfg_hist.get("configurado"):
         st.success(f"Planilhas Google ativas. Aba: {cfg_hist['worksheet_historico']}. Cada análise salva cotações, probabilidades e projeções.")
@@ -4825,7 +5015,7 @@ with aba_historico:
             st.download_button(
                 "BAIXAR HISTÓRICO EM CSV",
                 data=csv_hist,
-                file_name="historico_analises_tex_v20_3_1.csv",
+                file_name="historico_analises_tex_v20_3_3.csv",
                 mime="text/csv",
             )
         with h_d2:
@@ -4834,7 +5024,7 @@ with aba_historico:
                 st.download_button(
                     "BAIXAR HISTÓRICO EM EXCEL",
                     data=excel_hist,
-                    file_name="historico_analises_tex_v20_3_1.xlsx",
+                    file_name="historico_analises_tex_v20_3_3.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
@@ -4977,14 +5167,14 @@ with aba_auditoria:
         csv = auditoria.to_csv(index=False).encode("utf-8-sig")
         d1, d2 = st.columns(2)
         with d1:
-            st.download_button("BAIXAR AUDITORIA EM CSV", data=csv, file_name="auditoria_tex_v20_3_1.csv", mime="text/csv")
+            st.download_button("BAIXAR AUDITORIA EM CSV", data=csv, file_name="auditoria_tex_v20_3_3.csv", mime="text/csv")
         with d2:
             excel = dataframe_para_excel_bytes(auditoria, "Auditoria")
             if excel is not None:
                 st.download_button(
                     "BAIXAR AUDITORIA EXCEL",
                     data=excel,
-                    file_name="auditoria_tex_v20_3_1.xlsx",
+                    file_name="auditoria_tex_v20_3_3.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             else:
