@@ -1,0 +1,78 @@
+{
+  "model_version": "V28.0",
+  "trained_seasons": [
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "feature_order": [
+    "MarketP",
+    "RawP",
+    "diff",
+    "absdiff",
+    "ratio",
+    "AvgOdd",
+    "logit_market",
+    "logit_raw",
+    "Month",
+    "Code_cat",
+    "Market_cat",
+    "Side_cat"
+  ],
+  "category_maps": {
+    "Code": {
+      "ARG": 0,
+      "B1": 1,
+      "BRA": 2,
+      "CHN": 3,
+      "D1": 4,
+      "D2": 5,
+      "E0": 6,
+      "E1": 7,
+      "F1": 8,
+      "FIN": 9,
+      "G1": 10,
+      "I1": 11,
+      "I2": 12,
+      "IRL": 13,
+      "JPN": 14,
+      "MEX": 15,
+      "N1": 16,
+      "NOR": 17,
+      "P1": 18,
+      "SP1": 19,
+      "SP2": 20,
+      "SWE": 21,
+      "T1": 22,
+      "USA": 23
+    },
+    "Market": {
+      "1X2": 0,
+      "OU25": 1
+    },
+    "Side": {
+      "A": 0,
+      "D": 1,
+      "H": 2,
+      "O25": 3,
+      "U25": 4
+    }
+  },
+  "price_haircut": 0.02,
+  "min_odd": 1.2,
+  "max_odd": 3.0,
+  "target_entries_default": 4,
+  "validated_markets": [
+    "1X2",
+    "OU25"
+  ],
+  "experimental_markets": [
+    "BTTS"
+  ],
+  "notes": "Treinado apenas com variáveis pré-jogo sem CalP/Rel/N. Mercado + Poisson dinâmico + boosting regularizado."
+}

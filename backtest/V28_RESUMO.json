@@ -1,0 +1,48 @@
+{
+  "entries": 893,
+  "weeks": 225,
+  "avg_entries_per_week": 3.968888888888889,
+  "wins": 461,
+  "hit_rate": 0.5162374020156775,
+  "profit_units": 103.74819999999998,
+  "roi": 0.1161793952967525,
+  "max_drawdown_units": 14.094000000000023,
+  "max_losing_streak": 9,
+  "bootstrap_roi_95_low": 0.04314044760344553,
+  "bootstrap_roi_95_high": 0.1936229391571969,
+  "bootstrap_p_roi_positive": 0.9983333333333333,
+  "yearly": [
+    {
+      "Season": 2022,
+      "entries": 257,
+      "wins": 137,
+      "hit_rate": 0.5330739299610895,
+      "profit_units": 45.60439999999999,
+      "roi": 0.17744902723735406
+    },
+    {
+      "Season": 2023,
+      "entries": 208,
+      "wins": 113,
+      "hit_rate": 0.5432692307692307,
+      "profit_units": 35.5496,
+      "roi": 0.17091153846153845
+    },
+    {
+      "Season": 2024,
+      "entries": 202,
+      "wins": 101,
+      "hit_rate": 0.5,
+      "profit_units": 11.306799999999996,
+      "roi": 0.05597425742574255
+    },
+    {
+      "Season": 2025,
+      "entries": 226,
+      "wins": 110,
+      "hit_rate": 0.48672566371681414,
+      "profit_units": 11.287399999999998,
+      "roi": 0.04994424778761061
+    }
+  ]
+}

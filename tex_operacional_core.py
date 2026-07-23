@@ -162,6 +162,8 @@ class CalibrationBook:
     def __init__(self, sports_profiles: pd.DataFrame, market_profiles: pd.DataFrame):
         self.sports: dict[tuple[str, str, str, str, float], tuple[float, float, int, str]] = {}
         self.market: dict[tuple[str, str, str, str, float], tuple[float, float, int, str]] = {}
+        self.sports_details: dict[tuple[str, str, str, str, float], dict[str, Any]] = {}
+        self.market_details: dict[tuple[str, str, str, str, float], dict[str, Any]] = {}
         self._load_sports(sports_profiles)
         self._load_market(market_profiles)
 
@@ -179,12 +181,20 @@ class CalibrationBook:
                 str(row.Side),
                 round(float(row.Bin), 3),
             )
-            self.sports[key] = (
-                float(row.CalibratedProbability),
-                float(row.Reliability),
-                int(row.Sample),
-                str(getattr(row, "Level", "GLOBAL")),
-            )
+            calibrated = float(row.CalibratedProbability)
+            reliability = float(row.Reliability)
+            sample = int(row.Sample)
+            level = str(getattr(row, "Level", "GLOBAL"))
+            self.sports[key] = (calibrated, reliability, sample, level)
+            self.sports_details[key] = {
+                "CalibratedProbability": calibrated,
+                "Reliability": reliability,
+                "Sample": sample,
+                "Wins": int(getattr(row, "Wins", 0) or 0),
+                "EmpiricalHit": float(getattr(row, "EmpiricalHit", calibrated) or calibrated),
+                "RawMean": float(getattr(row, "RawMean", calibrated) or calibrated),
+                "Level": level,
+            }
 
     def _load_market(self, frame: pd.DataFrame) -> None:
         for row in frame.fillna("").itertuples(index=False):
@@ -195,12 +205,21 @@ class CalibrationBook:
                 str(row.Side),
                 round(float(row.MPBin), 3),
             )
-            self.market[key] = (
-                float(row.CalibratedMarketP),
-                float(row.Reliability),
-                int(row.Sample),
-                str(getattr(row, "Level", "GLOBAL")),
-            )
+            calibrated = float(row.CalibratedMarketP)
+            reliability = float(row.Reliability)
+            sample = int(row.Sample)
+            level = str(getattr(row, "Level", "GLOBAL"))
+            self.market[key] = (calibrated, reliability, sample, level)
+            self.market_details[key] = {
+                "CalibratedProbability": calibrated,
+                "Reliability": reliability,
+                "Sample": sample,
+                "Wins": int(getattr(row, "Wins", 0) or 0),
+                "EmpiricalHit": float(getattr(row, "EmpiricalHit", calibrated) or calibrated),
+                "AverageOdd": float(getattr(row, "AverageOdd", 0.0) or 0.0),
+                "MarketMean": float(getattr(row, "MarketMean", calibrated) or calibrated),
+                "Level": level,
+            }
 
     def sports_lookup(self, code: str, market: str, side: str, probability: float) -> tuple[float, float, int, str]:
         bin_value = self._bin(probability, 0.05)
@@ -215,6 +234,25 @@ class CalibrationBook:
             ("LEAGUE", code, market, side, bin_value),
             self.market.get(("GLOBAL", "", market, side, bin_value), (probability, 0.10, 0, "RAW")),
         )
+
+    def sports_profile(self, code: str, market: str, side: str, probability: float) -> dict[str, Any]:
+        bin_value = self._bin(probability, 0.05)
+        key = ("LEAGUE", code, market, side, bin_value)
+        fallback = ("GLOBAL", "", market, side, bin_value)
+        return dict(self.sports_details.get(key, self.sports_details.get(fallback, {
+            "CalibratedProbability": probability, "Reliability": 0.10, "Sample": 0,
+            "Wins": 0, "EmpiricalHit": probability, "RawMean": probability, "Level": "RAW",
+        })))
+
+    def market_profile(self, code: str, market: str, side: str, probability: float) -> dict[str, Any]:
+        bin_value = self._bin(probability, 0.025)
+        key = ("LEAGUE", code, market, side, bin_value)
+        fallback = ("GLOBAL", "", market, side, bin_value)
+        return dict(self.market_details.get(key, self.market_details.get(fallback, {
+            "CalibratedProbability": probability, "Reliability": 0.10, "Sample": 0,
+            "Wins": 0, "EmpiricalHit": probability, "AverageOdd": 0.0,
+            "MarketMean": probability, "Level": "RAW",
+        })))
 
 
 def load_calibration_book(directory: str | Path) -> CalibrationBook:
@@ -242,6 +280,15 @@ def thresholds(market: str, cfg: OperationalConfig) -> tuple[float, float]:
     if market == "OU25":
         return cfg.min_probability_ou25, cfg.min_ev_ou25
     return cfg.min_probability_btts, cfg.min_ev_btts
+
+
+def sample_confidence_label(sample: int, reliability: float) -> tuple[str, str]:
+    """Classifica a qualidade da amostra sem esconder os números usados."""
+    if sample >= 500 and reliability >= 0.70:
+        return "FORTE", f"{sample} registros e estabilidade de calibração {reliability:.0%}."
+    if sample >= 150 and reliability >= 0.35:
+        return "MODERADA", f"{sample} registros e estabilidade de calibração {reliability:.0%}."
+    return "FRACA", f"{sample} registros e estabilidade de calibração {reliability:.0%}."
 
 
 def decision_reason(
@@ -295,22 +342,31 @@ def _evaluate_group(
 
     for side, odd, market_probability in zip(sides, odds, market_probabilities):
         raw_sports = float(sports[side])
-        calibrated_sports, sports_reliability, sports_sample, sports_level = book.sports_lookup(
-            code, market, side, raw_sports
-        )
+        sports_profile = book.sports_profile(code, market, side, raw_sports)
+        calibrated_sports = float(sports_profile["CalibratedProbability"])
+        sports_reliability = float(sports_profile["Reliability"])
+        sports_sample = int(sports_profile["Sample"])
+        sports_level = str(sports_profile["Level"])
 
         if market == "BTTS":
             calibrated_market = market_probability
             market_reliability = sports_reliability
             market_sample = sports_sample
             market_level = "SEM_ODDS_HISTÓRICAS"
+            market_profile = {
+                "EmpiricalHit": float(sports_profile["EmpiricalHit"]),
+                "Wins": int(sports_profile["Wins"]),
+                "AverageOdd": 0.0,
+            }
             # BTTS tem calibração esportiva histórica, mas não há odds históricas
             # completas nas 24 ligas. O mercado atual permanece a âncora.
             decision_probability = 0.80 * calibrated_market + 0.20 * calibrated_sports
         else:
-            calibrated_market, market_reliability, market_sample, market_level = book.market_lookup(
-                code, market, side, market_probability
-            )
+            market_profile = book.market_profile(code, market, side, market_probability)
+            calibrated_market = float(market_profile["CalibratedProbability"])
+            market_reliability = float(market_profile["Reliability"])
+            market_sample = int(market_profile["Sample"])
+            market_level = str(market_profile["Level"])
             disagreement = calibrated_sports - calibrated_market
             # A auditoria da V25 mostrou que o Poisson não pode criar sozinho uma
             # entrada. Ele só ajusta a âncora de mercado de maneira limitada.
@@ -351,6 +407,9 @@ def _evaluate_group(
         else:
             confidence = "BAIXA"
 
+        sample_confidence, sample_confidence_reason = sample_confidence_label(int(profile_sample), float(reliability))
+        required_odd = (1.0 + min_ev) / max(decision_probability, 1e-9)
+        odd_gap = odd - required_odd
         score = (
             decision_probability
             + 0.20 * reliability
@@ -382,10 +441,20 @@ def _evaluate_group(
                 "ExpectedValue": expected_value,
                 "ModelMarketDifference": disagreement,
                 "ProfileSample": int(profile_sample),
+                "ProfileWins": int(market_profile.get("Wins", 0)),
+                "EmpiricalHitRate": float(market_profile.get("EmpiricalHit", calibrated_market)),
+                "AverageHistoricalOdd": float(market_profile.get("AverageOdd", 0.0)),
                 "Reliability": reliability,
+                "SampleConfidence": sample_confidence,
+                "SampleConfidenceReason": sample_confidence_reason,
+                "SportsSample": int(sports_sample),
+                "SportsReliability": float(sports_reliability),
+                "SportsEmpiricalHitRate": float(sports_profile.get("EmpiricalHit", calibrated_sports)),
                 "ProfileLevel": market_level,
                 "SportsProfileLevel": sports_level,
                 "Confidence": confidence,
+                "RequiredOddForOperation": float(required_odd),
+                "OddGapToOperation": float(odd_gap),
                 "Status": status,
                 "Stake": unit_value if operational else 0.0,
                 "Score": score,
@@ -552,14 +621,18 @@ def display_frame(frame: pd.DataFrame) -> pd.DataFrame:
         "ExpectedValue",
         "Confidence",
         "ProfileSample",
+        "EmpiricalHitRate",
+        "SampleConfidence",
         "Reliability",
+        "RequiredOddForOperation",
+        "OddGapToOperation",
         "Stake",
         "Reason",
     ]
     out = out[[column for column in columns if column in out.columns]]
     if "DateParsed" in out:
         out["DateParsed"] = pd.to_datetime(out["DateParsed"]).dt.strftime("%d/%m/%Y")
-    for percentage_column in ("DecisionProbability", "BreakEvenProbability", "ExpectedValue", "Reliability"):
+    for percentage_column in ("DecisionProbability", "BreakEvenProbability", "ExpectedValue", "EmpiricalHitRate", "Reliability"):
         if percentage_column in out:
             out[percentage_column] = pd.to_numeric(out[percentage_column], errors="coerce") * 100.0
     rename = {
@@ -574,10 +647,208 @@ def display_frame(frame: pd.DataFrame) -> pd.DataFrame:
         "DecisionProbability": "Probabilidade operacional",
         "BreakEvenProbability": "Probabilidade mínima da odd",
         "ExpectedValue": "Margem estimada",
-        "Confidence": "Confiança",
+        "Confidence": "Confiança da leitura",
         "ProfileSample": "Amostra histórica",
-        "Reliability": "Estabilidade",
+        "EmpiricalHitRate": "Acerto empírico da faixa",
+        "SampleConfidence": "Confiança da amostra",
+        "Reliability": "Estabilidade da calibração",
+        "RequiredOddForOperation": "Odd mínima para operar",
+        "OddGapToOperation": "Diferença para odd mínima",
         "Stake": "Entrada fixa",
         "Reason": "Motivo",
     }
     return out.rename(columns=rename)
+
+def standings_before_match(matches: list[dict[str, Any]], code: str, match_date: date) -> pd.DataFrame:
+    """Reconstrói a classificação da temporada corrente usando apenas jogos anteriores à partida."""
+    season = season_for_match(code, match_date)
+    table: dict[str, dict[str, float]] = {}
+
+    def row_for(team: str) -> dict[str, float]:
+        if team not in table:
+            table[team] = {
+                "Jogos": 0, "Vitórias": 0, "Empates": 0, "Derrotas": 0,
+                "Gols marcados": 0, "Gols sofridos": 0, "Pontos": 0,
+            }
+        return table[team]
+
+    season_matches = sorted(
+        (m for m in matches if m.get("Code") == code and int(m.get("Season", -1)) == season
+         and m.get("DateParsed") < match_date),
+        key=lambda item: item.get("DateParsed"),
+    )
+    for match in season_matches:
+        home = clean_text(match.get("Home")); away = clean_text(match.get("Away"))
+        hg = int(match.get("HG", 0)); ag = int(match.get("AG", 0))
+        h = row_for(home); a = row_for(away)
+        h["Jogos"] += 1; a["Jogos"] += 1
+        h["Gols marcados"] += hg; h["Gols sofridos"] += ag
+        a["Gols marcados"] += ag; a["Gols sofridos"] += hg
+        if hg > ag:
+            h["Vitórias"] += 1; a["Derrotas"] += 1; h["Pontos"] += 3
+        elif ag > hg:
+            a["Vitórias"] += 1; h["Derrotas"] += 1; a["Pontos"] += 3
+        else:
+            h["Empates"] += 1; a["Empates"] += 1; h["Pontos"] += 1; a["Pontos"] += 1
+
+    rows: list[dict[str, Any]] = []
+    for team, values in table.items():
+        games = int(values["Jogos"])
+        if games <= 0:
+            continue
+        rows.append({
+            "Equipe": team, **values,
+            "Saldo": int(values["Gols marcados"] - values["Gols sofridos"]),
+            "Pontos por jogo": float(values["Pontos"] / games),
+            "Gols por jogo": float(values["Gols marcados"] / games),
+            "Gols sofridos por jogo": float(values["Gols sofridos"] / games),
+            "Temporada": season,
+        })
+    if not rows:
+        return pd.DataFrame()
+    frame = pd.DataFrame(rows).sort_values(
+        ["Pontos", "Vitórias", "Saldo", "Gols marcados"],
+        ascending=[False, False, False, False],
+    ).reset_index(drop=True)
+    frame.insert(0, "Posição", np.arange(1, len(frame) + 1))
+    return frame
+
+
+def standings_context(matches: list[dict[str, Any]], code: str, match_date: date, home: str, away: str) -> dict[str, Any]:
+    table = standings_before_match(matches, code, match_date)
+    context: dict[str, Any] = {"Available": False, "Table": table, "Season": season_for_match(code, match_date)}
+    if table.empty:
+        return context
+    home_row = table[table["Equipe"].eq(home)]
+    away_row = table[table["Equipe"].eq(away)]
+    if home_row.empty or away_row.empty:
+        return context
+    h = home_row.iloc[0]; a = away_row.iloc[0]
+    context.update({
+        "Available": True,
+        "HomePosition": int(h["Posição"]), "AwayPosition": int(a["Posição"]),
+        "HomePoints": int(h["Pontos"]), "AwayPoints": int(a["Pontos"]),
+        "HomeGames": int(h["Jogos"]), "AwayGames": int(a["Jogos"]),
+        "HomePPG": float(h["Pontos por jogo"]), "AwayPPG": float(a["Pontos por jogo"]),
+        "HomeGFPG": float(h["Gols por jogo"]), "AwayGFPG": float(a["Gols por jogo"]),
+        "HomeGAPG": float(h["Gols sofridos por jogo"]), "AwayGAPG": float(a["Gols sofridos por jogo"]),
+    })
+    return context
+
+
+def build_ai_summary(
+    games: pd.DataFrame,
+    readings: pd.DataFrame,
+    evaluations: pd.DataFrame,
+    diagnostics: pd.DataFrame,
+    matches: list[dict[str, Any]],
+) -> str:
+    """Gera um relatório copiável com tudo o que outra IA precisa para revisar o lote."""
+    lines = [
+        f"RESUMO PARA ANÁLISE EXTERNA — {APP_NAME}",
+        f"Partidas informadas: {len(games)} | partidas analisadas: {readings['MatchID'].nunique() if not readings.empty else 0} | mercados avaliados: {len(evaluations)}",
+        "A entrada operacional é separada da leitura estatística. A ausência de entrada não elimina a análise do jogo.",
+        "",
+    ]
+    if not diagnostics.empty:
+        errors = diagnostics[diagnostics["Situação"].ne("ANALISADO")]
+        for row in errors.itertuples(index=False):
+            lines.append(f"ERRO — {row.Jogo}: {row.Detalhe}")
+        if not errors.empty:
+            lines.append("")
+
+    for game in games.itertuples(index=False):
+        code = str(getattr(game, "_3", getattr(game, "Código_da_liga", "")))
+        # itertuples renomeia colunas com espaços; usa o ID para localizar a leitura com segurança.
+        input_id = str(getattr(game, "ID"))
+        game_reading = readings[readings["InputID"].eq(input_id)] if not readings.empty else pd.DataFrame()
+        game_evals = evaluations[evaluations["InputID"].eq(input_id)] if not evaluations.empty else pd.DataFrame()
+        source_row = games[games["ID"].astype(str).eq(input_id)].iloc[0]
+        code = str(source_row["Código da liga"])
+        match_date = parse_date(source_row["Data"])
+        home = str(source_row["Mandante"]); away = str(source_row["Visitante"])
+        context = standings_context(matches, code, match_date, home, away)
+        lines.append(f"JOGO: {home} x {away}")
+        lines.append(f"Liga: {source_row['Liga']} | Data: {match_date.strftime('%d/%m/%Y')} | Hora: {source_row['Hora']} | Casa: {source_row['Casa de apostas']}")
+        if context.get("Available"):
+            lines.append(
+                f"Classificação antes do jogo: {home} {context['HomePosition']}º ({context['HomePoints']} pts em {context['HomeGames']} jogos, {context['HomePPG']:.2f} PPG) | "
+                f"{away} {context['AwayPosition']}º ({context['AwayPoints']} pts em {context['AwayGames']} jogos, {context['AwayPPG']:.2f} PPG)."
+            )
+        else:
+            lines.append(f"Classificação antes do jogo: indisponível para a temporada {context.get('Season')}.")
+        if game_reading.empty:
+            lines.append("Leitura principal: indisponível.")
+        else:
+            r = game_reading.iloc[0]
+            lines.append(
+                f"Leitura principal: {r['Selection']} | status {r['Status']} | odd {r['Odd']:.2f} | "
+                f"prob. operacional {r['DecisionProbability']:.1%} | prob. mercado sem margem {r['MarketProbability']:.1%} | "
+                f"prob. esportiva calibrada {r['CalibratedSportsProbability']:.1%}."
+            )
+            lines.append(
+                f"Amostra: {int(r['ProfileSample'])} registros | acerto empírico {r['EmpiricalHitRate']:.1%} | "
+                f"confiança da amostra {r['SampleConfidence']} | estabilidade {r['Reliability']:.1%}."
+            )
+            lines.append(
+                f"Preço: odd mínima operacional {r['RequiredOddForOperation']:.2f} | diferença da odd atual {r['OddGapToOperation']:+.2f} | "
+                f"margem estimada {r['ExpectedValue']:.1%}. Motivo: {r['Reason']}"
+            )
+            lines.append(f"Gols projetados: {home} {r['LambdaHome']:.2f} x {r['LambdaAway']:.2f} {away}.")
+        if not game_evals.empty:
+            lines.append("Todos os mercados:")
+            ordered = game_evals.sort_values(["StatusOrder", "Score"], ascending=[True, False])
+            for _, row in ordered.iterrows():
+                lines.append(
+                    f"- {row['Selection']}: status {row['Status']}; odd {row['Odd']:.2f}; prob. operacional {row['DecisionProbability']:.1%}; "
+                    f"mercado {row['MarketProbability']:.1%}; esportiva {row['CalibratedSportsProbability']:.1%}; "
+                    f"amostra {int(row['ProfileSample'])} ({row['SampleConfidence']}, estabilidade {row['Reliability']:.1%}); "
+                    f"odd mínima {row['RequiredOddForOperation']:.2f}; EV {row['ExpectedValue']:.1%}."
+                )
+        lines.append("")
+    lines.append("Observação: o resumo contém apenas dados e cálculos do aplicativo; escalações, lesões e notícias não são incorporadas automaticamente.")
+    return "\n".join(lines)
+
+
+
+def enrich_with_standings(
+    frame: pd.DataFrame,
+    games: pd.DataFrame,
+    matches: list[dict[str, Any]],
+) -> pd.DataFrame:
+    """Acrescenta classificação corrente a qualquer quadro de resultados."""
+    if frame.empty:
+        return frame.copy()
+    out = frame.copy()
+    contexts: dict[str, dict[str, Any]] = {}
+    for _, game in games.iterrows():
+        input_id = str(game.get("ID", ""))
+        try:
+            contexts[input_id] = standings_context(
+                matches,
+                str(game.get("Código da liga", "")),
+                parse_date(game.get("Data")),
+                str(game.get("Mandante", "")),
+                str(game.get("Visitante", "")),
+            )
+        except Exception:
+            contexts[input_id] = {"Available": False}
+    mapping = {
+        "StandingsAvailable": "Available",
+        "Season": "Season",
+        "HomePosition": "HomePosition",
+        "AwayPosition": "AwayPosition",
+        "HomePoints": "HomePoints",
+        "AwayPoints": "AwayPoints",
+        "HomeGames": "HomeGames",
+        "AwayGames": "AwayGames",
+        "HomePPG": "HomePPG",
+        "AwayPPG": "AwayPPG",
+        "HomeGFPG": "HomeGFPG",
+        "AwayGFPG": "AwayGFPG",
+        "HomeGAPG": "HomeGAPG",
+        "AwayGAPG": "AwayGAPG",
+    }
+    for target, source in mapping.items():
+        out[target] = out["InputID"].astype(str).map(lambda key: contexts.get(key, {}).get(source, np.nan))
+    return out
