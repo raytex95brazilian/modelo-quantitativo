@@ -239,10 +239,16 @@ with panel_tab:
     st.write("Insira todas as partidas disponíveis. A carteira é formada no conjunto, não jogo por jogo.")
 
     template = empty_batch(1)
-    template.loc[0] = [
-        now_br().strftime("%d/%m/%Y"), "Brasileirão Série A", "Mandante", "Visitante", "Pixbet",
-        2.10, 3.40, 3.50, 1.90, 1.90,
-    ]
+    template.at[0, "Data"] = now_br().strftime("%d/%m/%Y")
+    template.at[0, "Liga"] = "Brasileirão Série A"
+    template.at[0, "Mandante"] = "Mandante"
+    template.at[0, "Visitante"] = "Visitante"
+    template.at[0, "Casa de apostas"] = "Pixbet"
+    template.at[0, "Cotação mandante"] = 2.10
+    template.at[0, "Cotação empate"] = 3.40
+    template.at[0, "Cotação visitante"] = 3.50
+    template.at[0, "Cotação mais de 2,5"] = 1.90
+    template.at[0, "Cotação menos de 2,5"] = 1.90
     st.download_button(
         "BAIXAR MODELO CSV",
         template.to_csv(index=False).encode("utf-8-sig"),

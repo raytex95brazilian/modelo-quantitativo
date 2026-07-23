@@ -334,10 +334,33 @@ def operational_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return frame[available].copy()
 
 
+BATCH_TEXT_COLUMNS = [
+    "Data", "Liga", "Mandante", "Visitante", "Casa de apostas",
+]
+
+BATCH_ODD_COLUMNS = [
+    "Cotação mandante", "Cotação empate", "Cotação visitante",
+    "Cotação mais de 2,5", "Cotação menos de 2,5",
+]
+
+BATCH_COLUMNS = BATCH_TEXT_COLUMNS + BATCH_ODD_COLUMNS
+
+
 def empty_batch(rows: int = 12) -> pd.DataFrame:
-    columns = [
-        "Data", "Liga", "Mandante", "Visitante", "Casa de apostas",
-        "Cotação mandante", "Cotação empate", "Cotação visitante",
-        "Cotação mais de 2,5", "Cotação menos de 2,5",
-    ]
-    return pd.DataFrame([{column: "" for column in columns} for _ in range(rows)])
+    """Cria o editor semanal com tipos explícitos.
+
+    Pandas 3 passou a inferir texto como ArrowStringArray. Uma tabela criada
+    apenas com strings recusava a inserção posterior de odds numéricas. Aqui,
+    textos ficam como object e odds como float64, evitando o TypeError tanto
+    no modelo CSV quanto no editor do Streamlit.
+    """
+    rows = max(int(rows), 0)
+    data: dict[str, pd.Series] = {
+        column: pd.Series([""] * rows, dtype=object)
+        for column in BATCH_TEXT_COLUMNS
+    }
+    data.update({
+        column: pd.Series([np.nan] * rows, dtype="float64")
+        for column in BATCH_ODD_COLUMNS
+    })
+    return pd.DataFrame(data, columns=BATCH_COLUMNS)
