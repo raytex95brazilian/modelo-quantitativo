@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
-import json
 from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -14,7 +13,7 @@ try:
 except Exception:
     _atualizacao = None
 
-from tex_v25_core import CFG, LEAGUES, normalize_zip
+from tex_v25_core import LEAGUES, normalize_zip
 from tex_v25_storage import (
     COLUNAS_ANALISES,
     COLUNAS_COTACOES,
@@ -23,481 +22,388 @@ from tex_v25_storage import (
     salvar_cotacoes,
     url_planilha_configurada,
 )
-from tex_v26_operacional import VERSION, analyze_batch, operational_columns
+from tex_operacional_core import (
+    APP_NAME,
+    INPUT_COLUMNS,
+    analyze_games,
+    display_frame,
+    latest_team_catalog,
+    load_calibration_book,
+    no_vig_probabilities,
+    parse_odd,
+)
 
 ROOT = Path(__file__).resolve().parent
 DATA_ZIP = ROOT / "data" / "TEX_V22_DADOS_24_LIGAS.zip"
-ZONE_METRICS = ROOT / "output" / "v25_zone_season_metrics.csv"
+CALIBRATION_DIR = ROOT / "calibration"
 FUSO = ZoneInfo("America/Sao_Paulo")
 
-GAME_COLUMNS = [
-    "Data", "Hora", "Liga", "Mandante", "Visitante", "Casa de apostas",
-    "Cotação mandante", "Cotação empate", "Cotação visitante",
-    "Cotação mais de 2,5", "Cotação menos de 2,5",
-]
-
-st.set_page_config(
-    page_title=VERSION,
-    page_icon="⚽",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title=APP_NAME, page_icon="⚽", layout="wide", initial_sidebar_state="expanded")
 
 
 def now_br() -> datetime:
     return datetime.now(FUSO)
 
 
-def style() -> None:
+def apply_style() -> None:
     st.markdown(
         """
         <style>
-        .block-container{max-width:1440px;padding-top:1rem;padding-bottom:4rem}
-        [data-testid="stMetric"]{border:1px solid rgba(120,120,120,.22);border-radius:14px;padding:.7rem}
-        [data-testid="stDataFrame"]{border:1px solid rgba(120,120,120,.22);border-radius:12px;overflow:hidden}
-        .tex-head{padding:1rem 1.2rem;border-radius:18px;background:linear-gradient(120deg,#111827,#263b5e);color:white;margin-bottom:1rem}
-        .tex-head h1{margin:0;font-size:2rem}.tex-head p{margin:.35rem 0 0;color:#dbeafe}
-        .box{padding:.9rem 1rem;border-radius:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.28);margin-bottom:1rem}
-        .operar{padding:.9rem 1rem;border-radius:12px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35)}
+        .block-container{max-width:1500px;padding-top:1rem;padding-bottom:4rem}
+        .tex-head{padding:1.15rem 1.25rem;border-radius:18px;background:linear-gradient(125deg,#0f172a,#164e63);color:#fff;margin-bottom:1rem}
+        .tex-head h1{margin:0;font-size:2rem}.tex-head p{margin:.45rem 0 0;color:#dbeafe}
+        .rule-box{padding:.9rem 1rem;border-radius:13px;border:1px solid rgba(14,116,144,.30);background:rgba(14,116,144,.07);margin:.5rem 0 1rem}
+        [data-testid="stMetric"],[data-testid="stDataFrame"]{border:1px solid rgba(120,120,120,.22);border-radius:13px;padding:.45rem}
+        .game-card{padding:.85rem 1rem;border:1px solid rgba(120,120,120,.22);border-radius:13px;margin:.35rem 0}
         </style>
         """,
         unsafe_allow_html=True,
     )
     st.markdown(
-        f'<div class="tex-head"><h1>{VERSION}</h1>'
-        '<p>As ligas e os times já estão no aplicativo. Você informa somente data, horário e cotações.</p></div>',
+        f'<div class="tex-head"><h1>{APP_NAME}</h1>'
+        '<p>Liga e times por seleção. Você digita somente data, horário e odds. 1X2, gols e ambas marcam estão disponíveis.</p></div>',
         unsafe_allow_html=True,
     )
 
 
-@st.cache_resource(show_spinner="Carregando histórico e catálogo das 24 ligas...")
+@st.cache_resource(show_spinner="Carregando histórico das 24 ligas...")
 def load_matches():
     errors: list[str] = []
     if _atualizacao is not None:
-        direct_loader = getattr(_atualizacao, "carregar_base_football_data", None)
-        if callable(direct_loader):
+        direct = getattr(_atualizacao, "carregar_base_football_data", None)
+        if callable(direct):
             try:
-                matches, report = direct_loader(date.today())
-                return matches, report, "Football-Data.co.uk — histórico direto"
+                matches, report = direct(date.today())
+                return matches, report, "Football-Data.co.uk — histórico atualizado"
             except Exception as exc:
                 errors.append(f"consulta direta: {exc}")
-        legacy_loader = getattr(_atualizacao, "carregar_base_com_atualizacao", None)
-        if callable(legacy_loader):
+        compatible = getattr(_atualizacao, "carregar_base_com_atualizacao", None)
+        if callable(compatible):
             try:
-                matches, report, _ = legacy_loader(DATA_ZIP, date.today())
-                return matches, report, "Football-Data.co.uk + histórico local"
+                matches, report, _ = compatible(DATA_ZIP, date.today())
+                return matches, report, "Football-Data.co.uk + base local"
             except Exception as exc:
                 errors.append(f"atualizador compatível: {exc}")
     try:
         matches = normalize_zip(DATA_ZIP, include_incomplete_annual_2026=True)
-        return matches, [], "Histórico local de contingência"
-    except Exception as local_exc:
-        detail = " | ".join(errors) if errors else "sem detalhes"
-        raise RuntimeError(
-            f"Falha ao carregar histórico. Atualização: {detail}. Local: {local_exc}"
-        ) from local_exc
+        return matches, [], "Base histórica local"
+    except Exception as exc:
+        details = " | ".join(errors) if errors else "sem retorno do atualizador"
+        raise RuntimeError(f"Falha ao carregar a base: {details}. Base local: {exc}") from exc
+
+
+@st.cache_resource(show_spinner=False)
+def load_book():
+    return load_calibration_book(CALIBRATION_DIR)
 
 
 @st.cache_data(show_spinner=False)
-def load_zone_metrics() -> pd.DataFrame:
-    return pd.read_csv(ZONE_METRICS)
+def team_catalog(serialized: tuple[tuple[str, int, str, str], ...]):
+    rows = [
+        {"Code": code, "Season": season, "Home": home, "Away": away}
+        for code, season, home, away in serialized
+    ]
+    return latest_team_catalog(rows)
 
 
-@st.cache_data(show_spinner=False)
-def latest_team_catalog(serialized_matches: tuple[tuple[str, int, str, str], ...]) -> tuple[dict[str, list[str]], dict[str, int]]:
-    """Devolve apenas os clubes da temporada mais recente de cada liga."""
-    rows = pd.DataFrame(serialized_matches, columns=["Code", "Season", "Home", "Away"])
-    teams_by_code: dict[str, list[str]] = {}
-    season_by_code: dict[str, int] = {}
-    for code in LEAGUES:
-        league_rows = rows[rows["Code"].eq(code)]
-        if league_rows.empty:
-            teams_by_code[code] = []
-            continue
-        latest_season = int(pd.to_numeric(league_rows["Season"], errors="coerce").max())
-        latest_rows = league_rows[league_rows["Season"].eq(latest_season)]
-        teams = sorted(
-            set(latest_rows["Home"].dropna().astype(str))
-            | set(latest_rows["Away"].dropna().astype(str))
-        )
-        teams_by_code[code] = teams
-        season_by_code[code] = latest_season
-    return teams_by_code, season_by_code
+def games() -> list[dict]:
+    if "tex_games" not in st.session_state:
+        st.session_state.tex_games = []
+    return st.session_state.tex_games
 
 
-def format_portfolio(frame: pd.DataFrame) -> pd.DataFrame:
-    output = operational_columns(frame)
-    if output.empty:
-        return output
-    output["DateParsed"] = pd.to_datetime(output["DateParsed"]).dt.strftime("%d/%m/%Y")
-    return output.rename(columns={
-        "Decision": "Decisão",
-        "WeekID": "Semana",
-        "DateParsed": "Data",
-        "League": "Liga",
-        "Home": "Mandante",
-        "Away": "Visitante",
-        "MarketName": "Mercado",
-        "Selection": "Seleção",
-        "ExecutableOdd": "Cotação",
-        "MarketProbability": "Prob. mercado",
-        "SportsProbability": "Prob. modelo",
-        "HistoricalHitRate": "Acerto histórico",
-        "HistoricalROI": "ROI histórico",
-        "HistoricalBets": "Amostra histórica",
-        "Stake": "Entrada",
-        "WeeklyRank": "Posição semanal",
-        "Reason": "Motivo",
-    })
-
-
-def get_games() -> list[dict]:
-    if "games_v271" not in st.session_state:
-        st.session_state.games_v271 = []
-    return st.session_state.games_v271
+def upsert_game(game: dict) -> str:
+    key = (game["Data"], game["Código da liga"], game["Mandante"], game["Visitante"])
+    for index, current in enumerate(games()):
+        current_key = (current["Data"], current["Código da liga"], current["Mandante"], current["Visitante"])
+        if key == current_key:
+            game["ID"] = current["ID"]
+            games()[index] = game
+            return "atualizada"
+    games().append(game)
+    return "adicionada"
 
 
 def games_frame() -> pd.DataFrame:
-    games = get_games()
-    return pd.DataFrame(games, columns=GAME_COLUMNS) if games else pd.DataFrame(columns=GAME_COLUMNS)
+    return pd.DataFrame(games(), columns=INPUT_COLUMNS) if games() else pd.DataFrame(columns=INPUT_COLUMNS)
 
 
-def game_key(game: dict) -> tuple[str, str, str, str]:
-    return (
-        str(game.get("Data", "")),
-        str(game.get("Liga", "")),
-        str(game.get("Mandante", "")),
-        str(game.get("Visitante", "")),
-    )
-
-
-def add_or_update_game(game: dict) -> bool:
-    games = get_games()
-    key = game_key(game)
-    for index, current in enumerate(games):
-        if game_key(current) == key:
-            games[index] = game
-            return False
-    games.append(game)
-    return True
-
-
-def catalog_records(batch_id: str, batch: pd.DataFrame, bankroll: float) -> list[dict]:
-    now = now_br().strftime("%d/%m/%Y %H:%M:%S")
+def make_catalog_records(evaluations: pd.DataFrame, bankroll: float) -> list[dict]:
+    if evaluations.empty:
+        return []
+    registered = now_br().strftime("%d/%m/%Y %H:%M:%S")
     records: list[dict] = []
-    market_map = [
-        ("Cotação mandante", "Vitória Casa", lambda row: row["Mandante"], "Resultado final 1X2"),
-        ("Cotação empate", "Empate", lambda row: "Empate", "Resultado final 1X2"),
-        ("Cotação visitante", "Vitória Fora", lambda row: row["Visitante"], "Resultado final 1X2"),
-        ("Cotação mais de 2,5", "Mais de 2.5 gols", lambda row: "Mais de 2.5 gols", "Total de gols 2.5"),
-        ("Cotação menos de 2,5", "Menos de 2.5 gols", lambda row: "Menos de 2.5 gols", "Total de gols 2.5"),
-    ]
-    for row_number, row in batch.iterrows():
-        row_id = f"{batch_id}-{row_number + 1:03d}"
-        for odd_column, market, selection_fn, group in market_map:
-            odd = pd.to_numeric(row.get(odd_column), errors="coerce")
-            if pd.isna(odd) or float(odd) <= 1:
-                continue
-            record = {column: "" for column in COLUNAS_COTACOES}
-            record.update({
-                "ID Coleta": row_id,
-                "Registrado em": now,
-                "Casa de apostas": str(row.get("Casa de apostas") or "Não informada"),
-                "Liga": str(row.get("Liga") or ""),
-                "Jogo": f"{row.get('Mandante', '')} x {row.get('Visitante', '')}",
-                "Mandante": str(row.get("Mandante") or ""),
-                "Visitante": str(row.get("Visitante") or ""),
-                "Data do jogo": str(row.get("Data") or ""),
-                "Hora do jogo": str(row.get("Hora") or ""),
-                "Mercado": market,
-                "Seleção": selection_fn(row),
-                "Cotação": float(odd),
-                "Grupo do mercado": group,
-                "Probabilidade implícita bruta %": 100.0 / float(odd),
+    for row in evaluations.itertuples(index=False):
+        record = {column: "" for column in COLUNAS_COTACOES}
+        record.update(
+            {
+                "ID Coleta": f"{row.InputID}-{row.Market}-{row.Side}",
+                "Registrado em": registered,
+                "Casa de apostas": row.Bookmaker,
+                "Liga": row.League,
+                "Jogo": f"{row.Home} x {row.Away}",
+                "Mandante": row.Home,
+                "Visitante": row.Away,
+                "Data do jogo": pd.Timestamp(row.DateParsed).strftime("%d/%m/%Y"),
+                "Hora do jogo": row.Time,
+                "Mercado": row.MarketName,
+                "Seleção": row.Selection,
+                "Cotação": float(row.Odd),
+                "Grupo do mercado": row.Market,
+                "Mercado completo": "Sim",
+                "Probabilidade implícita bruta %": 100.0 / float(row.Odd),
+                "Probabilidade ajustada sem margem %": float(row.MarketProbability) * 100,
                 "Banca no momento": bankroll,
-                "Perfil": VERSION,
+                "Perfil": APP_NAME,
                 "Origem": "Aplicativo com seletores",
-                "Observação": "Liga e times selecionados no aplicativo; horário e odds informados manualmente.",
-            })
-            records.append(record)
-    return records
-
-
-def analysis_records(batch_id: str, portfolio: pd.DataFrame, batch: pd.DataFrame, unit_fraction: float) -> list[dict]:
-    now = now_br().strftime("%d/%m/%Y %H:%M:%S")
-    records: list[dict] = []
-    time_map = {
-        (str(row["Liga"]), str(row["Mandante"]), str(row["Visitante"]), str(row["Data"])): str(row.get("Hora", ""))
-        for _, row in batch.iterrows()
-    }
-    for index, row in portfolio.iterrows():
-        date_text = pd.to_datetime(row.get("DateParsed")).strftime("%d/%m/%Y")
-        time_text = time_map.get((str(row.get("League", "")), str(row.get("Home", "")), str(row.get("Away", "")), date_text), "")
-        record = {column: "" for column in COLUNAS_ANALISES}
-        record.update({
-            "ID Análise": f"{batch_id}-{index + 1:03d}",
-            "ID Coleta": batch_id,
-            "Registrado em": now,
-            "Liga": row.get("League", ""),
-            "Jogo": f"{row.get('Home', '')} x {row.get('Away', '')}",
-            "Mandante": row.get("Home", ""),
-            "Visitante": row.get("Away", ""),
-            "Data do jogo": pd.to_datetime(row.get("DateParsed")).strftime("%Y-%m-%d"),
-            "Hora do jogo": time_text,
-            "Casa de apostas": row.get("Source", ""),
-            "Origem": "Aplicativo com seletores",
-            "Mercado": row.get("Selection", ""),
-            "Cotação": row.get("ExecutableOdd", ""),
-            "Probabilidade operacional %": float(row.get("SportsProbability", 0)) * 100,
-            "Probabilidade Poisson %": float(row.get("SportsProbability", 0)) * 100,
-            "Probabilidade empírica %": float(row.get("HistoricalHitRate", 0)) * 100,
-            "Probabilidade de mercado ajustada %": float(row.get("MarketProbability", 0)) * 100,
-            "Cotação justa": row.get("FairOddSports", ""),
-            "Valor esperado %": float(row.get("SportsEV", 0)) * 100,
-            "Gols projetados casa": row.get("LambdaHome", ""),
-            "Gols projetados fora": row.get("LambdaAway", ""),
-            "Gols projetados total": float(row.get("LambdaHome", 0)) + float(row.get("LambdaAway", 0)),
-            "Estabilidade": row.get("Decision", ""),
-            "Situação": row.get("Decision", ""),
-            "Entrada %": unit_fraction * 100 if row.get("Decision") == "OPERAR" else 0,
-            "Versão do modelo": VERSION,
-            "Configuração JSON": json.dumps({"unit_fraction": unit_fraction}, ensure_ascii=False),
-            "Probabilidade mínima exigida %": float(row.get("BreakEvenProbability", 0)) * 100,
-            "Diferença modelo–mercado (p.p.)": float(row.get("ProbabilityDifference", 0)) * 100,
-            "Amostra histórica": int(row.get("HistoricalBets", 0)),
-            "Retorno histórico %": float(row.get("HistoricalROI", 0)) * 100,
-            "Motivo da decisão": row.get("Reason", ""),
-            "Resultado confirmado": "NÃO",
-        })
+                "Observação": "Liga e times selecionados; data, horário e odds informados manualmente.",
+            }
+        )
         records.append(record)
     return records
 
 
-style()
-matches, update_report, history_source = load_matches()
-zone_metrics = load_zone_metrics()
+def make_analysis_records(evaluations: pd.DataFrame, unit_fraction: float) -> list[dict]:
+    if evaluations.empty:
+        return []
+    registered = now_br().strftime("%d/%m/%Y %H:%M:%S")
+    records: list[dict] = []
+    for row in evaluations.itertuples(index=False):
+        record = {column: "" for column in COLUNAS_ANALISES}
+        record.update(
+            {
+                "ID Análise": f"{row.InputID}-{row.Market}-{row.Side}",
+                "ID Coleta": f"{row.InputID}-{row.Market}-{row.Side}",
+                "Registrado em": registered,
+                "Liga": row.League,
+                "Jogo": f"{row.Home} x {row.Away}",
+                "Mandante": row.Home,
+                "Visitante": row.Away,
+                "Data do jogo": pd.Timestamp(row.DateParsed).strftime("%d/%m/%Y"),
+                "Hora do jogo": row.Time,
+                "Casa de apostas": row.Bookmaker,
+                "Origem": "Aplicativo com seletores",
+                "Mercado": f"{row.MarketName} — {row.Selection}",
+                "Cotação": float(row.Odd),
+                "Probabilidade operacional %": float(row.DecisionProbability) * 100,
+                "Probabilidade Poisson %": float(row.RawSportsProbability) * 100,
+                "Probabilidade empírica %": float(row.CalibratedMarketProbability) * 100,
+                "Probabilidade de mercado ajustada %": float(row.MarketProbability) * 100,
+                "Cotação justa": 1.0 / max(float(row.DecisionProbability), 1e-9),
+                "Valor esperado %": float(row.ExpectedValue) * 100,
+                "Gols projetados casa": float(row.LambdaHome),
+                "Gols projetados fora": float(row.LambdaAway),
+                "Gols projetados total": float(row.LambdaHome + row.LambdaAway),
+                "Amostra casa": int(row.ProfileSample),
+                "Estabilidade": float(row.Reliability),
+                "Situação": row.Status,
+                "Entrada %": unit_fraction * 100 if row.Status == "OPERAR" else 0,
+                "Versão do modelo": APP_NAME,
+                "Probabilidade mínima exigida %": float(row.BreakEvenProbability) * 100,
+                "Diferença modelo–mercado (p.p.)": float(row.ModelMarketDifference) * 100,
+                "Amostra histórica": int(row.ProfileSample),
+                "Motivo da decisão": row.Reason,
+                "Observações": "O portão binário da V25 não é usado. O mercado é a âncora e o modelo esportivo é secundário.",
+            }
+        )
+        records.append(record)
+    return records
+
+
+apply_style()
+
+try:
+    matches, update_report, source = load_matches()
+    calibration_book = load_book()
+except Exception as exc:
+    st.error(str(exc))
+    st.stop()
+
 serialized = tuple(
-    (str(item.get("Code", "")), int(item.get("Season", 0)), str(item.get("Home", "")), str(item.get("Away", "")))
+    (str(item["Code"]), int(item["Season"]), str(item["Home"]), str(item["Away"]))
     for item in matches
 )
-teams_by_code, season_by_code = latest_team_catalog(serialized)
-league_codes = [code for code in LEAGUES if teams_by_code.get(code)]
+teams_by_code, season_by_code = team_catalog(serialized)
 
 with st.sidebar:
     st.header("Operação")
-    bankroll = st.number_input("Banca atual", min_value=0.0, value=1000.0, step=10.0, format="%.2f")
-    unit_percent = st.number_input("Unidade fixa (%)", min_value=0.10, max_value=2.00, value=1.00, step=0.10, format="%.2f")
-    weekly_limit = st.number_input("Máximo por semana", min_value=1, max_value=4, value=4, step=1)
-    unit_fraction = float(unit_percent) / 100.0
-    unit_value = float(bankroll) * unit_fraction
-    st.metric("Valor da unidade", f"R$ {unit_value:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    st.caption("Sem Kelly, progressão ou multiplicador de confiança.")
+    bankroll = st.number_input("Banca atual (R$)", min_value=0.0, value=1000.0, step=10.0)
+    unit_percent = st.number_input("Unidade fixa (%)", min_value=0.1, max_value=2.0, value=1.0, step=0.1)
+    max_entries = st.number_input("Máximo de entradas no lote", min_value=1, max_value=20, value=4, step=1)
     st.divider()
-    st.caption(f"Histórico: {history_source}")
+    st.caption(f"Fonte: {source}")
     st.caption(f"Partidas históricas: {len(matches):,}".replace(",", "."))
-    st.caption(f"Ligas disponíveis: {len(league_codes)}")
+    st.caption(f"Ligas: {len(LEAGUES)}")
     if google_configurado(st.secrets):
         st.success("Planilha Google conectada")
-        st.link_button("Abrir planilha", url_planilha_configurada(st.secrets), use_container_width=True)
+        st.link_button("Abrir planilha", url_planilha_configurada(st.secrets))
+    else:
+        st.info("Análise funciona normalmente. A gravação Google está desativada.")
 
-panel_tab, audit_tab = st.tabs(["MONTAR RODADA", "AUDITORIA E EXPORTAÇÃO"])
+st.markdown(
+    '<div class="rule-box"><b>Correção do fracasso da V25:</b> não existe mais o portão histórico que bloqueava quase tudo. '
+    'Cada jogo sempre recebe uma leitura principal. A indicação <b>OPERAR</b> é separada e só aparece quando a odd também supera o preço mínimo.</div>',
+    unsafe_allow_html=True,
+)
 
-with panel_tab:
-    st.markdown(
-        '<div class="box"><strong>Você não digita liga nem nome de time.</strong><br>'
-        'Escolha a liga e os clubes nos seletores. Digite somente data, horário, casa de apostas e cotações.</div>',
-        unsafe_allow_html=True,
-    )
+st.subheader("1. Adicionar partidas")
+league_names = list(LEAGUES.values())
+name_to_code = {name: code for code, name in LEAGUES.items()}
 
-    league_code = st.selectbox(
-        "Liga",
-        league_codes,
-        format_func=lambda code: LEAGUES[code],
-        help="As 24 ligas vêm do núcleo do aplicativo.",
-    )
-    teams = teams_by_code.get(league_code, [])
-    season = season_by_code.get(league_code)
-    st.caption(f"Times carregados da temporada mais recente disponível: {season} • {len(teams)} clubes")
+with st.form("game_form", clear_on_submit=False):
+    row1 = st.columns([1.1, 0.8, 1.8, 1.8, 1.8])
+    game_date = row1[0].date_input("Data", value=date.today())
+    game_time = row1[1].time_input("Horário", value=time(16, 0))
+    league_name = row1[2].selectbox("Liga", league_names)
+    code = name_to_code[league_name]
+    available_teams = teams_by_code.get(code, [])
+    home = row1[3].selectbox("Mandante", available_teams, key=f"home_{code}") if available_teams else ""
+    away_options = [team for team in available_teams if team != home]
+    away = row1[4].selectbox("Visitante", away_options, key=f"away_{code}") if away_options else ""
 
-    c1, c2 = st.columns(2)
-    home = c1.selectbox("Mandante", teams, key=f"home_{league_code}")
-    away_options = [team for team in teams if team != home]
-    away = c2.selectbox("Visitante", away_options, key=f"away_{league_code}")
+    bookmaker = st.text_input("Casa de apostas", value="Pixbet")
+    include_1x2, include_ou, include_btts = st.columns(3)
+    with include_1x2:
+        use_1x2 = st.checkbox("Resultado final 1X2", value=True)
+        if use_1x2:
+            a, b, c = st.columns(3)
+            odd_h = a.number_input("Odd mandante", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+            odd_d = b.number_input("Odd empate", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+            odd_a = c.number_input("Odd visitante", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+        else:
+            odd_h = odd_d = odd_a = 0.0
+    with include_ou:
+        use_ou = st.checkbox("Mais/menos de 2,5 gols", value=True)
+        if use_ou:
+            a, b = st.columns(2)
+            odd_o = a.number_input("Odd mais de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+            odd_u = b.number_input("Odd menos de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+        else:
+            odd_o = odd_u = 0.0
+    with include_btts:
+        use_btts = st.checkbox("Ambas marcam", value=True)
+        if use_btts:
+            a, b = st.columns(2)
+            odd_by = a.number_input("Odd ambas — Sim", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+            odd_bn = b.number_input("Odd ambas — Não", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+        else:
+            odd_by = odd_bn = 0.0
 
-    d1, d2, d3 = st.columns([1, 1, 1.5])
-    game_date = d1.date_input("Data", value=date.today(), format="DD/MM/YYYY")
-    game_time = d2.time_input("Horário", value=time(16, 0), step=300)
-    bookmaker = d3.text_input("Casa de apostas", value=st.session_state.get("last_bookmaker_v271", "Pixbet"))
-
-    st.markdown("**Cotações de resultado final — obrigatórias**")
-    o1, o2, o3 = st.columns(3)
-    odd_home = o1.number_input(f"{home}", min_value=1.01, max_value=100.0, value=1.80, step=0.01, format="%.2f")
-    odd_draw = o2.number_input("Empate", min_value=1.01, max_value=100.0, value=3.40, step=0.01, format="%.2f")
-    odd_away = o3.number_input(f"{away}", min_value=1.01, max_value=100.0, value=4.20, step=0.01, format="%.2f")
-
-    st.markdown("**Total de 2,5 gols — opcional**")
-    g1, g2 = st.columns(2)
-    odd_over = g1.number_input("Mais de 2,5", min_value=0.0, max_value=100.0, value=0.0, step=0.01, format="%.2f", help="Deixe 0,00 para não analisar este mercado.")
-    odd_under = g2.number_input("Menos de 2,5", min_value=0.0, max_value=100.0, value=0.0, step=0.01, format="%.2f", help="Deixe 0,00 para não analisar este mercado.")
-
-    if st.button("ADICIONAR PARTIDA À RODADA", type="primary", use_container_width=True):
-        if (odd_over > 0) != (odd_under > 0):
-            st.error("Para analisar total de gols, informe as duas cotações: mais e menos de 2,5.")
+    submitted = st.form_submit_button("ADICIONAR OU ATUALIZAR PARTIDA", type="primary", use_container_width=True)
+    if submitted:
+        if not home or not away or home == away:
+            st.error("Selecione duas equipes diferentes.")
+        elif not any((use_1x2, use_ou, use_btts)):
+            st.error("Ative ao menos um mercado.")
         else:
             game = {
-                "Data": game_date.strftime("%d/%m/%Y"),
+                "ID": uuid4().hex[:12],
+                "Data": game_date.isoformat(),
                 "Hora": game_time.strftime("%H:%M"),
-                "Liga": LEAGUES[league_code],
+                "Código da liga": code,
+                "Liga": league_name,
                 "Mandante": home,
                 "Visitante": away,
                 "Casa de apostas": bookmaker.strip() or "Não informada",
-                "Cotação mandante": float(odd_home),
-                "Cotação empate": float(odd_draw),
-                "Cotação visitante": float(odd_away),
-                "Cotação mais de 2,5": float(odd_over) if odd_over > 1 else None,
-                "Cotação menos de 2,5": float(odd_under) if odd_under > 1 else None,
+                "Odd mandante": odd_h if use_1x2 else None,
+                "Odd empate": odd_d if use_1x2 else None,
+                "Odd visitante": odd_a if use_1x2 else None,
+                "Odd mais de 2,5": odd_o if use_ou else None,
+                "Odd menos de 2,5": odd_u if use_ou else None,
+                "Odd ambas marcam — Sim": odd_by if use_btts else None,
+                "Odd ambas marcam — Não": odd_bn if use_btts else None,
             }
-            added = add_or_update_game(game)
-            st.session_state.last_bookmaker_v271 = bookmaker.strip() or "Pixbet"
-            st.session_state.pop("input_v271", None)
-            st.session_state.pop("result_v271", None)
-            st.session_state.pop("diag_v271", None)
-            st.success("Partida adicionada." if added else "Partida atualizada.")
-            st.rerun()
+            action = upsert_game(game)
+            st.success(f"Partida {action}: {home} x {away}.")
 
-    batch = games_frame()
-    st.divider()
-    st.subheader(f"Rodada montada — {len(batch)} partida(s)")
+st.subheader("2. Partidas do lote")
+if not games():
+    st.info("Adicione a primeira partida acima.")
+else:
+    visible = games_frame().copy()
+    visible["Jogo"] = visible["Mandante"] + " x " + visible["Visitante"]
+    st.dataframe(
+        visible[[
+            "Data", "Hora", "Liga", "Jogo", "Casa de apostas",
+            "Odd mandante", "Odd empate", "Odd visitante",
+            "Odd mais de 2,5", "Odd menos de 2,5",
+            "Odd ambas marcam — Sim", "Odd ambas marcam — Não",
+        ]],
+        hide_index=True,
+        use_container_width=True,
+    )
+    remove_col, clear_col = st.columns([3, 1])
+    labels = [f"{index + 1}. {item['Mandante']} x {item['Visitante']} — {item['Liga']}" for index, item in enumerate(games())]
+    remove_label = remove_col.selectbox("Remover partida", ["Nenhuma"] + labels)
+    if remove_col.button("REMOVER SELECIONADA", use_container_width=True) and remove_label != "Nenhuma":
+        index = labels.index(remove_label)
+        games().pop(index)
+        st.rerun()
+    if clear_col.button("LIMPAR LOTE", use_container_width=True):
+        st.session_state.tex_games = []
+        for key in ("tex_entries", "tex_readings", "tex_evaluations", "tex_diagnostics"):
+            st.session_state.pop(key, None)
+        st.rerun()
 
-    if batch.empty:
-        st.info("Adicione a primeira partida usando os seletores acima.")
-    else:
-        display = batch.copy()
-        display.insert(2, "Jogo", display["Mandante"] + " x " + display["Visitante"])
-        display = display.drop(columns=["Mandante", "Visitante"])
-        st.dataframe(display, use_container_width=True, hide_index=True)
-
-        labels = {
-            index: f"{row['Data']} {row['Hora']} — {row['Liga']} — {row['Mandante']} x {row['Visitante']}"
-            for index, row in batch.iterrows()
-        }
-        r1, r2 = st.columns([3, 1])
-        remove_index = r1.selectbox("Remover partida", options=list(labels), format_func=lambda index: labels[index])
-        if r2.button("REMOVER", use_container_width=True):
-            del st.session_state.games_v271[int(remove_index)]
-            st.session_state.pop("result_v271", None)
-            st.session_state.pop("diag_v271", None)
-            st.rerun()
-
-        clear_col, analyze_col = st.columns([1, 3])
-        if clear_col.button("LIMPAR RODADA", use_container_width=True):
-            st.session_state.games_v271 = []
-            st.session_state.pop("result_v271", None)
-            st.session_state.pop("diag_v271", None)
-            st.rerun()
-
-        run = analyze_col.button("ANALISAR E MONTAR CARTEIRA", type="primary", use_container_width=True)
-        if run:
-            with st.spinner("Analisando a rodada e montando a carteira..."):
-                portfolio, diagnostics = analyze_batch(
-                    batch,
-                    matches,
-                    zone_metrics,
-                    bankroll=float(bankroll),
-                    unit_fraction=unit_fraction,
-                    weekly_top_n=int(weekly_limit),
-                    cfg=CFG,
-                )
-            st.session_state.input_v271 = batch.copy()
-            st.session_state.result_v271 = portfolio
-            st.session_state.diag_v271 = diagnostics
-            st.session_state.batch_id_v271 = uuid4().hex[:12]
-
-    portfolio = st.session_state.get("result_v271", pd.DataFrame())
-    diagnostics = st.session_state.get("diag_v271", pd.DataFrame())
-
-    if not diagnostics.empty:
-        errors = diagnostics[diagnostics["Situação"].eq("ERRO")]
-        if not errors.empty:
-            st.warning(f"{len(errors)} partida(s) ficaram fora por erro de validação.")
-            st.dataframe(errors, use_container_width=True, hide_index=True)
-
-    if not portfolio.empty:
-        operating = portfolio[portfolio["Decision"].eq("OPERAR")].copy()
-        reserves = portfolio[portfolio["Decision"].eq("RESERVA")].copy()
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Entradas operacionais", len(operating))
-        c2.metric("Reservas", len(reserves))
-        c3.metric("Exposição", f"R$ {operating['Stake'].sum():.2f}")
-        c4.metric("Ligas com entrada", operating["League"].nunique() if not operating.empty else 0)
-        if operating.empty:
-            st.warning("Nenhuma seleção passou pela regra operacional nesta rodada.")
-        else:
-            st.markdown('<div class="operar"><strong>CARTEIRA OPERACIONAL</strong><br>Somente estas linhas recebem entrada.</div>', unsafe_allow_html=True)
-            display = format_portfolio(operating)
-            st.dataframe(
-                display.style.format({
-                    "Cotação": "{:.2f}",
-                    "Prob. mercado": "{:.2%}",
-                    "Prob. modelo": "{:.2%}",
-                    "Acerto histórico": "{:.2%}",
-                    "ROI histórico": "{:.2%}",
-                    "Entrada": "R$ {:.2f}",
-                }, na_rep="—"),
-                use_container_width=True,
-                hide_index=True,
-            )
-        if not reserves.empty:
-            with st.expander(f"Reservas aprovadas fora do limite semanal ({len(reserves)})"):
-                st.dataframe(format_portfolio(reserves), use_container_width=True, hide_index=True)
-
-with audit_tab:
-    batch = st.session_state.get("input_v271", games_frame())
-    portfolio = st.session_state.get("result_v271", pd.DataFrame())
-    diagnostics = st.session_state.get("diag_v271", pd.DataFrame())
-    if batch.empty:
-        st.info("Monte a rodada no primeiro painel para liberar a auditoria.")
-    else:
-        st.subheader("Arquivos auditáveis")
-        st.download_button(
-            "BAIXAR RODADA",
-            batch.to_csv(index=False).encode("utf-8-sig"),
-            "rodada_tex_v27_1.csv",
-            "text/csv",
-            use_container_width=True,
+    if st.button("ANALISAR TODO O LOTE", type="primary", use_container_width=True):
+        entries, readings, evaluations, diagnostics = analyze_games(
+            games_frame(),
+            matches,
+            calibration_book,
+            bankroll=bankroll,
+            unit_fraction=unit_percent / 100.0,
+            max_entries=int(max_entries),
         )
-        if not portfolio.empty:
-            export = format_portfolio(portfolio)
-            st.download_button(
-                "BAIXAR CARTEIRA E RESERVAS",
-                export.to_csv(index=False).encode("utf-8-sig"),
-                "carteira_operacional_v27_1.csv",
-                "text/csv",
-                use_container_width=True,
-            )
-        if not diagnostics.empty:
-            st.download_button(
-                "BAIXAR DIAGNÓSTICO",
-                diagnostics.to_csv(index=False).encode("utf-8-sig"),
-                "diagnostico_v27_1.csv",
-                "text/csv",
-                use_container_width=True,
-            )
-        st.subheader("Gravar na planilha histórica")
-        st.caption("A gravação é por acréscimo e não apaga linhas existentes.")
-        if google_configurado(st.secrets):
-            if st.button("SALVAR RODADA E DECISÕES NO GOOGLE", use_container_width=True):
-                batch_id = st.session_state.get("batch_id_v271", uuid4().hex[:12])
-                try:
-                    n_quotes = salvar_cotacoes(st.secrets, catalog_records(batch_id, batch, float(bankroll)))
-                    n_analysis = salvar_analises(
-                        st.secrets,
-                        analysis_records(batch_id, portfolio, batch, unit_fraction),
-                    ) if not portfolio.empty else 0
-                    st.success(f"Salvo: {n_quotes} cotações e {n_analysis} decisões, sem substituir o histórico.")
-                except Exception as exc:
-                    st.error(f"Falha ao salvar: {exc}")
-        else:
-            st.info("A conexão Google não está disponível nesta execução.")
+        st.session_state.tex_entries = entries
+        st.session_state.tex_readings = readings
+        st.session_state.tex_evaluations = evaluations
+        st.session_state.tex_diagnostics = diagnostics
 
-st.caption("Ligas e times vêm do catálogo interno; você informa apenas data, horário e odds. Resultados futuros não são garantidos.")
+entries = st.session_state.get("tex_entries", pd.DataFrame())
+readings = st.session_state.get("tex_readings", pd.DataFrame())
+evaluations = st.session_state.get("tex_evaluations", pd.DataFrame())
+diagnostics = st.session_state.get("tex_diagnostics", pd.DataFrame())
+
+if not readings.empty or not diagnostics.empty:
+    st.subheader("3. Resultado")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Partidas analisadas", int((diagnostics["Situação"] == "ANALISADO").sum()) if not diagnostics.empty else 0)
+    m2.metric("Entradas", len(entries))
+    m3.metric("Leituras principais", len(readings))
+    m4.metric("Mercados avaliados", len(evaluations))
+
+    tab_entries, tab_readings, tab_all, tab_errors = st.tabs(
+        ["Entradas com preço", "Leitura principal de cada jogo", "Todos os mercados", "Diagnóstico"]
+    )
+    with tab_entries:
+        if entries.empty:
+            st.warning("Nenhuma odd do lote atingiu o preço mínimo. As melhores leituras continuam disponíveis na próxima aba; o aplicativo não fica vazio como a V25.")
+        else:
+            st.dataframe(
+                display_frame(entries),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Probabilidade operacional": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                    "Probabilidade mínima da odd": st.column_config.NumberColumn(format="%.1f%%"),
+                    "Margem estimada": st.column_config.NumberColumn(format="%.1f%%"),
+                    "Estabilidade": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                    "Entrada fixa": st.column_config.NumberColumn(format="R$ %.2f"),
+                },
+            )
+    with tab_readings:
+        st.caption("Sempre há uma leitura principal por partida. Ela não é automaticamente uma entrada.")
+        st.dataframe(display_frame(readings), hide_index=True, use_container_width=True)
+    with tab_all:
+        st.dataframe(display_frame(evaluations.sort_values(["MatchID", "Score"], ascending=[True, False])), hide_index=True, use_container_width=True)
+    with tab_errors:
+        st.dataframe(diagnostics, hide_index=True, use_container_width=True)
+
+    if google_configurado(st.secrets):
+        if st.button("SALVAR COTAÇÕES E ANÁLISES NA PLANILHA", use_container_width=True):
+            try:
+                saved_odds = salvar_cotacoes(st.secrets, make_catalog_records(evaluations, bankroll))
+                saved_analysis = salvar_analises(st.secrets, make_analysis_records(evaluations, unit_percent / 100.0))
+                st.success(f"Salvos: {saved_odds} registros de odds e {saved_analysis} análises.")
+            except Exception as exc:
+                st.error(f"Não foi possível gravar na planilha: {exc}")
