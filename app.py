@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import json
 from datetime import date, datetime, time
 from pathlib import Path
 from uuid import uuid4
@@ -25,13 +26,16 @@ from tex_v25_core import (
 from tex_v25_storage import (
     ABA_ANALISES,
     ABA_COTACOES,
+    PLANILHA_ANTIGA_URL,
     agora_brasilia,
     carregar_analises,
     carregar_cotacoes,
     confirmar_resultado,
+    configuracao_google,
     google_configurado,
     salvar_analises,
-    salvar_cotacao,
+    salvar_cotacoes,
+    url_planilha_configurada,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -604,71 +608,245 @@ def mostrar_resultado(
     )
 
 
-def criar_registros(payload: dict) -> tuple[dict, list[dict]]:
+def _mercado_legado(codigo: str) -> str:
+    return {
+        "H": "Vitória Casa",
+        "D": "Empate",
+        "A": "Vitória Fora",
+        "O25": "Mais de 2.5 gols",
+        "U25": "Menos de 2.5 gols",
+        "AMBAS_SIM": "Ambos marcam - Sim",
+        "AMBAS_NAO": "Ambos marcam - Não",
+    }.get(codigo, codigo)
+
+
+def _grupo_mercado(codigo: str) -> str:
+    if codigo in {"H", "D", "A"}:
+        return "Resultado final 1X2"
+    if codigo in {"O25", "U25"}:
+        return "Total de gols 2.5"
+    if codigo in {"AMBAS_SIM", "AMBAS_NAO"}:
+        return "Ambas marcam"
+    return "Outro"
+
+
+def criar_linhas_cotacoes(
+    identificador_coleta: str,
+    nome_liga: str,
+    temporada: int,
+    data_partida: date,
+    horario_partida: time | None,
+    mandante: str,
+    visitante: str,
+    fonte: str,
+    odds: dict[str, float],
+    banca: float,
+    contexto: dict,
+) -> list[dict]:
+    validas = {codigo: float(odd) for codigo, odd in odds.items() if odd and float(odd) > 1.0}
+    grupos: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for codigo, odd in validas.items():
+        grupos[_grupo_mercado(codigo)].append((codigo, odd))
+    esperados = {"Resultado final 1X2": 3, "Total de gols 2.5": 2, "Ambas marcam": 2}
+    metricas: dict[str, dict] = {}
+    for grupo, itens in grupos.items():
+        completo = len(itens) == esperados.get(grupo, 0)
+        soma = sum(1.0 / odd for _, odd in itens)
+        for codigo, odd in itens:
+            metricas[codigo] = {
+                "completo": completo,
+                "bruta": 100.0 / odd,
+                "margem": (soma - 1.0) * 100.0 if completo else "",
+                "ajustada": ((1.0 / odd) / soma) * 100.0 if completo and soma > 0 else "",
+            }
     momento = agora_brasilia()
+    jogo = f"{mandante} x {visitante}"
+    hora = horario_partida.strftime("%H:%M") if horario_partida else ""
+    selecoes = {
+        "H": mandante,
+        "D": "Empate",
+        "A": visitante,
+        "O25": "Mais de 2.5 gols",
+        "U25": "Menos de 2.5 gols",
+        "AMBAS_SIM": "Sim",
+        "AMBAS_NAO": "Não",
+    }
+    linhas = []
+    for codigo, odd in validas.items():
+        metrica = metricas[codigo]
+        linhas.append({
+            "ID Coleta": identificador_coleta,
+            "Registrado em": momento,
+            "Casa de apostas": fonte or "Não informada",
+            "Liga": nome_liga,
+            "Jogo": jogo,
+            "Mandante": mandante,
+            "Visitante": visitante,
+            "Data do jogo": data_partida.strftime("%Y-%m-%d"),
+            "Hora do jogo": hora,
+            "Mercado": _mercado_legado(codigo),
+            "Seleção": selecoes.get(codigo, codigo),
+            "Cotação": odd,
+            "Grupo do mercado": _grupo_mercado(codigo),
+            "Mercado completo": "Sim" if metrica["completo"] else "Não",
+            "Probabilidade implícita bruta %": metrica["bruta"],
+            "Margem do mercado %": metrica["margem"],
+            "Probabilidade ajustada sem margem %": metrica["ajustada"],
+            "Banca no momento": banca,
+            "Perfil": "Tex Statistics v.25",
+            "Origem": "Digitação manual",
+            "Observação": "Coleta salva por clique explícito; histórico somente de acréscimo.",
+            "Temporada": temporada,
+            "Posição do mandante": contexto.get("Posição do mandante", ""),
+            "Posição do visitante": contexto.get("Posição do visitante", ""),
+            "Pontos do mandante": contexto.get("Pontos do mandante", ""),
+            "Pontos do visitante": contexto.get("Pontos do visitante", ""),
+            "Pontos por jogo do mandante": contexto.get("Pontos por jogo do mandante", ""),
+            "Pontos por jogo do visitante": contexto.get("Pontos por jogo do visitante", ""),
+        })
+    return linhas
+
+
+def criar_registros(payload: dict) -> tuple[list[dict], list[dict]]:
     contexto = payload["contexto"]
-    odds = payload["odds"]
-    comum = {
-        "Identificador da análise": payload["identificador"],
-        "Salvo em Brasília": momento,
-        "Data da análise": payload["data"].strftime("%d/%m/%Y"),
-        "Horário da partida (Brasília)": payload.get("horario").strftime("%H:%M") if payload.get("horario") else "",
-        "Banca informada (R$)": payload.get("banca", ""),
-        "Percentual da unidade (%)": payload.get("percentual_unidade", ""),
-        "Valor da unidade (R$)": payload.get("valor_unidade", ""),
-        "Liga": payload["liga"],
-        "Temporada": payload["temporada"],
-        "Mandante": payload["mandante"],
-        "Visitante": payload["visitante"],
-        "Fonte das cotações": payload["fonte"],
-        "Posição do mandante": contexto.get("Posição do mandante", ""),
-        "Posição do visitante": contexto.get("Posição do visitante", ""),
-        "Pontos do mandante": contexto.get("Pontos do mandante", ""),
-        "Pontos do visitante": contexto.get("Pontos do visitante", ""),
-        "Pontos por jogo do mandante": contexto.get("Pontos por jogo do mandante", ""),
-        "Pontos por jogo do visitante": contexto.get("Pontos por jogo do visitante", ""),
-        "Gols por jogo do mandante": contexto.get("Gols por jogo do mandante", ""),
-        "Gols por jogo do visitante": contexto.get("Gols por jogo do visitante", ""),
-        "Gols sofridos por jogo do mandante": contexto.get("Gols sofridos por jogo do mandante", ""),
-        "Gols sofridos por jogo do visitante": contexto.get("Gols sofridos por jogo do visitante", ""),
-        "Resultado confirmado": "NÃO",
-    }
-    cotacao = {
-        **comum,
-        "Cotação informada — vitória do mandante": odds.get("H", ""),
-        "Cotação informada — empate": odds.get("D", ""),
-        "Cotação informada — vitória do visitante": odds.get("A", ""),
-        "Cotação informada — mais de 2,5 gols": odds.get("O25", ""),
-        "Cotação informada — menos de 2,5 gols": odds.get("U25", ""),
-        "Cotação informada — ambas as equipes marcam: sim": odds.get("AMBAS_SIM", ""),
-        "Cotação informada — ambas as equipes marcam: não": odds.get("AMBAS_NAO", ""),
-    }
+    linhas_cotacoes = criar_linhas_cotacoes(
+        payload["id_coleta"], payload["liga"], payload["temporada"], payload["data"], payload.get("horario"),
+        payload["mandante"], payload["visitante"], payload["fonte"], payload["odds"], payload.get("banca", 0.0), contexto,
+    )
+    momento = agora_brasilia()
+    config_json = json.dumps({
+        "percentual_unidade": payload.get("percentual_unidade", 0.0),
+        "valor_unidade": payload.get("valor_unidade", 0.0),
+        "contexto_classificacao": {k: v for k, v in contexto.items() if k != "Quadro"},
+    }, ensure_ascii=False, default=str)
     registros = []
     for _, linha in payload["resultado"].iterrows():
-        registros.append(
-            {
-                **comum,
-                "Situação": linha["SituacaoDetalhada"],
-                "Mercado": nome_mercado(str(linha["Market"])),
-                "Código da seleção": str(linha["Side"]),
-                "Seleção": nome_selecao(str(linha["Side"]), payload["mandante"], payload["visitante"]),
-                "Motivo da decisão": linha["Motivo"],
-                "Probabilidade do mercado": linha["MarketProbability"],
-                "Probabilidade esportiva": linha["SportsProbability"],
-                "Probabilidade mínima exigida pela cotação": linha["ProbabilidadeMinima"],
-                "Diferença entre modelo e mercado": linha["ProbabilityDifference"],
-                "Valor esperado esportivo": linha["ValorEsperadoEsportivo"],
-                "Valor histórico no preço atual": linha["HistoricalEVAtCurrentPrice"],
-                "Cotação informada": linha["ExecutableOdd"],
-                "Amostra histórica": linha["HistoricalBets"],
-                "Acerto histórico": linha["HistoricalHitRate"],
-                "Retorno histórico": linha["HistoricalROI"],
-                "Gols esperados do mandante": payload["esportivo"]["LambdaHome"],
-                "Gols esperados do visitante": payload["esportivo"]["LambdaAway"],
-            }
-        )
-    return cotacao, registros
+        codigo = str(linha["Side"])
+        prob_esportiva = float(linha["SportsProbability"])
+        prob_empirica = linha.get("HistoricalHitRate")
+        registros.append({
+            "ID Análise": payload["identificador"],
+            "ID Coleta": payload["id_coleta"],
+            "Registrado em": momento,
+            "Liga": payload["liga"],
+            "Jogo": f"{payload['mandante']} x {payload['visitante']}",
+            "Mandante": payload["mandante"],
+            "Visitante": payload["visitante"],
+            "Data do jogo": payload["data"].strftime("%Y-%m-%d"),
+            "Hora do jogo": payload.get("horario").strftime("%H:%M") if payload.get("horario") else "",
+            "Casa de apostas": payload["fonte"] or "Não informada",
+            "Origem": "Digitação manual",
+            "Mercado": _mercado_legado(codigo),
+            "Cotação": float(linha["ExecutableOdd"]),
+            "Probabilidade operacional %": prob_esportiva * 100.0,
+            "Probabilidade Poisson %": prob_esportiva * 100.0,
+            "Probabilidade empírica %": "" if pd.isna(prob_empirica) else float(prob_empirica) * 100.0,
+            "Probabilidade de mercado ajustada %": float(linha["MarketProbability"]) * 100.0,
+            "Cotação justa": (1.0 / prob_esportiva) if prob_esportiva > 0 else "",
+            "Valor esperado %": float(linha["ValorEsperadoEsportivo"]) * 100.0,
+            "Gols projetados casa": payload["esportivo"]["LambdaHome"],
+            "Gols projetados fora": payload["esportivo"]["LambdaAway"],
+            "Gols projetados total": payload["esportivo"]["LambdaHome"] + payload["esportivo"]["LambdaAway"],
+            "Chance mandante marcar %": (1.0 - np.exp(-payload["esportivo"]["LambdaHome"])) * 100.0,
+            "Chance visitante marcar %": (1.0 - np.exp(-payload["esportivo"]["LambdaAway"])) * 100.0,
+            "Amostra casa": "",
+            "Amostra fora": "",
+            "Estabilidade": linha["SituacaoDetalhada"],
+            "Situação": linha["SituacaoDetalhada"],
+            "Entrada %": payload.get("percentual_unidade", 0.0) if linha["SituacaoDetalhada"] == "AUTORIZADA" else 0.0,
+            "Versão do modelo": "Tex Statistics v.25",
+            "Configuração JSON": config_json,
+            "Probabilidade mínima exigida %": float(linha["ProbabilidadeMinima"]) * 100.0,
+            "Diferença modelo–mercado (p.p.)": float(linha["ProbabilityDifference"]) * 100.0,
+            "Amostra histórica": int(linha.get("HistoricalBets") or 0),
+            "Retorno histórico %": "" if pd.isna(linha.get("HistoricalROI")) else float(linha["HistoricalROI"]) * 100.0,
+            "Motivo da decisão": linha["Motivo"],
+            "Posição do mandante": contexto.get("Posição do mandante", ""),
+            "Posição do visitante": contexto.get("Posição do visitante", ""),
+            "Pontos do mandante": contexto.get("Pontos do mandante", ""),
+            "Pontos do visitante": contexto.get("Pontos do visitante", ""),
+            "Pontos por jogo do mandante": contexto.get("Pontos por jogo do mandante", ""),
+            "Pontos por jogo do visitante": contexto.get("Pontos por jogo do visitante", ""),
+            "Resultado confirmado": "NÃO",
+        })
+    return linhas_cotacoes, registros
 
+
+def gerar_resumo_compartilhavel(payload: dict) -> str:
+    contexto = payload["contexto"]
+    linhas = [
+        "TEX STATISTICS V.25 — RESUMO PARA ANÁLISE TEXTUAL",
+        f"Identificador da análise: {payload['identificador']}",
+        f"Jogo: {payload['mandante']} x {payload['visitante']}",
+        f"Liga: {payload['liga']} | Temporada: {payload['temporada']}",
+        f"Data: {payload['data'].strftime('%d/%m/%Y')} | Horário de Brasília: {payload.get('horario').strftime('%H:%M') if payload.get('horario') else 'não informado'}",
+        f"Fonte das cotações: {payload['fonte'] or 'não informada'}",
+        f"Banca: R$ {payload.get('banca', 0.0):.2f} | Unidade: {payload.get('percentual_unidade', 0.0):.2f}% = R$ {payload.get('valor_unidade', 0.0):.2f}",
+        "",
+        "CLASSIFICAÇÃO PRÉ-JOGO",
+    ]
+    if contexto.get("Disponível"):
+        linhas.extend([
+            f"- {payload['mandante']}: {contexto.get('Posição do mandante')}º, {contexto.get('Pontos do mandante')} pontos, {contexto.get('Pontos por jogo do mandante'):.2f} ponto por jogo.",
+            f"- {payload['visitante']}: {contexto.get('Posição do visitante')}º, {contexto.get('Pontos do visitante')} pontos, {contexto.get('Pontos por jogo do visitante'):.2f} ponto por jogo.",
+        ])
+    else:
+        linhas.append("- Classificação indisponível para o recorte selecionado.")
+    linhas.extend([
+        "",
+        "PROJEÇÃO DE GOLS",
+        f"- Mandante: {payload['esportivo']['LambdaHome']:.2f}",
+        f"- Visitante: {payload['esportivo']['LambdaAway']:.2f}",
+        f"- Total: {payload['esportivo']['LambdaHome'] + payload['esportivo']['LambdaAway']:.2f}",
+        f"- Probabilidade de ambas as equipes marcarem: {payload['esportivo']['BTTS_Y']:.2%}",
+        "",
+        "COTAÇÕES, PROBABILIDADES E DECISÕES",
+    ])
+    for _, r in payload["resultado"].iterrows():
+        linhas.append(
+            f"- {nome_selecao(str(r['Side']), payload['mandante'], payload['visitante'])}: "
+            f"cotação {float(r['ExecutableOdd']):.2f}; mercado {float(r['MarketProbability']):.2%}; "
+            f"esportiva {float(r['SportsProbability']):.2%}; mínima exigida {float(r['ProbabilidadeMinima']):.2%}; "
+            f"valor esperado {float(r['ValorEsperadoEsportivo']):.2%}; situação {r['SituacaoDetalhada']}. "
+            f"Motivo: {r['Motivo']}"
+        )
+    autorizadas = payload["resultado"][payload["resultado"]["SituacaoDetalhada"] == "AUTORIZADA"]
+    sinais = payload["resultado"][payload["resultado"]["SituacaoDetalhada"].astype(str).str.startswith("SINAL")]
+    linhas.extend(["", "CONCLUSÃO AUTOMÁTICA"])
+    if not autorizadas.empty:
+        nomes = ", ".join(nome_selecao(str(c), payload['mandante'], payload['visitante']) for c in autorizadas['Side'])
+        linhas.append(f"- Entrada(s) autorizada(s): {nomes}.")
+    elif not sinais.empty:
+        nomes = ", ".join(nome_selecao(str(c), payload['mandante'], payload['visitante']) for c in sinais['Side'])
+        linhas.append(f"- Nenhuma entrada autorizada. Sinais fora da faixa validada: {nomes}.")
+    else:
+        linhas.append("- Nenhuma entrada autorizada; todas as seleções foram descartadas.")
+    return "\n".join(linhas)
+
+
+def mostrar_resumo_compartilhavel(payload: dict) -> None:
+    resumo = gerar_resumo_compartilhavel(payload)
+    st.markdown("### Resumo para copiar e enviar")
+    st.caption("Este é o texto completo para copiar e enviar em uma nova análise.")
+    st.text_area("Resumo textual", value=resumo, height=460, key=f"resumo_{payload['identificador']}")
+    texto_js = json.dumps(resumo, ensure_ascii=False)
+    components.html(
+        f'''<button id="copiar" style="width:100%;padding:12px;border:0;border-radius:10px;font-weight:700;cursor:pointer;background:#ef4444;color:white">COPIAR RESUMO</button>
+        <script>
+        document.getElementById('copiar').onclick = async () => {{
+          try {{ await navigator.clipboard.writeText({texto_js}); document.getElementById('copiar').innerText='RESUMO COPIADO'; }}
+          catch(e) {{ document.getElementById('copiar').innerText='SELECIONE O TEXTO ACIMA E COPIE'; }}
+        }};
+        </script>''',
+        height=52,
+    )
+    st.download_button(
+        "BAIXAR RESUMO EM TXT",
+        resumo.encode("utf-8"),
+        file_name=f"resumo_{payload['identificador']}.txt",
+        mime="text/plain",
+        key=f"baixar_resumo_{payload['identificador']}",
+    )
 
 def historico_local() -> tuple[pd.DataFrame, pd.DataFrame]:
     cotacoes = pd.DataFrame(st.session_state.historico_sessao_cotacoes)
@@ -681,11 +859,11 @@ def historico_local() -> tuple[pd.DataFrame, pd.DataFrame]:
             analises = pd.concat([analises_google, analises], ignore_index=True)
         except Exception as erro:
             st.warning(f"Não foi possível ler o histórico da Planilha Google: {erro}")
-    if not cotacoes.empty and "Identificador da análise" in cotacoes:
-        cotacoes = cotacoes.drop_duplicates("Identificador da análise", keep="last")
-    if not analises.empty and all(coluna in analises for coluna in ["Identificador da análise", "Mercado", "Código da seleção"]):
+    if not cotacoes.empty and "ID Coleta" in cotacoes:
+        cotacoes = cotacoes.drop_duplicates(["ID Coleta", "Mercado"], keep="last")
+    if not analises.empty and all(coluna in analises for coluna in ["ID Análise", "Mercado"]):
         analises = analises.drop_duplicates(
-            ["Identificador da análise", "Mercado", "Código da seleção"], keep="last"
+            ["ID Análise", "Mercado"], keep="last"
         )
     return cotacoes, analises
 
@@ -814,7 +992,40 @@ with aba_jogo:
         else:
             st.caption(f"Margem calculada do mercado de gols: {margem_gols:.2%}.")
 
-    if st.button("Analisar jogo", type="primary"):
+    assinatura_formulario = (
+        nome_liga, int(temporada), data_analise.isoformat(), str(horario_partida), mandante, visitante, fonte,
+        round(odd_casa, 4), round(odd_empate, 4), round(odd_fora, 4), round(odd_mais, 4),
+        round(odd_menos, 4), round(odd_ambas_sim, 4), round(odd_ambas_nao, 4),
+    )
+    botao1, botao2 = st.columns(2)
+    with botao1:
+        salvar_cotacoes_agora = st.button("SALVAR COTAÇÕES", type="secondary", use_container_width=True)
+    with botao2:
+        analisar_agora = st.button("ANALISAR JOGO", type="primary", use_container_width=True)
+
+    if salvar_cotacoes_agora:
+        identificador_coleta = uuid4().hex[:12]
+        odds_para_salvar = {
+            "H": odd_casa, "D": odd_empate, "A": odd_fora, "O25": odd_mais, "U25": odd_menos,
+            "AMBAS_SIM": odd_ambas_sim, "AMBAS_NAO": odd_ambas_nao,
+        }
+        linhas_cotacoes = criar_linhas_cotacoes(
+            identificador_coleta, nome_liga, int(temporada), data_analise, horario_partida, mandante, visitante,
+            fonte, odds_para_salvar, float(banca_atual), contexto,
+        )
+        if not linhas_cotacoes:
+            st.error("Informe pelo menos uma cotação válida antes de salvar.")
+        elif google_configurado(st.secrets):
+            try:
+                quantidade = salvar_cotacoes(st.secrets, linhas_cotacoes)
+                st.session_state.ultima_coleta_v25 = {"assinatura": assinatura_formulario, "id": identificador_coleta}
+                st.success(f"{quantidade} cotação(ões) acrescentada(s) ao catálogo da planilha antiga. Nenhuma linha anterior foi alterada.")
+            except Exception as erro:
+                st.error(f"Não foi possível salvar na planilha antiga: {erro}")
+        else:
+            st.error("A conta de serviço do Google não foi reconhecida. A V25 já aponta para a planilha antiga; confira os Segredos do Streamlit.")
+
+    if analisar_agora:
         try:
             estado = estado_antes_da_data(data_analise.isoformat())
             esportivo = sports_probabilities_for_match(codigo, mandante, visitante, estado, CFG)
@@ -838,6 +1049,11 @@ with aba_jogo:
                 resultado = preparar_resultado(resultado)
                 st.session_state.ultima_analise_v25 = {
                     "identificador": uuid4().hex[:12],
+                    "id_coleta": (
+                        st.session_state.get("ultima_coleta_v25", {}).get("id")
+                        if st.session_state.get("ultima_coleta_v25", {}).get("assinatura") == assinatura_formulario
+                        else uuid4().hex[:12]
+                    ),
                     "data": data_analise,
                     "horario": horario_partida,
                     "banca": float(banca_atual),
@@ -879,39 +1095,38 @@ with aba_jogo:
                 "Este mercado ainda não recebe autorização financeira porque a base histórica não contém cotações antigas suficientes."
             )
 
-        cotacao, registros = criar_registros(payload)
+        linhas_cotacoes, registros = criar_registros(payload)
+        mostrar_resumo_compartilhavel(payload)
         s1, s2, s3 = st.columns([1.5, 1.2, 1.2])
         with s1:
-            if st.button("Salvar cotações e probabilidades", type="secondary"):
+            if st.button("SALVAR ANÁLISE COMPLETA", type="secondary", use_container_width=True):
                 if google_configurado(st.secrets):
                     try:
-                        quantidade_cotacoes = salvar_cotacao(st.secrets, cotacao)
+                        quantidade_cotacoes = salvar_cotacoes(st.secrets, linhas_cotacoes)
                         quantidade_analises = salvar_analises(st.secrets, registros)
                         st.success(
-                            f"Salvo no histórico permanente: {quantidade_cotacoes} jogo e "
-                            f"{quantidade_analises} linhas de probabilidades. Nenhum registro antigo foi apagado."
+                            f"Planilha antiga atualizada: {quantidade_cotacoes} cotação(ões) nova(s) e "
+                            f"{quantidade_analises} linha(s) de análise. O histórico anterior foi preservado."
                         )
                     except Exception as erro:
-                        st.session_state.historico_sessao_cotacoes.append(cotacao)
-                        st.session_state.historico_sessao_analises.extend(registros)
-                        st.error(f"Falha na Planilha Google; mantido nesta sessão: {erro}")
+                        st.error(f"Falha ao salvar na planilha antiga: {erro}")
                 else:
-                    st.session_state.historico_sessao_cotacoes.append(cotacao)
-                    st.session_state.historico_sessao_analises.extend(registros)
-                    st.warning("Salvo apenas nesta sessão. Conecte a Planilha Google para manter permanentemente.")
+                    st.error("A conta de serviço do Google não foi reconhecida nos Segredos do Streamlit.")
         with s2:
             st.download_button(
-                "Baixar probabilidades",
+                "BAIXAR PROBABILIDADES",
                 pd.DataFrame(registros).to_csv(index=False).encode("utf-8-sig"),
                 f"probabilidades_{payload['identificador']}.csv",
                 "text/csv",
+                use_container_width=True,
             )
         with s3:
             st.download_button(
-                "Baixar cotações",
-                pd.DataFrame([cotacao]).to_csv(index=False).encode("utf-8-sig"),
-                f"cotacoes_{payload['identificador']}.csv",
+                "BAIXAR COTAÇÕES",
+                pd.DataFrame(linhas_cotacoes).to_csv(index=False).encode("utf-8-sig"),
+                f"cotacoes_{payload['id_coleta']}.csv",
                 "text/csv",
+                use_container_width=True,
             )
 
 with aba_lote:
@@ -1047,7 +1262,7 @@ with aba_historico:
         if cotacoes_historicas.empty:
             st.info("Ainda não há cotações salvas.")
         else:
-            st.metric("Jogos salvos", cotacoes_historicas["Identificador da análise"].nunique())
+            st.metric("Jogos salvos", cotacoes_historicas["ID Coleta"].nunique())
             st.dataframe(cotacoes_historicas.iloc[::-1], use_container_width=True, hide_index=True)
             st.download_button(
                 "Baixar histórico de cotações",
@@ -1176,24 +1391,30 @@ with aba_atualizacao:
     )
 
 with aba_planilha:
-    st.markdown("### Histórico permanente na Planilha Google")
-    st.write(f"- **{ABA_COTACOES}**: uma linha por jogo, com todas as cotações digitadas.")
-    st.write(f"- **{ABA_ANALISES}**: uma linha por seleção, com probabilidades, valor esperado e decisão.")
-    st.success("O salvamento é cumulativo. Novas linhas são acrescentadas; nenhuma linha antiga é apagada ou substituída.")
+    st.markdown("### Planilha Google histórica")
+    cfg_google = configuracao_google(st.secrets)
+    st.write("O aplicativo usa a mesma planilha das versões anteriores. Não é necessário criar outra.")
+    st.link_button("ABRIR A PLANILHA ANTIGA", url_planilha_configurada(st.secrets), use_container_width=True)
+    st.write(f"- **{cfg_google['worksheet_catalogo']}**: catálogo cumulativo de cotações.")
+    st.write(f"- **{cfg_google['worksheet_historico']}**: probabilidades, decisões e resumos numéricos das análises.")
+    st.write(f"- **{cfg_google['worksheet_auditoria']}**: auditoria das entradas confirmadas.")
+    st.success("As gravações são somente de acréscimo: nenhuma linha antiga é apagada, sobrescrita ou substituída.")
     if google_configurado(st.secrets):
-        st.success("Conexão ativa com a Planilha Google.")
+        st.success(f"Conexão ativa com a planilha antiga. Conta de serviço: {cfg_google['client_email']}")
     else:
-        st.error("Conexão ainda não configurada.")
-    st.markdown(
-        """
-1. Abra a Planilha Google usada como histórico permanente.
-2. Copie o identificador localizado entre `/d/` e `/edit` no endereço da planilha.
-3. Compartilhe a planilha com o endereço da conta de serviço como Editor.
-4. No Streamlit Cloud, abra **Manage app → Settings → Secrets** e informe:
-"""
-    )
-    st.code(
-        '''[google_sheet]\nspreadsheet_id = "IDENTIFICADOR_DA_PLANILHA"\n\n[gcp_service_account]\ntype = "service_account"\nproject_id = "..."\nprivate_key_id = "..."\nprivate_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"\nclient_email = "...@....iam.gserviceaccount.com"\nclient_id = "..."\nauth_uri = "https://accounts.google.com/o/oauth2/auth"\ntoken_uri = "https://oauth2.googleapis.com/token"\nauth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"\nclient_x509_cert_url = "..."''',
-        language="toml",
-    )
+        st.error(
+            "A planilha antiga já está definida no aplicativo, mas a conta de serviço não foi encontrada. "
+            "O aplicativo aceita o mesmo bloco [google_sheets] que já era usado nas versões anteriores."
+        )
+        st.code(
+            '''[google_sheets]
+spreadsheet_id = "1exfvkvNC_7W-0Nk51ZOue5Do7LtR9sS-8x5R0Gf_zMo"
+worksheet_catalogo = "catalogo_odds"
+worksheet_auditoria = "auditoria_entradas"
+worksheet_historico = "historico_analises"
+
+[gcp_service_account]
+# mantenha aqui a mesma conta de serviço que já era usada pelo aplicativo antigo''',
+            language="toml",
+        )
 
