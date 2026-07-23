@@ -246,6 +246,10 @@ if "historico_sessao_cotacoes" not in st.session_state:
     st.session_state.historico_sessao_cotacoes = []
 if "historico_sessao_analises" not in st.session_state:
     st.session_state.historico_sessao_analises = []
+if "historico_google_cotacoes" not in st.session_state:
+    st.session_state.historico_google_cotacoes = []
+if "historico_google_analises" not in st.session_state:
+    st.session_state.historico_google_analises = []
 
 
 @st.cache_resource(show_spinner=False)
@@ -848,23 +852,34 @@ def mostrar_resumo_compartilhavel(payload: dict) -> None:
         key=f"baixar_resumo_{payload['identificador']}",
     )
 
-def historico_local() -> tuple[pd.DataFrame, pd.DataFrame]:
-    cotacoes = pd.DataFrame(st.session_state.historico_sessao_cotacoes)
-    analises = pd.DataFrame(st.session_state.historico_sessao_analises)
-    if google_configurado(st.secrets):
+def historico_local(sincronizar_google: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Usa cache da sessão e só lê a Planilha Google quando o usuário pedir."""
+    cotacoes = pd.DataFrame(st.session_state.historico_google_cotacoes)
+    analises = pd.DataFrame(st.session_state.historico_google_analises)
+
+    if sincronizar_google and google_configurado(st.secrets):
         try:
             cotacoes_google = carregar_cotacoes(st.secrets)
             analises_google = carregar_analises(st.secrets)
-            cotacoes = pd.concat([cotacoes_google, cotacoes], ignore_index=True)
-            analises = pd.concat([analises_google, analises], ignore_index=True)
+            st.session_state.historico_google_cotacoes = cotacoes_google.to_dict("records")
+            st.session_state.historico_google_analises = analises_google.to_dict("records")
+            cotacoes = cotacoes_google
+            analises = analises_google
+            st.success("Histórico sincronizado com a Planilha Google.")
         except Exception as erro:
-            st.warning(f"Não foi possível ler o histórico da Planilha Google: {erro}")
+            st.warning(f"Não foi possível sincronizar agora: {erro}")
+
+    cotacoes_sessao = pd.DataFrame(st.session_state.historico_sessao_cotacoes)
+    analises_sessao = pd.DataFrame(st.session_state.historico_sessao_analises)
+    if not cotacoes_sessao.empty:
+        cotacoes = pd.concat([cotacoes, cotacoes_sessao], ignore_index=True)
+    if not analises_sessao.empty:
+        analises = pd.concat([analises, analises_sessao], ignore_index=True)
+
     if not cotacoes.empty and "ID Coleta" in cotacoes:
         cotacoes = cotacoes.drop_duplicates(["ID Coleta", "Mercado"], keep="last")
     if not analises.empty and all(coluna in analises for coluna in ["ID Análise", "Mercado"]):
-        analises = analises.drop_duplicates(
-            ["ID Análise", "Mercado"], keep="last"
-        )
+        analises = analises.drop_duplicates(["ID Análise", "Mercado"], keep="last")
     return cotacoes, analises
 
 
@@ -1018,10 +1033,14 @@ with aba_jogo:
         elif google_configurado(st.secrets):
             try:
                 quantidade = salvar_cotacoes(st.secrets, linhas_cotacoes)
+                st.session_state.historico_sessao_cotacoes.extend(linhas_cotacoes)
                 st.session_state.ultima_coleta_v25 = {"assinatura": assinatura_formulario, "id": identificador_coleta}
                 st.success(f"{quantidade} cotação(ões) acrescentada(s) ao catálogo da planilha antiga. Nenhuma linha anterior foi alterada.")
             except Exception as erro:
-                st.error(f"Não foi possível salvar na planilha antiga: {erro}")
+                if "429" in str(erro) or "quota" in str(erro).lower():
+                    st.error("O Google bloqueou temporariamente novas requisições por excesso de leituras da versão anterior. Aguarde cerca de 60 segundos e clique novamente. Esta correção não relê a planilha antes de salvar.")
+                else:
+                    st.error(f"Não foi possível salvar na planilha antiga: {erro}")
         else:
             st.error("A conta de serviço do Google não foi reconhecida. A V25 já aponta para a planilha antiga; confira os Segredos do Streamlit.")
 
@@ -1104,12 +1123,17 @@ with aba_jogo:
                     try:
                         quantidade_cotacoes = salvar_cotacoes(st.secrets, linhas_cotacoes)
                         quantidade_analises = salvar_analises(st.secrets, registros)
+                        st.session_state.historico_sessao_cotacoes.extend(linhas_cotacoes)
+                        st.session_state.historico_sessao_analises.extend(registros)
                         st.success(
                             f"Planilha antiga atualizada: {quantidade_cotacoes} cotação(ões) nova(s) e "
                             f"{quantidade_analises} linha(s) de análise. O histórico anterior foi preservado."
                         )
                     except Exception as erro:
-                        st.error(f"Falha ao salvar na planilha antiga: {erro}")
+                        if "429" in str(erro) or "quota" in str(erro).lower():
+                            st.error("O Google bloqueou temporariamente novas requisições por excesso de leituras da versão anterior. Aguarde cerca de 60 segundos e clique novamente. A correção atual grava por acréscimo sem reler toda a planilha.")
+                        else:
+                            st.error(f"Falha ao salvar na planilha antiga: {erro}")
                 else:
                     st.error("A conta de serviço do Google não foi reconhecida nos Segredos do Streamlit.")
         with s2:
@@ -1254,8 +1278,10 @@ with aba_lote:
             st.error(str(erro))
 
 with aba_historico:
-    cotacoes_historicas, analises_historicas = historico_local()
     st.markdown("### Histórico cumulativo")
+    sincronizar_historico = st.button("SINCRONIZAR HISTÓRICO AGORA", type="secondary", use_container_width=True)
+    st.caption("A planilha não é relida a cada clique. Use este botão somente quando precisar atualizar a tela de auditoria.")
+    cotacoes_historicas, analises_historicas = historico_local(sincronizar_google=sincronizar_historico)
     st.write("Cada salvamento acrescenta novas linhas ao mesmo arquivo da Planilha Google. As antigas não são substituídas.")
     sub1, sub2, sub3 = st.tabs(["Cotações", "Probabilidades e decisões", "Resultados e desempenho"])
     with sub1:
