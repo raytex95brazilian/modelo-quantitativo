@@ -754,109 +754,6 @@ def sports_probabilities_for_match(
     return {"LambdaHome": lambda_home, "LambdaAway": lambda_away, **result}
 
 
-
-def diagnosticar_zona_historica(
-    zone_metrics: pd.DataFrame,
-    season: int,
-    market: str,
-    side: str,
-    market_band: float,
-    difference_band: float,
-    cfg: V25Config = CFG,
-) -> dict[str, Any]:
-    """Explica por que uma faixa foi ou não aprovada pela regra da V25.
-
-    Diferente da versão anterior, a amostra não vira zero só porque a faixa falhou
-    algum critério. O aplicativo passa a mostrar a amostra observada e os critérios
-    que efetivamente impediram a aprovação.
-    """
-    required_columns = set(ZONE_KEYS + ["Season", "Bets", "Wins", "ProfitUnits", "ROI"])
-    if zone_metrics.empty or not required_columns.issubset(zone_metrics.columns):
-        return {
-            "MarketHistoryAvailable": False,
-            "ExactZoneObserved": False,
-            "RawBets": 0,
-            "EligibleBets": 0,
-            "SeasonsObserved": 0,
-            "EligibleSeasons": 0,
-            "PositiveSeasons": 0,
-            "HistoricalHitRate": None,
-            "HistoricalROI": None,
-            "RecentSeasonROI": None,
-            "RecentSeasonBets": 0,
-            "Approved": False,
-            "FailureCodes": ["BASE_HISTORICA_INDISPONIVEL"],
-        }
-
-    history = zone_metrics[
-        (zone_metrics["Season"] >= season - cfg.lookback_seasons)
-        & (zone_metrics["Season"] < season)
-        & (zone_metrics["Market"] == market)
-        & (zone_metrics["Side"] == side)
-    ].copy()
-    market_available = not history.empty and int(history["Bets"].sum()) > 0
-
-    exact = history[
-        np.isclose(history["MarketBand"].astype(float), float(market_band), atol=1e-9)
-        & np.isclose(history["DifferenceBand"].astype(float), float(difference_band), atol=1e-9)
-    ].copy()
-    exact_observed = not exact.empty and int(exact["Bets"].sum()) > 0
-    raw_bets = int(exact["Bets"].sum()) if exact_observed else 0
-    seasons_observed = int(exact["Season"].nunique()) if exact_observed else 0
-
-    eligible = exact[exact["Bets"] >= cfg.min_zone_bets_per_season].copy() if exact_observed else exact
-    eligible_bets = int(eligible["Bets"].sum()) if not eligible.empty else 0
-    eligible_seasons = int(eligible["Season"].nunique()) if not eligible.empty else 0
-    total_wins = int(eligible["Wins"].sum()) if not eligible.empty else 0
-    total_profit = float(eligible["ProfitUnits"].sum()) if not eligible.empty else 0.0
-    historical_hit = total_wins / eligible_bets if eligible_bets > 0 else None
-    historical_roi = total_profit / eligible_bets if eligible_bets > 0 else None
-    positive_seasons = int((eligible["ROI"] > 0).sum()) if not eligible.empty else 0
-
-    recent = eligible[eligible["Season"] == season - 1]
-    recent_roi = float(recent.iloc[0]["ROI"]) if not recent.empty else None
-    recent_bets = int(recent.iloc[0]["Bets"]) if not recent.empty else 0
-
-    failures: list[str] = []
-    if not market_available:
-        failures.append("SEM_DADOS_DO_MERCADO")
-    elif not exact_observed:
-        failures.append("FAIXA_NAO_OBSERVADA")
-    elif eligible.empty:
-        failures.append("AMOSTRA_POR_TEMPORADA_INSUFICIENTE")
-    else:
-        if eligible_bets < cfg.min_zone_total_bets:
-            failures.append("AMOSTRA_TOTAL_INSUFICIENTE")
-        if eligible_seasons < cfg.min_positive_seasons:
-            failures.append("TEMPORADAS_OBSERVADAS_INSUFICIENTES")
-        if positive_seasons < cfg.min_positive_seasons:
-            failures.append("TEMPORADAS_POSITIVAS_INSUFICIENTES")
-        if historical_roi is None or historical_roi < cfg.min_zone_roi:
-            failures.append("RETORNO_HISTORICO_INSUFICIENTE")
-        if recent_roi is None:
-            failures.append("SEM_TEMPORADA_RECENTE_ELEGIVEL")
-        elif recent_roi < cfg.min_recent_season_roi:
-            failures.append("RETORNO_RECENTE_INSUFICIENTE")
-        if historical_hit is None or historical_hit < cfg.min_zone_hit_rate:
-            failures.append("ACERTO_HISTORICO_INSUFICIENTE")
-
-    return {
-        "MarketHistoryAvailable": market_available,
-        "ExactZoneObserved": exact_observed,
-        "RawBets": raw_bets,
-        "EligibleBets": eligible_bets,
-        "SeasonsObserved": seasons_observed,
-        "EligibleSeasons": eligible_seasons,
-        "PositiveSeasons": positive_seasons,
-        "HistoricalHitRate": historical_hit,
-        "HistoricalROI": historical_roi,
-        "RecentSeasonROI": recent_roi,
-        "RecentSeasonBets": recent_bets,
-        "Approved": not failures,
-        "FailureCodes": failures,
-    }
-
-
 def evaluate_live_market(
     league_code: str,
     season: int,
@@ -868,6 +765,11 @@ def evaluate_live_market(
     zone_metrics: pd.DataFrame,
     cfg: V25Config = CFG,
 ) -> pd.DataFrame:
+    approved = approved_zones_for_season(zone_metrics, season, cfg)
+    approval_lookup = {
+        (row.Market, row.Side, float(row.MarketBand), float(row.DifferenceBand)): row
+        for row in approved.itertuples(index=False)
+    }
     rows: list[dict[str, Any]] = []
 
     def add_group(market: str, sides: list[str], average_keys: list[str], best_keys: list[str], sports_keys: list[str]) -> None:
@@ -876,25 +778,17 @@ def evaluate_live_market(
         probabilities = no_vig_probabilities([average_odds[key] for key in average_keys])
         for index, side in enumerate(sides):
             best = best_odds.get(best_keys[index]) or average_odds[average_keys[index]]
+            # No aplicativo, a odd digitada pelo analista é a odd efetivamente disponível.
+            # Não aplicamos uma segunda redução silenciosa nem buscamos uma "melhor odd" paralela.
             executable = best
             sports_probability = sports[sports_keys[index]]
             difference = sports_probability - probabilities[index]
             p_band = round(math.floor(probabilities[index] / cfg.market_probability_band) * cfg.market_probability_band, 3)
             d_band = round(math.floor((difference + 0.20) / cfg.model_market_difference_band) * cfg.model_market_difference_band - 0.20, 3)
-
-            diagnostico = diagnosticar_zona_historica(
-                zone_metrics,
-                season,
-                market,
-                side,
-                p_band,
-                d_band,
-                cfg,
-            )
-            historical_hit = diagnostico["HistoricalHitRate"]
-            historical_roi = diagnostico["HistoricalROI"]
-            status = "APROVADA" if diagnostico["Approved"] and executable <= cfg.max_executable_odd else "BLOQUEADA"
-
+            approval = approval_lookup.get((market, side, p_band, d_band))
+            historical_hit = float(approval.HistoricalHitRate) if approval is not None else None
+            historical_roi = float(approval.HistoricalROI) if approval is not None else None
+            status = "APROVADA" if approval is not None and executable <= cfg.max_executable_odd else "BLOQUEADA"
             rows.append(
                 {
                     "League": LEAGUES[league_code],
@@ -911,22 +805,10 @@ def evaluate_live_market(
                     "ExecutableOdd": executable,
                     "MarketBand": p_band,
                     "DifferenceBand": d_band,
-                    # A amostra agora representa o que realmente foi observado,
-                    # mesmo quando a faixa não passou nos critérios de aprovação.
-                    "HistoricalBets": int(diagnostico["EligibleBets"] or diagnostico["RawBets"]),
-                    "HistoricalRawBets": int(diagnostico["RawBets"]),
-                    "HistoricalEligibleBets": int(diagnostico["EligibleBets"]),
-                    "HistoricalSeasonsObserved": int(diagnostico["SeasonsObserved"]),
-                    "HistoricalEligibleSeasons": int(diagnostico["EligibleSeasons"]),
-                    "HistoricalPositiveSeasons": int(diagnostico["PositiveSeasons"]),
-                    "HistoricalMarketAvailable": bool(diagnostico["MarketHistoryAvailable"]),
-                    "HistoricalExactZoneObserved": bool(diagnostico["ExactZoneObserved"]),
-                    "HistoricalRecentROI": diagnostico["RecentSeasonROI"],
-                    "HistoricalRecentBets": int(diagnostico["RecentSeasonBets"]),
+                    "HistoricalBets": int(approval.TotalBets) if approval is not None else 0,
                     "HistoricalHitRate": historical_hit,
                     "HistoricalROI": historical_roi,
                     "HistoricalEVAtCurrentPrice": historical_hit * executable - 1.0 if historical_hit is not None else None,
-                    "ValidationFailures": ",".join(diagnostico["FailureCodes"]),
                     "Status": status,
                 }
             )

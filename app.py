@@ -9,7 +9,10 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
-from tex_v25_atualizacao import carregar_base_com_atualizacao
+try:
+    import tex_v25_atualizacao as _atualizacao
+except Exception:
+    _atualizacao = None
 from tex_v25_core import CFG, LEAGUES, build_current_state, normalize_zip
 from tex_v25_storage import (
     COLUNAS_ANALISES,
@@ -59,14 +62,39 @@ def style() -> None:
     )
 
 
-@st.cache_resource(show_spinner="Carregando histórico e atualizando as 24 ligas...")
+@st.cache_resource(show_spinner="Carregando as 24 ligas do Football-Data...")
 def load_matches():
+    errors: list[str] = []
+
+    if _atualizacao is not None:
+        direct_loader = getattr(_atualizacao, "carregar_base_football_data", None)
+        if callable(direct_loader):
+            try:
+                matches, report = direct_loader(date.today())
+                return matches, report, 0, "Football-Data.co.uk — consulta direta, sem ZIP"
+            except Exception as exc:
+                errors.append(f"consulta direta: {exc}")
+
+        legacy_loader = getattr(_atualizacao, "carregar_base_com_atualizacao", None)
+        if callable(legacy_loader):
+            try:
+                matches, report, new_count = legacy_loader(DATA_ZIP, date.today())
+                return matches, report, new_count, "Football-Data.co.uk + histórico local"
+            except Exception as exc:
+                errors.append(f"atualizador compatível: {exc}")
+    else:
+        errors.append("módulo tex_v25_atualizacao indisponível")
+
     try:
-        matches, report, new_count = carregar_base_com_atualizacao(DATA_ZIP, date.today())
-        return matches, report, new_count, "Football-Data.co.uk direto + histórico local"
-    except Exception as exc:
         matches = normalize_zip(DATA_ZIP, include_incomplete_annual_2026=True)
-        return matches, [], 0, f"Histórico local; atualização direta indisponível nesta execução ({exc})"
+        detail = " | ".join(errors) if errors else "sem detalhes"
+        return matches, [], 0, f"Histórico local de contingência ({detail})"
+    except Exception as local_exc:
+        detail = " | ".join(errors) if errors else "sem detalhes"
+        raise RuntimeError(
+            "Não foi possível carregar nem o Football-Data direto nem a base local. "
+            f"Atualização: {detail}. Base local: {local_exc}"
+        ) from local_exc
 
 
 @st.cache_data(show_spinner=False)

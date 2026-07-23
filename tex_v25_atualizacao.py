@@ -357,4 +357,16 @@ def carregar_base_football_data(
     return partidas_totais, relatorio
 
 
-__all__ = ["VERSAO_COLETOR", "carregar_base_football_data"]
+
+
+def carregar_base_com_atualizacao(zip_historico=None, referencia: date | None = None):
+    """Compatibilidade com apps anteriores; mantém a consulta direta sem ZIP."""
+    partidas, relatorio = carregar_base_football_data(referencia)
+    return partidas, relatorio, 0
+
+
+__all__ = [
+    "VERSAO_COLETOR",
+    "carregar_base_football_data",
+    "carregar_base_com_atualizacao",
+]
