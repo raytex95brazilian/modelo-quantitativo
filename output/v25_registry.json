@@ -1,0 +1,131 @@
+{
+  "version": "TEX V25.0 — Núcleo Simples e Robusto",
+  "model": "Poisson/Dixon-Coles simples + mercado sem margem + zonas estáveis de 4 temporadas",
+  "data": {
+    "normalized_matches": 110694,
+    "leagues": 24,
+    "validation_seasons": "2018-2021",
+    "test_seasons": "2022-2025",
+    "leagues_with_test_bets": 20
+  },
+  "validation": {
+    "bets": 418,
+    "wins": 258,
+    "hit_rate": 0.6172248803827751,
+    "profit_units": 21.559399999999982,
+    "roi": 0.051577511961722444,
+    "average_executable_odd": 1.7054578947368422,
+    "max_drawdown_units": 14.295000000000009,
+    "longest_losing_streak": 5,
+    "active_weeks": 147,
+    "average_bets_per_active_week": 2.8435374149659864,
+    "weeks_with_at_least_3": 89,
+    "roi_ci_lower": -0.024348649803873322,
+    "roi_ci_upper": 0.12970121717695893,
+    "bootstrap_probability_positive": 0.90645
+  },
+  "test": {
+    "bets": 547,
+    "wins": 341,
+    "hit_rate": 0.623400365630713,
+    "profit_units": 33.82639999999998,
+    "roi": 0.061839853747714765,
+    "average_executable_odd": 1.706722851919561,
+    "max_drawdown_units": 12.326599999999992,
+    "longest_losing_streak": 4,
+    "active_weeks": 167,
+    "average_bets_per_active_week": 3.2754491017964074,
+    "weeks_with_at_least_3": 128,
+    "weeks_with_4": 109,
+    "roi_ci_lower": -0.004095173698384235,
+    "roi_ci_upper": 0.12645988413547185,
+    "bootstrap_probability_positive": 0.9667,
+    "leagues_with_bets": 20
+  },
+  "stress": [
+    {
+      "Scenario": "Melhor odd -1%",
+      "Capture": 1.0,
+      "Haircut": 0.01,
+      "Bets": 547,
+      "Wins": 341,
+      "HitRate": 0.623400365630713,
+      "AverageOdd": 1.7241383912248627,
+      "ProfitUnits": 39.75319999999999,
+      "ROI": 0.07267495429616086,
+      "MaxDrawdown": 11.748299999999993
+    },
+    {
+      "Scenario": "Melhor odd -2% (oficial)",
+      "Capture": 1.0,
+      "Haircut": 0.02,
+      "Bets": 547,
+      "Wins": 341,
+      "HitRate": 0.623400365630713,
+      "AverageOdd": 1.706722851919561,
+      "ProfitUnits": 33.82639999999998,
+      "ROI": 0.061839853747714765,
+      "MaxDrawdown": 12.326599999999992
+    },
+    {
+      "Scenario": "Melhor odd -3%",
+      "Capture": 1.0,
+      "Haircut": 0.03,
+      "Bets": 547,
+      "Wins": 341,
+      "HitRate": 0.623400365630713,
+      "AverageOdd": 1.6893073126142595,
+      "ProfitUnits": 27.899599999999978,
+      "ROI": 0.0510047531992687,
+      "MaxDrawdown": 13.226899999999986
+    },
+    {
+      "Scenario": "Melhor odd -5%",
+      "Capture": 1.0,
+      "Haircut": 0.05,
+      "Bets": 547,
+      "Wins": 341,
+      "HitRate": 0.623400365630713,
+      "AverageOdd": 1.654476234003656,
+      "ProfitUnits": 16.045999999999967,
+      "ROI": 0.02933455210237654,
+      "MaxDrawdown": 15.555000000000012
+    },
+    {
+      "Scenario": "75% do ganho entre média e melhor -2%",
+      "Capture": 0.75,
+      "Haircut": 0.02,
+      "Bets": 547,
+      "Wins": 341,
+      "HitRate": 0.623400365630713,
+      "AverageOdd": 1.6906612431444241,
+      "ProfitUnits": 28.487849999999984,
+      "ROI": 0.05208016453382081,
+      "MaxDrawdown": 12.878200000000012
+    },
+    {
+      "Scenario": "50% do ganho entre média e melhor -2%",
+      "Capture": 0.5,
+      "Haircut": 0.02,
+      "Bets": 547,
+      "Wins": 341,
+      "HitRate": 0.623400365630713,
+      "AverageOdd": 1.674599634369287,
+      "ProfitUnits": 23.14929999999999,
+      "ROI": 0.04232047531992685,
+      "MaxDrawdown": 13.681799999999999
+    },
+    {
+      "Scenario": "Odd média -2%",
+      "Capture": 0.0,
+      "Haircut": 0.02,
+      "Bets": 547,
+      "Wins": 341,
+      "HitRate": 0.623400365630713,
+      "AverageOdd": 1.6424764168190127,
+      "ProfitUnits": 12.472199999999983,
+      "ROI": 0.022801096892138908,
+      "MaxDrawdown": 15.540800000000003
+    }
+  ]
+}
