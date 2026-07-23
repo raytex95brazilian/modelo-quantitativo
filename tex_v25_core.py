@@ -15,7 +15,7 @@ from typing import Any, Iterable, Optional
 import numpy as np
 import pandas as pd
 
-VERSION = "TEX V25.0 — Núcleo Simples e Robusto"
+VERSION = "Tex Statistics v.25"
 
 LEAGUES = {
     "BRA": "Brasileirão Série A",
@@ -778,7 +778,9 @@ def evaluate_live_market(
         probabilities = no_vig_probabilities([average_odds[key] for key in average_keys])
         for index, side in enumerate(sides):
             best = best_odds.get(best_keys[index]) or average_odds[average_keys[index]]
-            executable = best * (1.0 - cfg.execution_haircut)
+            # No aplicativo, a odd digitada pelo analista é a odd efetivamente disponível.
+            # Não aplicamos uma segunda redução silenciosa nem buscamos uma "melhor odd" paralela.
+            executable = best
             sports_probability = sports[sports_keys[index]]
             difference = sports_probability - probabilities[index]
             p_band = round(math.floor(probabilities[index] / cfg.market_probability_band) * cfg.market_probability_band, 3)
