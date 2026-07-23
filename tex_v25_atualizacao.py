@@ -1,22 +1,50 @@
 from __future__ import annotations
 
+"""Coleta direta dos CSVs do Football-Data para a Tex Statistics v.25.
+
+Este módulo é autônomo: não importa funções internas de ``tex_v25_core``.
+Isso evita incompatibilidade entre versões durante a atualização pelo GitHub.
+"""
+
 import csv
 import io
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
-from typing import Any
+from datetime import date, datetime
+from typing import Any, Iterable, Optional
 
 import requests
 
-from tex_v25_core import (
-    ANNUAL_CODES,
-    LEAGUES,
-    _decode,
-    _first_number,
-    _number,
-    _parse_date,
-    _season_start,
-)
+VERSAO_COLETOR = "football-data-direto-2026-07-23-r2"
+
+LEAGUES = {
+    "BRA": "Brasileirão Série A",
+    "ARG": "Argentina - Primera Division",
+    "USA": "EUA - MLS",
+    "MEX": "México - Liga MX",
+    "JPN": "Japão - J1 League",
+    "CHN": "China - Super League",
+    "SWE": "Suécia - Allsvenskan",
+    "NOR": "Noruega - Eliteserien",
+    "FIN": "Finlândia - Veikkausliiga",
+    "IRL": "Irlanda - Premier Division",
+    "E0": "Inglaterra - Premier League",
+    "E1": "Inglaterra - Championship",
+    "SP1": "Espanha - La Liga",
+    "SP2": "Espanha - Segunda Divisão",
+    "I1": "Itália - Série A",
+    "I2": "Itália - Série B",
+    "D1": "Alemanha - Bundesliga",
+    "D2": "Alemanha - 2. Bundesliga",
+    "F1": "França - Ligue 1",
+    "P1": "Portugal - Primeira Liga",
+    "N1": "Holanda - Eredivisie",
+    "B1": "Bélgica - Pro League",
+    "T1": "Turquia - Super Lig",
+    "G1": "Grécia - Super League",
+}
+
+ANNUAL_CODES = {"BRA", "ARG", "USA", "MEX", "JPN", "CHN", "SWE", "NOR", "FIN", "IRL"}
 
 URLS_ANUAIS = {
     "BRA": "https://www.football-data.co.uk/new/BRA.csv",
@@ -31,14 +59,65 @@ URLS_ANUAIS = {
     "IRL": "https://www.football-data.co.uk/new/IRL.csv",
 }
 
-CODIGOS_EUROPEUS = [
+CODIGOS_EUROPEUS = (
     "E0", "E1", "SP1", "SP2", "I1", "I2", "D1", "D2",
     "F1", "P1", "N1", "B1", "T1", "G1",
-]
+)
 
-# A V25 usa quatro temporadas anteriores para validar uma faixa. Baixamos seis
-# temporadas europeias: uma de aquecimento, as quatro de validação e a atual.
+# Atual + cinco anteriores: suficiente para aquecimento e quatro temporadas de validação.
 TEMPORADAS_EUROPEIAS_CARREGADAS = 6
+
+
+def _decode(data: bytes) -> str:
+    for encoding in ("utf-8-sig", "cp1252", "latin1"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("latin1", errors="replace")
+
+
+def _number(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    texto = str(value).strip().replace(",", ".")
+    if not texto:
+        return None
+    try:
+        numero = float(texto)
+    except (TypeError, ValueError):
+        return None
+    return numero if math.isfinite(numero) else None
+
+
+def _first_number(row: dict[str, Any], names: Iterable[str]) -> Optional[float]:
+    for name in names:
+        numero = _number(row.get(name))
+        if numero is not None:
+            return numero
+    return None
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    texto = str(value or "").strip()
+    if not texto:
+        return None
+    for formato in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d.%m.%Y", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(texto, formato).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _season_start(label: Any, fallback: int | None = None) -> Optional[int]:
+    texto = str(label or "").strip()
+    if texto:
+        partes = "".join(caractere if caractere.isdigit() else " " for caractere in texto).split()
+        if partes:
+            ano = int(partes[0])
+            return ano + 2000 if ano < 100 else ano
+    return fallback
 
 
 def codigo_temporada(inicio: int) -> str:
@@ -56,13 +135,15 @@ def temporadas_europeias_para_baixar(referencia: date | None = None) -> list[int
 
 
 def _parece_csv(texto: str) -> bool:
-    primeira = texto.lstrip().splitlines()[0] if texto.strip() else ""
-    return "," in primeira and not primeira.lower().startswith("<!doctype") and "<html" not in primeira.lower()
+    primeira_linha = texto.lstrip().splitlines()[0] if texto.strip() else ""
+    primeira_minuscula = primeira_linha.lower()
+    return "," in primeira_linha and not primeira_minuscula.startswith("<!doctype") and "<html" not in primeira_minuscula
 
 
 def _normalizar_csv(texto: str, codigo: str, temporada_forcada: int | None = None) -> list[dict[str, Any]]:
     leitor = csv.DictReader(io.StringIO(texto))
     partidas: list[dict[str, Any]] = []
+
     for linha in leitor:
         if codigo in ANNUAL_CODES:
             data_jogo = _parse_date(linha.get("Date"))
@@ -70,14 +151,17 @@ def _normalizar_csv(texto: str, codigo: str, temporada_forcada: int | None = Non
             visitante = str(linha.get("Away") or "").strip()
             gols_mandante = _number(linha.get("HG"))
             gols_visitante = _number(linha.get("AG"))
-            temporada = _season_start(linha.get("Season"))
-            media_casa = _first_number(linha, ["AvgCH"])
-            media_empate = _first_number(linha, ["AvgCD"])
-            media_fora = _first_number(linha, ["AvgCA"])
-            maxima_casa = _first_number(linha, ["MaxCH"])
-            maxima_empate = _first_number(linha, ["MaxCD"])
-            maxima_fora = _first_number(linha, ["MaxCA"])
-            media_mais = media_menos = maxima_mais = maxima_menos = None
+            temporada = _season_start(linha.get("Season"), data_jogo.year if data_jogo else None)
+            media_casa = _first_number(linha, ("AvgCH", "AvgH", "BbAvH"))
+            media_empate = _first_number(linha, ("AvgCD", "AvgD", "BbAvD"))
+            media_fora = _first_number(linha, ("AvgCA", "AvgA", "BbAvA"))
+            maxima_casa = _first_number(linha, ("MaxCH", "MaxH", "BbMxH"))
+            maxima_empate = _first_number(linha, ("MaxCD", "MaxD", "BbMxD"))
+            maxima_fora = _first_number(linha, ("MaxCA", "MaxA", "BbMxA"))
+            media_mais = _first_number(linha, ("AvgC>2.5", "Avg>2.5", "BbAv>2.5"))
+            media_menos = _first_number(linha, ("AvgC<2.5", "Avg<2.5", "BbAv<2.5"))
+            maxima_mais = _first_number(linha, ("MaxC>2.5", "Max>2.5", "BbMx>2.5"))
+            maxima_menos = _first_number(linha, ("MaxC<2.5", "Max<2.5", "BbMx<2.5"))
         else:
             data_jogo = _parse_date(linha.get("Date"))
             mandante = str(linha.get("HomeTeam") or "").strip()
@@ -85,16 +169,16 @@ def _normalizar_csv(texto: str, codigo: str, temporada_forcada: int | None = Non
             gols_mandante = _number(linha.get("FTHG"))
             gols_visitante = _number(linha.get("FTAG"))
             temporada = temporada_forcada
-            media_casa = _first_number(linha, ["AvgCH", "AvgH", "BbAvH"])
-            media_empate = _first_number(linha, ["AvgCD", "AvgD", "BbAvD"])
-            media_fora = _first_number(linha, ["AvgCA", "AvgA", "BbAvA"])
-            maxima_casa = _first_number(linha, ["MaxCH", "MaxH", "BbMxH"])
-            maxima_empate = _first_number(linha, ["MaxCD", "MaxD", "BbMxD"])
-            maxima_fora = _first_number(linha, ["MaxCA", "MaxA", "BbMxA"])
-            media_mais = _first_number(linha, ["AvgC>2.5", "Avg>2.5", "BbAv>2.5"])
-            media_menos = _first_number(linha, ["AvgC<2.5", "Avg<2.5", "BbAv<2.5"])
-            maxima_mais = _first_number(linha, ["MaxC>2.5", "Max>2.5", "BbMx>2.5"])
-            maxima_menos = _first_number(linha, ["MaxC<2.5", "Max<2.5", "BbMx<2.5"])
+            media_casa = _first_number(linha, ("AvgCH", "AvgH", "BbAvH"))
+            media_empate = _first_number(linha, ("AvgCD", "AvgD", "BbAvD"))
+            media_fora = _first_number(linha, ("AvgCA", "AvgA", "BbAvA"))
+            maxima_casa = _first_number(linha, ("MaxCH", "MaxH", "BbMxH"))
+            maxima_empate = _first_number(linha, ("MaxCD", "MaxD", "BbMxD"))
+            maxima_fora = _first_number(linha, ("MaxCA", "MaxA", "BbMxA"))
+            media_mais = _first_number(linha, ("AvgC>2.5", "Avg>2.5", "BbAv>2.5"))
+            media_menos = _first_number(linha, ("AvgC<2.5", "Avg<2.5", "BbAv<2.5"))
+            maxima_mais = _first_number(linha, ("MaxC>2.5", "Max>2.5", "BbMx>2.5"))
+            maxima_menos = _first_number(linha, ("MaxC<2.5", "Max<2.5", "BbMx<2.5"))
 
         if not (
             data_jogo
@@ -129,19 +213,23 @@ def _normalizar_csv(texto: str, codigo: str, temporada_forcada: int | None = Non
                 "MaxU25": maxima_menos,
             }
         )
+
     return partidas
 
 
-def _baixar_url(url: str, codigo: str, temporada: int | None = None, timeout: int = 25) -> list[dict[str, Any]]:
-    cabecalhos = {"User-Agent": "Tex-Statistics-v25/Football-Data"}
-    resposta = requests.get(url, timeout=timeout, headers=cabecalhos)
+def _baixar_url(url: str, codigo: str, temporada: int | None = None, timeout: int = 30) -> list[dict[str, Any]]:
+    resposta = requests.get(
+        url,
+        timeout=timeout,
+        headers={"User-Agent": "Tex-Statistics-v25/Football-Data"},
+    )
     resposta.raise_for_status()
     texto = _decode(resposta.content)
     if not _parece_csv(texto):
-        raise ValueError("a resposta não é um arquivo CSV válido")
+        raise ValueError("a resposta recebida não é um CSV válido")
     partidas = _normalizar_csv(texto, codigo, temporada)
     if not partidas:
-        raise ValueError("o arquivo não contém partidas concluídas")
+        raise ValueError("o CSV não contém partidas concluídas")
     return partidas
 
 
@@ -162,7 +250,10 @@ def _deduplicar(partidas: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if valor is not None and valor != "":
                 combinado[campo] = valor
         mapa[chave] = combinado
-    return sorted(mapa.values(), key=lambda item: (item["DateParsed"], item["League"], item["Home"], item["Away"]))
+    return sorted(
+        mapa.values(),
+        key=lambda item: (item["DateParsed"], item["League"], item["Home"], item["Away"]),
+    )
 
 
 def _baixar_liga_anual(codigo: str) -> dict[str, Any]:
@@ -204,23 +295,17 @@ def _baixar_liga_europeia(codigo: str, referencia: date | None = None) -> dict[s
     temporadas = temporadas_europeias_para_baixar(referencia)
 
     for inicio in temporadas:
-        temporada_csv = codigo_temporada(inicio)
-        url = f"https://www.football-data.co.uk/mmz4281/{temporada_csv}/{codigo}.csv"
+        etiqueta = codigo_temporada(inicio)
+        url = f"https://www.football-data.co.uk/mmz4281/{etiqueta}/{codigo}.csv"
         urls.append(url)
         try:
             partidas.extend(_baixar_url(url, codigo, inicio))
             sucessos += 1
         except Exception as erro:
-            erros.append(f"{temporada_csv}: {erro}")
+            erros.append(f"{etiqueta}: {erro}")
 
     partidas = _deduplicar(partidas)
-    if sucessos == 0:
-        situacao = "FALHA"
-    elif sucessos < len(temporadas):
-        situacao = "PARCIAL"
-    else:
-        situacao = "ATUALIZADA"
-
+    situacao = "FALHA" if sucessos == 0 else ("PARCIAL" if sucessos < len(temporadas) else "ATUALIZADA")
     return {
         "codigo": codigo,
         "liga": LEAGUES[codigo],
@@ -241,21 +326,35 @@ def _baixar_liga(codigo: str, referencia: date | None = None) -> dict[str, Any]:
     return _baixar_liga_europeia(codigo, referencia)
 
 
-def carregar_base_football_data(referencia: date | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Baixa a base esportiva diretamente do Football-Data, sem ZIP local."""
-    resultados: list[dict[str, Any]] = []
+def carregar_base_football_data(
+    referencia: date | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Baixa as 24 ligas diretamente do Football-Data, sem abrir ZIP local."""
+    partidas_totais: list[dict[str, Any]] = []
     relatorio: list[dict[str, Any]] = []
 
     with ThreadPoolExecutor(max_workers=8) as executor:
-        tarefas = {executor.submit(_baixar_liga, codigo, referencia): codigo for codigo in LEAGUES}
+        tarefas = {
+            executor.submit(_baixar_liga, codigo, referencia): codigo
+            for codigo in LEAGUES
+        }
         for tarefa in as_completed(tarefas):
             resposta = tarefa.result()
-            resultados.extend(resposta.pop("partidas"))
+            partidas_totais.extend(resposta.pop("partidas"))
             relatorio.append(resposta)
 
-    resultados = _deduplicar(resultados)
+    partidas_totais = _deduplicar(partidas_totais)
     relatorio.sort(key=lambda item: item["liga"])
-    if not resultados:
-        detalhes = " | ".join(item.get("erro", "") for item in relatorio if item.get("erro"))
-        raise RuntimeError(f"O Football-Data não retornou nenhuma partida concluída. {detalhes}".strip())
-    return resultados, relatorio
+
+    if not partidas_totais:
+        detalhes = " | ".join(
+            item.get("erro", "") for item in relatorio if item.get("erro")
+        )
+        raise RuntimeError(
+            f"O Football-Data não retornou nenhuma partida concluída. {detalhes}".strip()
+        )
+
+    return partidas_totais, relatorio
+
+
+__all__ = ["VERSAO_COLETOR", "carregar_base_football_data"]
