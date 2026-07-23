@@ -21,7 +21,7 @@ from tex_v25_core import (
     sports_probabilities_for_match,
 )
 
-VERSION = "Tex Statistics v.26 — Operacional"
+VERSION = "Tex Statistics v.27.1 — Aplicativo com seletores"
 
 
 @dataclass(frozen=True)
