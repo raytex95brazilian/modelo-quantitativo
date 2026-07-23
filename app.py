@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from tex_v25_atualizacao import carregar_base_com_atualizacao
+from tex_v25_atualizacao import carregar_base_football_data
 from tex_v25_core import (
     ANNUAL_CODES,
     CFG,
@@ -39,7 +39,6 @@ from tex_v25_storage import (
 )
 
 ROOT = Path(__file__).resolve().parent
-DATA_ZIP = ROOT / "data" / "TEX_V22_DADOS_24_LIGAS.zip"
 ZONE_METRICS = ROOT / "output" / "v25_zone_season_metrics.csv"
 REGISTRY = ROOT / "output" / "v25_registry.json"
 
@@ -203,30 +202,17 @@ def ativar_digitacao_rapida_das_odds() -> None:
 aplicar_identidade_visual()
 
 
-@st.cache_data(ttl=10_800, show_spinner="Atualizando os resultados das 24 ligas...")
+@st.cache_data(ttl=43_200, show_spinner="Baixando os dados das 24 ligas diretamente do Football-Data...")
 def carregar_base_atualizada():
-    try:
-        return carregar_base_com_atualizacao(DATA_ZIP, date.today())
-    except Exception as erro:
-        from tex_v25_core import normalize_zip
-
-        partidas_locais = normalize_zip(DATA_ZIP, include_incomplete_annual_2026=True)
-        return partidas_locais, [
-            {
-                "codigo": "GERAL",
-                "liga": "Base histórica local",
-                "url": "",
-                "ultima_data": max(item["DateParsed"] for item in partidas_locais),
-                "quantidade": len(partidas_locais),
-                "situacao": "FALHA NA ATUALIZAÇÃO EXTERNA",
-                "erro": str(erro),
-            }
-        ], 0
+    # Não existe mais leitura, mesclagem ou fallback para ZIP.
+    return carregar_base_football_data(date.today())
 
 
-@st.cache_resource(ttl=10_800, show_spinner="Construindo o estado estatístico...")
+@st.cache_resource(ttl=43_200, show_spinner="Construindo o estado estatístico...")
 def carregar_motor():
-    partidas_carregadas, relatorio_atualizacao, novos = carregar_base_atualizada()
+    partidas_carregadas, relatorio_atualizacao = carregar_base_atualizada()
+    # As zonas são o artefato de calibração da V25. Os jogos usados na análise
+    # operacional são baixados diretamente do Football-Data em cada ciclo de cache.
     metricas = pd.read_csv(ZONE_METRICS)
     equipes: dict[str, list[str]] = {}
     for codigo_liga in LEAGUES:
@@ -234,10 +220,14 @@ def carregar_motor():
             {item["Home"] for item in partidas_carregadas if item["Code"] == codigo_liga}
             | {item["Away"] for item in partidas_carregadas if item["Code"] == codigo_liga}
         )
-    return partidas_carregadas, metricas, equipes, relatorio_atualizacao, novos
+    return partidas_carregadas, metricas, equipes, relatorio_atualizacao
 
 
-partidas, metricas_zonas, equipes_por_codigo, relatorio_atualizacao, jogos_novos = carregar_motor()
+try:
+    partidas, metricas_zonas, equipes_por_codigo, relatorio_atualizacao = carregar_motor()
+except Exception as erro:
+    st.error(f"Não foi possível carregar os dados diretamente do Football-Data: {erro}")
+    st.stop()
 liga_para_codigo = {nome: codigo for codigo, nome in LEAGUES.items()}
 
 if "ultima_analise_v25" not in st.session_state:
@@ -311,6 +301,10 @@ def margem_bruta(odds: list[float]) -> float | None:
 def ultima_data_da_liga(codigo: str) -> date | None:
     datas = [item["DateParsed"] for item in partidas if item["Code"] == codigo]
     return max(datas) if datas else None
+
+
+def quantidade_partidas_da_liga(codigo: str) -> int:
+    return sum(1 for item in partidas if item["Code"] == codigo)
 
 
 def classificacao_antes_do_jogo(codigo: str, temporada: int, data_analise: date) -> pd.DataFrame:
@@ -470,36 +464,95 @@ def mostrar_classificacao(contexto: dict, mandante: str, visitante: str) -> None
         )
 
 
+
+def _formatar_percentual_historico(valor) -> str:
+    try:
+        if pd.isna(valor):
+            return "indisponível"
+        return f"{float(valor):.2%}"
+    except Exception:
+        return "indisponível"
+
+
+def _motivo_falhas_validacao(linha: pd.Series) -> str:
+    codigos = {item for item in str(linha.get("ValidationFailures") or "").split(",") if item}
+    partes: list[str] = []
+    amostra = int(linha.get("HistoricalEligibleBets") or 0)
+    temporadas = int(linha.get("HistoricalEligibleSeasons") or 0)
+    positivas = int(linha.get("HistoricalPositiveSeasons") or 0)
+    acerto = linha.get("HistoricalHitRate")
+    retorno = linha.get("HistoricalROI")
+    retorno_recente = linha.get("HistoricalRecentROI")
+
+    if "AMOSTRA_TOTAL_INSUFICIENTE" in codigos:
+        partes.append(f"amostra elegível {amostra}/{CFG.min_zone_total_bets}")
+    if "TEMPORADAS_OBSERVADAS_INSUFICIENTES" in codigos:
+        partes.append(f"temporadas elegíveis {temporadas}/{CFG.min_positive_seasons}")
+    if "TEMPORADAS_POSITIVAS_INSUFICIENTES" in codigos:
+        partes.append(f"temporadas positivas {positivas}/{CFG.min_positive_seasons}")
+    if "RETORNO_HISTORICO_INSUFICIENTE" in codigos:
+        partes.append(f"retorno histórico {_formatar_percentual_historico(retorno)} (mínimo {CFG.min_zone_roi:.2%})")
+    if "SEM_TEMPORADA_RECENTE_ELEGIVEL" in codigos:
+        partes.append("sem amostra elegível na temporada anterior")
+    if "RETORNO_RECENTE_INSUFICIENTE" in codigos:
+        partes.append(f"retorno da temporada anterior {_formatar_percentual_historico(retorno_recente)} (mínimo {CFG.min_recent_season_roi:.2%})")
+    if "ACERTO_HISTORICO_INSUFICIENTE" in codigos:
+        partes.append(f"acerto histórico {_formatar_percentual_historico(acerto)} (mínimo {CFG.min_zone_hit_rate:.2%})")
+    return "; ".join(partes)
+
+
 def detalhar_situacao(linha: pd.Series) -> tuple[str, str]:
     valor = float(linha.get("ValorEsperadoEsportivo") or 0.0)
     odd = float(linha.get("ExecutableOdd") or 0.0)
-    amostra = int(linha.get("HistoricalBets") or 0)
     diferenca = float(linha.get("ProbabilityDifference") or 0.0)
 
     if str(linha.get("Status")) == "APROVADA":
-        return "AUTORIZADA", "A seleção pertence a uma faixa histórica aprovada pela regra validada da V25."
+        amostra = int(linha.get("HistoricalEligibleBets") or linha.get("HistoricalBets") or 0)
+        return (
+            "AUTORIZADA",
+            f"A faixa cumpriu todos os critérios históricos da V25, com {amostra} observações elegíveis nas quatro temporadas anteriores.",
+        )
+
     if valor >= 0.02 and odd > CFG.max_executable_odd:
         return (
-            "SINAL FORA DA FAIXA VALIDADA",
-            f"O cálculo esportivo encontrou valor, mas a cotação {odd:.2f} supera o limite {CFG.max_executable_odd:.2f} testado pela V25.",
+            "SINAL COM VALOR — COTAÇÃO FORA DA FAIXA",
+            f"Existe valor esportivo, mas a cotação {odd:.2f} supera o limite {CFG.max_executable_odd:.2f} testado pela V25.",
         )
-    if valor >= 0.02 and amostra <= 0:
+
+    if valor >= 0.02 and not bool(linha.get("HistoricalMarketAvailable", False)):
         return (
-            "SINAL NÃO VALIDADO",
-            "O cálculo esportivo encontrou valor, mas esta faixa de probabilidade não possui histórico aprovado nas quatro temporadas anteriores.",
+            "SINAL COM VALOR — SEM DADOS HISTÓRICOS",
+            "O cálculo esportivo encontrou valor, mas o mercado e o lado analisados não possuem observações históricas na janela de quatro temporadas usada pela validação da V25.",
         )
+
+    if valor >= 0.02 and not bool(linha.get("HistoricalExactZoneObserved", False)):
+        return (
+            "SINAL COM VALOR — FAIXA SEM AMOSTRA",
+            f"O mercado possui histórico, porém a faixa exata de probabilidade e diferença deste sinal não apareceu nas quatro temporadas anteriores (faixas {float(linha.get('MarketBand') or 0):.3f} e {float(linha.get('DifferenceBand') or 0):.3f}).",
+        )
+
+    if valor >= 0.02 and int(linha.get("HistoricalEligibleBets") or 0) <= 0:
+        bruta = int(linha.get("HistoricalRawBets") or 0)
+        temporadas = int(linha.get("HistoricalSeasonsObserved") or 0)
+        return (
+            "SINAL COM VALOR — AMOSTRA INSUFICIENTE",
+            f"A faixa apareceu em {bruta} jogo(s), distribuído(s) por {temporadas} temporada(s), mas nenhuma temporada atingiu o mínimo de {CFG.min_zone_bets_per_season} observações exigido pela V25.",
+        )
+
     if valor >= 0.02:
+        falhas = _motivo_falhas_validacao(linha)
+        detalhe = falhas or "a faixa não cumpriu todos os critérios históricos da V25"
         return (
-            "SINAL BLOQUEADO",
-            "Existe valor no cálculo esportivo, mas a faixa não cumpriu todos os critérios históricos da V25.",
+            "SINAL COM VALOR — NÃO VALIDADO",
+            f"O cálculo esportivo encontrou valor, porém a faixa não foi aprovada: {detalhe}.",
         )
+
     if abs(diferenca) >= 0.10:
         return (
-            "DESCARTADA — DIVERGÊNCIA ALTA",
-            "A projeção esportiva diverge fortemente do mercado, porém a cotação informada não oferece valor positivo pelo próprio cálculo.",
+            "DESCARTADA — DIVERGÊNCIA ALTA SEM VALOR",
+            "A projeção esportiva diverge fortemente do mercado, mas a cotação informada ainda produz valor esperado negativo pelo próprio cálculo.",
         )
-    return "DESCARTADA", "A probabilidade esportiva não supera a probabilidade mínima exigida pela cotação informada."
-
+    return "DESCARTADA — SEM VALOR", "A probabilidade esportiva não supera a probabilidade mínima exigida pela cotação informada."
 
 def preparar_resultado(resultado: pd.DataFrame) -> pd.DataFrame:
     preparado = resultado.copy()
@@ -537,11 +590,11 @@ def mostrar_resultado(
             financeiro2.metric("Retorno total possível", f"R$ {valor_unidade * odd_principal:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             financeiro3.metric("Lucro possível", f"R$ {valor_unidade * (odd_principal - 1):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     elif not sinais.empty:
-        nomes = ", ".join(nome_selecao(str(item), mandante, visitante) for item in sinais["Side"])
-        st.warning(
-            "🟡 NENHUMA ENTRADA AUTORIZADA. O modelo encontrou sinais matemáticos, mas eles estão fora das faixas validadas: "
-            + nomes
+        descricoes = ", ".join(
+            f"{nome_selecao(str(linha['Side']), mandante, visitante)} ({linha['SituacaoDetalhada']})"
+            for _, linha in sinais.iterrows()
         )
+        st.warning("🟡 NENHUMA ENTRADA AUTORIZADA. O motivo de cada sinal está identificado separadamente: " + descricoes)
     else:
         st.error("🔴 NENHUMA SELEÇÃO APRESENTOU VALOR SUFICIENTE NESTA PARTIDA")
 
@@ -559,10 +612,16 @@ def mostrar_resultado(
             d1, d2, d3, d4 = st.columns(4)
             d1.metric("Cotação informada", f"{linha['ExecutableOdd']:.2f}")
             d2.metric("Diferença modelo–mercado", f"{linha['ProbabilityDifference']:.2%}")
-            d3.metric("Amostra histórica", int(linha["HistoricalBets"] or 0))
+            d3.metric("Amostra histórica elegível", int(linha.get("HistoricalEligibleBets") or linha.get("HistoricalBets") or 0))
             d4.metric(
                 "Retorno histórico",
                 "—" if pd.isna(linha.get("HistoricalROI")) else f"{linha['HistoricalROI']:.2%}",
+            )
+            st.caption(
+                f"Faixa observada: {int(linha.get('HistoricalRawBets') or 0)} jogo(s) em "
+                f"{int(linha.get('HistoricalSeasonsObserved') or 0)} temporada(s); "
+                f"elegível: {int(linha.get('HistoricalEligibleBets') or 0)} jogo(s) em "
+                f"{int(linha.get('HistoricalEligibleSeasons') or 0)} temporada(s)."
             )
             st.write(f"**Motivo:** {linha['Motivo']}")
 
@@ -785,6 +844,8 @@ def gerar_resumo_compartilhavel(payload: dict) -> str:
         f"Liga: {payload['liga']} | Temporada: {payload['temporada']}",
         f"Data: {payload['data'].strftime('%d/%m/%Y')} | Horário de Brasília: {payload.get('horario').strftime('%H:%M') if payload.get('horario') else 'não informado'}",
         f"Fonte das cotações: {payload['fonte'] or 'não informada'}",
+        f"Fonte dos dados esportivos: {payload.get('fonte_dados_esportivos', 'Football-Data.co.uk — consulta direta, sem ZIP')}",
+        f"Último jogo disponível na liga: {payload.get('ultima_data_liga').strftime('%d/%m/%Y') if payload.get('ultima_data_liga') else 'não disponível'} | Partidas carregadas na liga: {int(payload.get('partidas_liga_carregadas', 0))}",
         f"Banca: R$ {payload.get('banca', 0.0):.2f} | Unidade: {payload.get('percentual_unidade', 0.0):.2f}% = R$ {payload.get('valor_unidade', 0.0):.2f}",
         "",
         "CLASSIFICAÇÃO PRÉ-JOGO",
@@ -821,10 +882,14 @@ def gerar_resumo_compartilhavel(payload: dict) -> str:
         nomes = ", ".join(nome_selecao(str(c), payload['mandante'], payload['visitante']) for c in autorizadas['Side'])
         linhas.append(f"- Entrada(s) autorizada(s): {nomes}.")
     elif not sinais.empty:
-        nomes = ", ".join(nome_selecao(str(c), payload['mandante'], payload['visitante']) for c in sinais['Side'])
-        linhas.append(f"- Nenhuma entrada autorizada. Sinais fora da faixa validada: {nomes}.")
+        linhas.append("- Nenhuma entrada autorizada. Diagnóstico dos sinais com valor:")
+        for _, sinal in sinais.iterrows():
+            linhas.append(
+                f"  - {nome_selecao(str(sinal['Side']), payload['mandante'], payload['visitante'])}: "
+                f"{sinal['SituacaoDetalhada']}. {sinal['Motivo']}"
+            )
     else:
-        linhas.append("- Nenhuma entrada autorizada; todas as seleções foram descartadas.")
+        linhas.append("- Nenhuma entrada autorizada; todas as seleções foram descartadas por ausência de valor.")
     return "\n".join(linhas)
 
 
@@ -887,7 +952,7 @@ with st.sidebar:
     st.markdown("### Regra operacional")
     st.write("Até quatro seleções por semana, escolhidas somente entre faixas históricas aprovadas.")
     st.write("A cotação usada no cálculo é exatamente a cotação digitada.")
-    st.write("Resultados recentes: Football-Data.co.uk, com a base do repositório como segurança.")
+    st.write("Dados esportivos: Football-Data.co.uk, consultado diretamente. O aplicativo não usa ZIP local.")
     if google_configurado(st.secrets):
         st.success("Histórico permanente conectado.")
     else:
@@ -1084,6 +1149,9 @@ with aba_jogo:
                     "mandante": mandante,
                     "visitante": visitante,
                     "fonte": fonte,
+                    "fonte_dados_esportivos": "Football-Data.co.uk — consulta direta, sem ZIP",
+                    "ultima_data_liga": ultima_data_da_liga(codigo),
+                    "partidas_liga_carregadas": quantidade_partidas_da_liga(codigo),
                     "esportivo": esportivo,
                     "contexto": contexto,
                     "resultado": resultado,
@@ -1111,7 +1179,7 @@ with aba_jogo:
                 f"Ambas as equipes marcam — Sim: probabilidade do mercado {probabilidades_ambas[0]:.2%}; "
                 f"probabilidade esportiva {payload['esportivo']['BTTS_Y']:.2%}; "
                 f"valor esperado esportivo {valor_ambas:.2%}. "
-                "Este mercado ainda não recebe autorização financeira porque a base histórica não contém cotações antigas suficientes."
+                "Este mercado é exibido apenas como leitura esportiva porque a regra histórica de autorização da V25 ainda não inclui ambas as equipes marcam."
             )
 
         linhas_cotacoes, registros = criar_registros(payload)
@@ -1301,10 +1369,8 @@ with aba_historico:
             st.info("Ainda não há probabilidades salvas.")
         else:
             filtro_liga = st.selectbox("Filtrar por liga", ["Todas"] + sorted(analises_historicas["Liga"].dropna().unique().tolist()))
-            filtro_situacao = st.selectbox(
-                "Filtrar por situação",
-                ["Todas", "AUTORIZADA", "SINAL NÃO VALIDADO", "SINAL FORA DA FAIXA VALIDADA", "SINAL BLOQUEADO", "DESCARTADA"],
-            )
+            situacoes_disponiveis = sorted(analises_historicas["Situação"].dropna().astype(str).unique().tolist())
+            filtro_situacao = st.selectbox("Filtrar por situação", ["Todas"] + situacoes_disponiveis)
             filtrado = analises_historicas.copy()
             if filtro_liga != "Todas":
                 filtrado = filtrado[filtrado["Liga"] == filtro_liga]
@@ -1377,21 +1443,23 @@ with aba_historico:
         st.warning(f"Não foi possível abrir o registro do backtest: {erro}")
 
 with aba_atualizacao:
-    st.markdown("### Atualização automática — Football-Data.co.uk")
+    st.markdown("### Dados esportivos — Football-Data.co.uk")
     st.write(
-        "A fonte principal de resultados e cotações históricas é o Football-Data.co.uk. O aplicativo consulta os arquivos CSV "
-        "das 24 ligas a cada três horas e junta os jogos concluídos à base histórica. O arquivo compactado do GitHub é apenas a "
-        "cópia de segurança para quando a fonte estiver indisponível."
+        "Os jogos concluídos das 24 ligas são baixados diretamente dos arquivos CSV do Football-Data. "
+        "Não existe leitura, mesclagem ou fallback para o ZIP antigo."
     )
     st.info(
-        "Um jogo de ontem entra no cálculo assim que o Football-Data.co.uk publicar a atualização. O aplicativo não substitui "
-        "jogos antigos e não duplica partidas já existentes."
+        "A consulta fica em cache por 12 horas para evitar downloads repetidos a cada clique. "
+        "O botão abaixo descarta o cache e força uma nova leitura direta da fonte."
     )
-    falhas = sum(1 for item in relatorio_atualizacao if item.get("situacao") != "ATUALIZADA")
-    c1, c2, c3 = st.columns(3)
+    falhas = sum(1 for item in relatorio_atualizacao if item.get("situacao") == "FALHA")
+    parciais = sum(1 for item in relatorio_atualizacao if item.get("situacao") == "PARCIAL")
+    atualizadas = sum(1 for item in relatorio_atualizacao if item.get("situacao") == "ATUALIZADA")
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Jogos concluídos carregados", len(partidas))
-    c2.metric("Jogos novos nesta atualização", jogos_novos)
-    c3.metric("Fontes com falha", falhas)
+    c2.metric("Ligas atualizadas", atualizadas)
+    c3.metric("Ligas parciais", parciais)
+    c4.metric("Ligas com falha", falhas)
     if st.button("Atualizar agora"):
         st.cache_data.clear()
         st.cache_resource.clear()
@@ -1403,18 +1471,19 @@ with aba_atualizacao:
             columns={
                 "liga": "Liga",
                 "ultima_data": "Último jogo na fonte",
-                "quantidade": "Partidas na fonte",
+                "quantidade": "Partidas carregadas",
+                "arquivos_ok": "Arquivos carregados",
+                "arquivos_tentados": "Arquivos consultados",
                 "situacao": "Situação",
                 "erro": "Detalhe",
-                "url": "Endereço consultado",
             }
         )
-        colunas = [coluna for coluna in ["Liga", "Último jogo na fonte", "Partidas na fonte", "Situação", "Detalhe"] if coluna in quadro_atualizacao]
+        colunas = [
+            coluna for coluna in
+            ["Liga", "Último jogo na fonte", "Partidas carregadas", "Arquivos carregados", "Arquivos consultados", "Situação", "Detalhe"]
+            if coluna in quadro_atualizacao
+        ]
         st.dataframe(quadro_atualizacao[colunas], use_container_width=True, hide_index=True)
-    st.warning(
-        "A atualização depende do momento em que a fonte pública publica o resultado. O botão acima força nova consulta; "
-        "se a fonte ainda não tiver atualizado, o último jogo continuará ausente até a próxima publicação."
-    )
 
 with aba_planilha:
     st.markdown("### Planilha Google histórica")

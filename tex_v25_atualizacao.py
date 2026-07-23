@@ -4,7 +4,6 @@ import csv
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
-from pathlib import Path
 from typing import Any
 
 import requests
@@ -17,7 +16,6 @@ from tex_v25_core import (
     _number,
     _parse_date,
     _season_start,
-    normalize_zip,
 )
 
 URLS_ANUAIS = {
@@ -38,17 +36,23 @@ CODIGOS_EUROPEUS = [
     "F1", "P1", "N1", "B1", "T1", "G1",
 ]
 
+# A V25 usa quatro temporadas anteriores para validar uma faixa. Baixamos seis
+# temporadas europeias: uma de aquecimento, as quatro de validação e a atual.
+TEMPORADAS_EUROPEIAS_CARREGADAS = 6
+
 
 def codigo_temporada(inicio: int) -> str:
     return f"{inicio % 100:02d}{(inicio + 1) % 100:02d}"
 
 
-def temporadas_europeias_para_tentar(referencia: date | None = None) -> list[int]:
+def inicio_temporada_europeia_atual(referencia: date | None = None) -> int:
     referencia = referencia or date.today()
-    inicio_atual = referencia.year if referencia.month >= 7 else referencia.year - 1
-    # Tenta a temporada atual e a imediatamente anterior. No começo de julho,
-    # alguns arquivos da nova temporada ainda podem não existir.
-    return [inicio_atual, inicio_atual - 1]
+    return referencia.year if referencia.month >= 7 else referencia.year - 1
+
+
+def temporadas_europeias_para_baixar(referencia: date | None = None) -> list[int]:
+    atual = inicio_temporada_europeia_atual(referencia)
+    return list(range(atual - (TEMPORADAS_EUROPEIAS_CARREGADAS - 1), atual + 1))
 
 
 def _parece_csv(texto: str) -> bool:
@@ -101,6 +105,7 @@ def _normalizar_csv(texto: str, codigo: str, temporada_forcada: int | None = Non
             and temporada is not None
         ):
             continue
+
         partidas.append(
             {
                 "Code": codigo,
@@ -127,8 +132,8 @@ def _normalizar_csv(texto: str, codigo: str, temporada_forcada: int | None = Non
     return partidas
 
 
-def _baixar_url(url: str, codigo: str, temporada: int | None = None, timeout: int = 20) -> dict[str, Any]:
-    cabecalhos = {"User-Agent": "Tex-Statistics-v25 atualização estatística"}
+def _baixar_url(url: str, codigo: str, temporada: int | None = None, timeout: int = 25) -> list[dict[str, Any]]:
+    cabecalhos = {"User-Agent": "Tex-Statistics-v25/Football-Data"}
     resposta = requests.get(url, timeout=timeout, headers=cabecalhos)
     resposta.raise_for_status()
     texto = _decode(resposta.content)
@@ -137,91 +142,120 @@ def _baixar_url(url: str, codigo: str, temporada: int | None = None, timeout: in
     partidas = _normalizar_csv(texto, codigo, temporada)
     if not partidas:
         raise ValueError("o arquivo não contém partidas concluídas")
+    return partidas
+
+
+def _deduplicar(partidas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    mapa: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for item in partidas:
+        chave = (
+            item["Code"],
+            item["DateParsed"],
+            str(item["Home"]).casefold(),
+            str(item["Away"]).casefold(),
+        )
+        if chave not in mapa:
+            mapa[chave] = dict(item)
+            continue
+        combinado = dict(mapa[chave])
+        for campo, valor in item.items():
+            if valor is not None and valor != "":
+                combinado[campo] = valor
+        mapa[chave] = combinado
+    return sorted(mapa.values(), key=lambda item: (item["DateParsed"], item["League"], item["Home"], item["Away"]))
+
+
+def _baixar_liga_anual(codigo: str) -> dict[str, Any]:
+    url = URLS_ANUAIS[codigo]
+    try:
+        partidas = _baixar_url(url, codigo)
+        return {
+            "codigo": codigo,
+            "liga": LEAGUES[codigo],
+            "urls": [url],
+            "partidas": partidas,
+            "ultima_data": max(item["DateParsed"] for item in partidas),
+            "quantidade": len(partidas),
+            "arquivos_ok": 1,
+            "arquivos_tentados": 1,
+            "situacao": "ATUALIZADA",
+            "erro": "",
+        }
+    except Exception as erro:
+        return {
+            "codigo": codigo,
+            "liga": LEAGUES[codigo],
+            "urls": [url],
+            "partidas": [],
+            "ultima_data": None,
+            "quantidade": 0,
+            "arquivos_ok": 0,
+            "arquivos_tentados": 1,
+            "situacao": "FALHA",
+            "erro": str(erro),
+        }
+
+
+def _baixar_liga_europeia(codigo: str, referencia: date | None = None) -> dict[str, Any]:
+    partidas: list[dict[str, Any]] = []
+    urls: list[str] = []
+    erros: list[str] = []
+    sucessos = 0
+    temporadas = temporadas_europeias_para_baixar(referencia)
+
+    for inicio in temporadas:
+        temporada_csv = codigo_temporada(inicio)
+        url = f"https://www.football-data.co.uk/mmz4281/{temporada_csv}/{codigo}.csv"
+        urls.append(url)
+        try:
+            partidas.extend(_baixar_url(url, codigo, inicio))
+            sucessos += 1
+        except Exception as erro:
+            erros.append(f"{temporada_csv}: {erro}")
+
+    partidas = _deduplicar(partidas)
+    if sucessos == 0:
+        situacao = "FALHA"
+    elif sucessos < len(temporadas):
+        situacao = "PARCIAL"
+    else:
+        situacao = "ATUALIZADA"
+
     return {
         "codigo": codigo,
         "liga": LEAGUES[codigo],
-        "url": url,
+        "urls": urls,
         "partidas": partidas,
-        "ultima_data": max(item["DateParsed"] for item in partidas),
+        "ultima_data": max((item["DateParsed"] for item in partidas), default=None),
         "quantidade": len(partidas),
-        "situacao": "ATUALIZADA",
-        "erro": "",
+        "arquivos_ok": sucessos,
+        "arquivos_tentados": len(temporadas),
+        "situacao": situacao,
+        "erro": " | ".join(erros),
     }
 
 
 def _baixar_liga(codigo: str, referencia: date | None = None) -> dict[str, Any]:
     if codigo in URLS_ANUAIS:
-        try:
-            return _baixar_url(URLS_ANUAIS[codigo], codigo)
-        except Exception as erro:
-            return {
-                "codigo": codigo,
-                "liga": LEAGUES[codigo],
-                "url": URLS_ANUAIS[codigo],
-                "partidas": [],
-                "ultima_data": None,
-                "quantidade": 0,
-                "situacao": "FALHA",
-                "erro": str(erro),
-            }
-
-    erros: list[str] = []
-    for inicio in temporadas_europeias_para_tentar(referencia):
-        temporada_csv = codigo_temporada(inicio)
-        url = f"https://www.football-data.co.uk/mmz4281/{temporada_csv}/{codigo}.csv"
-        try:
-            return _baixar_url(url, codigo, inicio)
-        except Exception as erro:
-            erros.append(f"{temporada_csv}: {erro}")
-    return {
-        "codigo": codigo,
-        "liga": LEAGUES[codigo],
-        "url": "",
-        "partidas": [],
-        "ultima_data": None,
-        "quantidade": 0,
-        "situacao": "FALHA",
-        "erro": " | ".join(erros),
-    }
+        return _baixar_liga_anual(codigo)
+    return _baixar_liga_europeia(codigo, referencia)
 
 
-def baixar_partidas_recentes(referencia: date | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def carregar_base_football_data(referencia: date | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Baixa a base esportiva diretamente do Football-Data, sem ZIP local."""
     resultados: list[dict[str, Any]] = []
     relatorio: list[dict[str, Any]] = []
+
     with ThreadPoolExecutor(max_workers=8) as executor:
         tarefas = {executor.submit(_baixar_liga, codigo, referencia): codigo for codigo in LEAGUES}
         for tarefa in as_completed(tarefas):
             resposta = tarefa.result()
             resultados.extend(resposta.pop("partidas"))
             relatorio.append(resposta)
-    resultados.sort(key=lambda item: (item["DateParsed"], item["League"], item["Home"], item["Away"]))
+
+    resultados = _deduplicar(resultados)
     relatorio.sort(key=lambda item: item["liga"])
+    if not resultados:
+        detalhes = " | ".join(item.get("erro", "") for item in relatorio if item.get("erro"))
+        raise RuntimeError(f"O Football-Data não retornou nenhuma partida concluída. {detalhes}".strip())
     return resultados, relatorio
-
-
-def mesclar_partidas(historico: list[dict[str, Any]], recentes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
-    mapa = {
-        (item["Code"], item["DateParsed"], item["Home"].casefold(), item["Away"].casefold()): dict(item)
-        for item in historico
-    }
-    quantidade_antes = len(mapa)
-    for item in recentes:
-        chave = (item["Code"], item["DateParsed"], item["Home"].casefold(), item["Away"].casefold())
-        if chave in mapa:
-            antigo = mapa[chave]
-            combinado = dict(antigo)
-            for campo, valor in item.items():
-                if valor is not None and valor != "":
-                    combinado[campo] = valor
-            mapa[chave] = combinado
-        else:
-            mapa[chave] = dict(item)
-    saida = sorted(mapa.values(), key=lambda item: (item["DateParsed"], item["League"], item["Home"], item["Away"]))
-    return saida, max(0, len(mapa) - quantidade_antes)
-
-
-def carregar_base_com_atualizacao(zip_historico: str | Path, referencia: date | None = None):
-    historico = normalize_zip(zip_historico, include_incomplete_annual_2026=True)
-    recentes, relatorio = baixar_partidas_recentes(referencia)
-    combinado, novos = mesclar_partidas(historico, recentes)
-    return combinado, relatorio, novos
