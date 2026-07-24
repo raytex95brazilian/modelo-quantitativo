@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
+import hashlib
 import json
 import math
 
@@ -22,8 +23,8 @@ from tex_operacional_core import (
     standings_context,
 )
 
-APP_NAME = "Tex Statistics V28 — Carteira Walk-Forward"
-MODEL_VERSION = "V28.0"
+APP_NAME = "Tex Statistics V28.1 — Estado e Odds Corrigidos"
+MODEL_VERSION = "V28.1-statefix"
 
 MARKET_DEFINITIONS = {
     "1X2": {
@@ -189,6 +190,55 @@ def load_v28_model(directory: str | Path) -> V28Model:
     )
 
 
+def lot_fingerprint(games: pd.DataFrame) -> str:
+    """Hash determinístico do lote inteiro, incluindo todas as cotações.
+
+    Impede que resultados antigos continuem visíveis depois que qualquer jogo,
+    equipe, horário ou odd for alterado na interface.
+    """
+    if games is None or games.empty:
+        return hashlib.sha256(b"[]").hexdigest()
+    frame = games.reindex(columns=INPUT_COLUMNS).copy()
+    records: list[dict[str, Any]] = []
+    for _, row in frame.iterrows():
+        record: dict[str, Any] = {}
+        for column in INPUT_COLUMNS:
+            value = row.get(column)
+            if value is None or (not isinstance(value, (list, dict, tuple)) and pd.isna(value)):
+                record[column] = None
+            elif isinstance(value, (float, np.floating)):
+                record[column] = round(float(value), 8)
+            elif isinstance(value, (int, np.integer)):
+                record[column] = int(value)
+            else:
+                record[column] = str(value)
+        records.append(record)
+    payload = json.dumps(records, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def validate_market_odds(market: str, odds: list[float]) -> float:
+    """Valida coerência matemática da linha antes de retirar a margem.
+
+    Retorna a soma das probabilidades implícitas. Linhas muito abaixo de 100%
+    normalmente indicam cotações misturadas entre partidas; linhas extremas
+    também são bloqueadas para evitar alimentar o modelo com dados corrompidos.
+    """
+    if market not in MARKET_DEFINITIONS:
+        raise ValueError(f"Mercado desconhecido: {market}.")
+    if any((not math.isfinite(float(odd))) or float(odd) <= 1.0 for odd in odds):
+        raise ValueError(f"{MARKET_DEFINITIONS[market]['label']}: todas as odds devem ser maiores que 1,00.")
+    implied_sum = sum(1.0 / float(odd) for odd in odds)
+    lower, upper = ((0.98, 1.30) if market == "1X2" else (0.98, 1.22))
+    if not lower <= implied_sum <= upper:
+        raise ValueError(
+            f"ODDS INCONSISTENTES em {MARKET_DEFINITIONS[market]['label']}: "
+            f"soma implícita {implied_sum:.2%}; faixa aceita {lower:.0%}–{upper:.0%}. "
+            "Revise se alguma cotação pertence a outra partida."
+        )
+    return implied_sum
+
+
 def _complete_odds(row: pd.Series, columns: list[str]) -> list[float] | None:
     parsed = [parse_odd(row.get(column)) for column in columns]
     if all(value is None for value in parsed):
@@ -338,6 +388,7 @@ def analyze_games(
             for market, definition in MARKET_DEFINITIONS.items():
                 odds = _complete_odds(row, definition["odd_columns"])
                 if odds is not None:
+                    validate_market_odds(market, odds)
                     groups.append((market, odds))
             if not groups:
                 raise ValueError("Informe ao menos um mercado completo: 1X2, gols ou ambas marcam.")
@@ -407,7 +458,8 @@ def analyze_games(
                 "Preço qualificado, mas ficou atrás de outra seleção do mesmo jogo ou do limite semanal."
             )
 
-    order = {"OPERAR":0,"RESERVA":1,"QUALIFICADA":1,"AGUARDAR PREÇO":2,"EXPERIMENTAL":3,"DESCARTAR":4,"FORA DA FAIXA":5}
+    # Uma leitura experimental nunca deve ocultar um mercado financeiramente validado.
+    order = {"OPERAR":0,"RESERVA":1,"QUALIFICADA":1,"AGUARDAR PREÇO":2,"DESCARTAR":3,"FORA DA FAIXA":4,"EXPERIMENTAL":5}
     all_evaluations["StatusOrder"] = all_evaluations["Status"].map(order).fillna(9)
     readings = (
         all_evaluations.sort_values(["MatchID","StatusOrder","ExpectedValue","DecisionProbability"], ascending=[True,True,False,False])

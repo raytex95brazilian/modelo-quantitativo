@@ -31,7 +31,9 @@ from tex_v28_core import (
     enrich_with_standings,
     latest_team_catalog,
     load_v28_model,
+    lot_fingerprint,
     no_vig_probabilities,
+    validate_market_odds,
     parse_odd,
     standings_context,
 )
@@ -109,10 +111,21 @@ def team_catalog(serialized: tuple[tuple[str, int, str, str], ...]):
     return latest_team_catalog(rows)
 
 
+RESULT_STATE_KEYS = (
+    "tex_entries", "tex_readings", "tex_evaluations", "tex_diagnostics",
+    "tex_ai_summary", "tex_analysis_fingerprint",
+)
+
+
 def games() -> list[dict]:
     if "tex_games" not in st.session_state:
         st.session_state.tex_games = []
     return st.session_state.tex_games
+
+
+def invalidate_analysis() -> None:
+    for key in RESULT_STATE_KEYS:
+        st.session_state.pop(key, None)
 
 
 def upsert_game(game: dict) -> str:
@@ -120,10 +133,13 @@ def upsert_game(game: dict) -> str:
     for index, current in enumerate(games()):
         current_key = (current["Data"], current["Código da liga"], current["Mandante"], current["Visitante"])
         if key == current_key:
-            game["ID"] = current["ID"]
-            games()[index] = game
+            snapshot = dict(game)
+            snapshot["ID"] = current["ID"]
+            games()[index] = snapshot
+            invalidate_analysis()
             return "atualizada"
-    games().append(game)
+    games().append(dict(game))
+    invalidate_analysis()
     return "adicionada"
 
 
@@ -271,42 +287,46 @@ st.subheader("1. Adicionar partidas")
 league_names = list(LEAGUES.values())
 name_to_code = {name: code for code, name in LEAGUES.items()}
 
-with st.form("game_form", clear_on_submit=False):
+if st.session_state.pop("tex_flash", None):
+    st.success(st.session_state.pop("tex_flash_message", "Partida salva."))
+form_version = int(st.session_state.get("tex_form_version", 0))
+
+with st.form(f"game_form_{form_version}", clear_on_submit=False):
     row1 = st.columns([1.1, 0.8, 1.8, 1.8, 1.8])
-    game_date = row1[0].date_input("Data", value=date.today())
-    game_time = row1[1].time_input("Horário", value=time(16, 0))
-    league_name = row1[2].selectbox("Liga", league_names)
+    game_date = row1[0].date_input("Data", value=date.today(), key=f"game_date_{form_version}")
+    game_time = row1[1].time_input("Horário", value=time(16, 0), key=f"game_time_{form_version}")
+    league_name = row1[2].selectbox("Liga", league_names, key=f"league_{form_version}")
     code = name_to_code[league_name]
     available_teams = teams_by_code.get(code, [])
-    home = row1[3].selectbox("Mandante", available_teams, key=f"home_{code}") if available_teams else ""
+    home = row1[3].selectbox("Mandante", available_teams, key=f"home_{form_version}_{code}") if available_teams else ""
     away_options = [team for team in available_teams if team != home]
-    away = row1[4].selectbox("Visitante", away_options, key=f"away_{code}") if away_options else ""
+    away = row1[4].selectbox("Visitante", away_options, key=f"away_{form_version}_{code}") if away_options else ""
 
-    bookmaker = st.text_input("Casa de apostas", value="Pixbet")
+    bookmaker = st.text_input("Casa de apostas", value="Pixbet", key=f"bookmaker_{form_version}")
     include_1x2, include_ou, include_btts = st.columns(3)
     with include_1x2:
-        use_1x2 = st.checkbox("Resultado final 1X2", value=True)
+        use_1x2 = st.checkbox("Resultado final 1X2", value=True, key=f"use_1x2_{form_version}")
         if use_1x2:
             a, b, c = st.columns(3)
-            odd_h = a.number_input("Odd mandante", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-            odd_d = b.number_input("Odd empate", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-            odd_a = c.number_input("Odd visitante", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+            odd_h = a.number_input("Odd mandante", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_h_{form_version}")
+            odd_d = b.number_input("Odd empate", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_d_{form_version}")
+            odd_a = c.number_input("Odd visitante", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_a_{form_version}")
         else:
             odd_h = odd_d = odd_a = 0.0
     with include_ou:
-        use_ou = st.checkbox("Mais/menos de 2,5 gols", value=True)
+        use_ou = st.checkbox("Mais/menos de 2,5 gols", value=True, key=f"use_ou_{form_version}")
         if use_ou:
             a, b = st.columns(2)
-            odd_o = a.number_input("Odd mais de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-            odd_u = b.number_input("Odd menos de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+            odd_o = a.number_input("Odd mais de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_o_{form_version}")
+            odd_u = b.number_input("Odd menos de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_u_{form_version}")
         else:
             odd_o = odd_u = 0.0
     with include_btts:
-        use_btts = st.checkbox("Ambas marcam", value=True)
+        use_btts = st.checkbox("Ambas marcam", value=True, key=f"use_btts_{form_version}")
         if use_btts:
             a, b = st.columns(2)
-            odd_by = a.number_input("Odd ambas — Sim", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-            odd_bn = b.number_input("Odd ambas — Não", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+            odd_by = a.number_input("Odd ambas — Sim", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_by_{form_version}")
+            odd_bn = b.number_input("Odd ambas — Não", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_bn_{form_version}")
         else:
             odd_by = odd_bn = 0.0
 
@@ -317,25 +337,41 @@ with st.form("game_form", clear_on_submit=False):
         elif not any((use_1x2, use_ou, use_btts)):
             st.error("Ative ao menos um mercado.")
         else:
-            game = {
-                "ID": uuid4().hex[:12],
-                "Data": game_date.isoformat(),
-                "Hora": game_time.strftime("%H:%M"),
-                "Código da liga": code,
-                "Liga": league_name,
-                "Mandante": home,
-                "Visitante": away,
-                "Casa de apostas": bookmaker.strip() or "Não informada",
-                "Odd mandante": odd_h if use_1x2 else None,
-                "Odd empate": odd_d if use_1x2 else None,
-                "Odd visitante": odd_a if use_1x2 else None,
-                "Odd mais de 2,5": odd_o if use_ou else None,
-                "Odd menos de 2,5": odd_u if use_ou else None,
-                "Odd ambas marcam — Sim": odd_by if use_btts else None,
-                "Odd ambas marcam — Não": odd_bn if use_btts else None,
-            }
-            action = upsert_game(game)
-            st.success(f"Partida {action}: {home} x {away}.")
+            try:
+                if use_1x2:
+                    validate_market_odds("1X2", [odd_h, odd_d, odd_a])
+                if use_ou:
+                    validate_market_odds("OU25", [odd_o, odd_u])
+                if use_btts:
+                    validate_market_odds("BTTS", [odd_by, odd_bn])
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                game = {
+                    "ID": uuid4().hex[:12],
+                    "Data": game_date.isoformat(),
+                    "Hora": game_time.strftime("%H:%M"),
+                    "Código da liga": code,
+                    "Liga": league_name,
+                    "Mandante": home,
+                    "Visitante": away,
+                    "Casa de apostas": bookmaker.strip() or "Não informada",
+                    "Odd mandante": float(odd_h) if use_1x2 else None,
+                    "Odd empate": float(odd_d) if use_1x2 else None,
+                    "Odd visitante": float(odd_a) if use_1x2 else None,
+                    "Odd mais de 2,5": float(odd_o) if use_ou else None,
+                    "Odd menos de 2,5": float(odd_u) if use_ou else None,
+                    "Odd ambas marcam — Sim": float(odd_by) if use_btts else None,
+                    "Odd ambas marcam — Não": float(odd_bn) if use_btts else None,
+                }
+                action = upsert_game(game)
+                st.session_state.tex_form_version = form_version + 1
+                st.session_state.tex_flash = True
+                st.session_state.tex_flash_message = (
+                    f"Partida {action}: {home} x {away}. A análise anterior foi invalidada e "
+                    "os campos de odds foram reiniciados para impedir reaproveitamento entre jogos."
+                )
+                st.rerun()
 
 st.subheader("2. Partidas do lote")
 if not games():
@@ -359,11 +395,11 @@ else:
     if remove_col.button("REMOVER SELECIONADA", use_container_width=True) and remove_label != "Nenhuma":
         index = labels.index(remove_label)
         games().pop(index)
+        invalidate_analysis()
         st.rerun()
     if clear_col.button("LIMPAR LOTE", use_container_width=True):
         st.session_state.tex_games = []
-        for key in ("tex_entries", "tex_readings", "tex_evaluations", "tex_diagnostics"):
-            st.session_state.pop(key, None)
+        invalidate_analysis()
         st.rerun()
 
     if st.button("ANALISAR TODO O LOTE", type="primary", use_container_width=True):
@@ -386,6 +422,13 @@ else:
         st.session_state.tex_ai_summary = build_ai_summary(
             current_games, readings, evaluations, diagnostics, matches
         )
+        st.session_state.tex_analysis_fingerprint = lot_fingerprint(current_games)
+
+current_fingerprint = lot_fingerprint(games_frame())
+saved_fingerprint = st.session_state.get("tex_analysis_fingerprint")
+if saved_fingerprint and saved_fingerprint != current_fingerprint:
+    invalidate_analysis()
+    st.warning("O lote foi alterado depois da última análise. Os resultados antigos foram descartados; clique em ANALISAR TODO O LOTE novamente.")
 
 entries = st.session_state.get("tex_entries", pd.DataFrame())
 readings = st.session_state.get("tex_readings", pd.DataFrame())
