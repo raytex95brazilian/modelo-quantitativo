@@ -36,8 +36,10 @@ except Exception as exc:
 
 import tex_operacional_core as _operacional
 
-EXPECTED_CORE_API = "28.1.4"
-APP_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.4")
+EXPECTED_CORE_API = "28.1.4.3"
+CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.4")
+APP_NAME = "Tex Statistics V28.1.4.3 — Cotações de 1,50 a 2,00"
+ANALYSIS_STATE_VERSION = "28.1.4.3-faixa-150-200-v1"
 
 _REQUIRED_V28 = (
     "analyze_games", "build_ai_summary", "display_frame",
@@ -107,7 +109,7 @@ def apply_style() -> None:
     )
     st.markdown(
         f'<div class="tex-head"><h1>{APP_NAME}</h1>'
-        '<p>Sete seleções por partida, correção pelo acerto histórico e até cinco entradas autorizadas por semana.</p></div>',
+        '<p>Sete seleções por partida; somente cotações entre 1,50 e 2,00 podem ser autorizadas.</p></div>',
         unsafe_allow_html=True,
     )
 
@@ -169,6 +171,18 @@ def invalidate_analysis() -> None:
         st.session_state.pop(key, None)
 
 
+# Resultados de versões anteriores não podem ser reaproveitados apenas porque
+# o lote de jogos continua igual. A V28.1.4 mudou a regra de autorização e
+# precisa obrigatoriamente recalcular as probabilidades corrigidas.
+_previous_analysis_version = st.session_state.get("tex_analysis_state_version")
+if _previous_analysis_version != ANALYSIS_STATE_VERSION:
+    _had_previous_results = any(key in st.session_state for key in RESULT_STATE_KEYS)
+    invalidate_analysis()
+    st.session_state.tex_analysis_state_version = ANALYSIS_STATE_VERSION
+    if _had_previous_results:
+        st.session_state.tex_force_reanalysis_notice = True
+
+
 def upsert_game(game: dict) -> str:
     key = (game["Data"], game["Código da liga"], game["Mandante"], game["Visitante"])
     for index, current in enumerate(games()):
@@ -186,6 +200,66 @@ def upsert_game(game: dict) -> str:
 
 def games_frame() -> pd.DataFrame:
     return pd.DataFrame(games(), columns=INPUT_COLUMNS) if games() else pd.DataFrame(columns=INPUT_COLUMNS)
+
+
+def ensure_analysis_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Garante as colunas novas da V28.1.4 mesmo após módulos antigos de enriquecimento.
+
+    Alguns deploys ainda usam uma versão de ``tex_operacional_core.py`` que
+    devolve apenas o conjunto antigo de colunas. A análise continua correta,
+    mas a interface falhava ao tentar exibir ``OriginalProbability``.
+    """
+    if frame is None:
+        return pd.DataFrame()
+    out = frame.copy()
+    if out.empty:
+        return out
+
+    if "OriginalProbability" not in out.columns:
+        if "ModelProbability" in out.columns:
+            out["OriginalProbability"] = pd.to_numeric(out["ModelProbability"], errors="coerce")
+        elif "DecisionProbability" in out.columns:
+            out["OriginalProbability"] = pd.to_numeric(out["DecisionProbability"], errors="coerce")
+
+    if "HistoricalAdjustment" not in out.columns and {"DecisionProbability", "OriginalProbability"}.issubset(out.columns):
+        out["HistoricalAdjustment"] = (
+            pd.to_numeric(out["DecisionProbability"], errors="coerce")
+            - pd.to_numeric(out["OriginalProbability"], errors="coerce")
+        )
+    return out
+
+
+def enrich_preserving_analysis(
+    frame: pd.DataFrame, current_games: pd.DataFrame, matches: list[dict]
+) -> pd.DataFrame:
+    """Acrescenta a classificação sem permitir que colunas da análise sejam perdidas."""
+    original = ensure_analysis_columns(frame)
+    if original.empty:
+        return original
+
+    enriched = enrich_with_standings(original.copy(), current_games, matches)
+    if not isinstance(enriched, pd.DataFrame):
+        return original
+
+    enriched = enriched.copy()
+    missing = [column for column in original.columns if column not in enriched.columns]
+    if not missing:
+        return ensure_analysis_columns(enriched)
+
+    keys = [column for column in ("InputID", "Market", "Side") if column in original.columns and column in enriched.columns]
+    if len(keys) == 3:
+        restore = original[keys + missing].drop_duplicates(keys)
+        enriched = enriched.merge(restore, on=keys, how="left", sort=False, validate="many_to_one")
+    elif len(enriched) == len(original):
+        original_reset = original.reset_index(drop=True)
+        enriched = enriched.reset_index(drop=True)
+        for column in missing:
+            enriched[column] = original_reset[column].to_numpy()
+    else:
+        # Não arrisca cruzar análises de partidas diferentes.
+        return original
+
+    return ensure_analysis_columns(enriched)
 
 
 def make_catalog_records(evaluations: pd.DataFrame, bankroll: float) -> list[dict]:
@@ -279,7 +353,11 @@ def make_analysis_records(evaluations: pd.DataFrame, unit_fraction: float) -> li
                 "Pontos do visitante": getattr(row, "AwayPoints", ""),
                 "Pontos por jogo do mandante": getattr(row, "HomePPG", ""),
                 "Pontos por jogo do visitante": getattr(row, "AwayPPG", ""),
-                "Observações": f"Probabilidade original: {float(row.OriginalProbability):.1%}. Casos históricos semelhantes: {int(row.ProfileSample)}. Confiança: {row.SampleConfidence}. Estabilidade: {float(row.Reliability):.1%}. Cotação mínima: {float(row.RequiredOddForOperation):.2f}.",
+                "Observações": (
+                    f"Probabilidade original: {float(getattr(row, 'OriginalProbability', getattr(row, 'ModelProbability', row.DecisionProbability))):.1%}. "
+                    f"Casos históricos semelhantes: {int(row.ProfileSample)}. Confiança: {row.SampleConfidence}. "
+                    f"Estabilidade: {float(row.Reliability):.1%}. Cotação mínima: {float(row.RequiredOddForOperation):.2f}."
+                ),
             }
         )
         records.append(record)
@@ -287,6 +365,12 @@ def make_analysis_records(evaluations: pd.DataFrame, unit_fraction: float) -> li
 
 
 apply_style()
+
+if st.session_state.pop("tex_force_reanalysis_notice", False):
+    st.warning(
+        "A análise exibida pertencia à versão anterior e foi descartada. "
+        "O lote de partidas foi preservado; clique em ANALISAR TODO O LOTE para recalcular com a faixa de cotação de 1,50 a 2,00."
+    )
 
 try:
     matches, update_report, source = load_matches()
@@ -320,7 +404,7 @@ with st.sidebar:
 
 st.markdown(
     '<div class="rule-box"><b>Análise ampliada:</b> resultado final, mais ou menos de 2,5 gols e ambas marcam concorrem entre si. '
-    'A probabilidade é corrigida pelo acerto de previsões históricas semelhantes. O aplicativo autoriza no máximo uma seleção por jogo e cinco por semana.</div>',
+    'A probabilidade é corrigida pelo acerto de previsões históricas semelhantes. Somente cotações de 1,50 a 2,00 podem ser autorizadas; as demais permanecem visíveis, mas ficam bloqueadas. O aplicativo autoriza no máximo uma seleção por jogo e cinco por semana.</div>',
     unsafe_allow_html=True,
 )
 
@@ -466,9 +550,9 @@ else:
                 unit_fraction=unit_percent / 100.0,
                 max_entries=int(max_entries),
             )
-            entries = enrich_with_standings(entries, current_games, matches)
-            readings = enrich_with_standings(readings, current_games, matches)
-            evaluations = enrich_with_standings(evaluations, current_games, matches)
+            entries = enrich_preserving_analysis(entries, current_games, matches)
+            readings = enrich_preserving_analysis(readings, current_games, matches)
+            evaluations = enrich_preserving_analysis(evaluations, current_games, matches)
             st.session_state.tex_entries = entries
             st.session_state.tex_readings = readings
             st.session_state.tex_evaluations = evaluations
@@ -476,6 +560,7 @@ else:
             st.session_state.tex_ai_summary = build_ai_summary(
                 current_games, readings, evaluations, diagnostics, matches
             )
+            st.session_state.tex_analysis_state_version = ANALYSIS_STATE_VERSION
             st.session_state.tex_analysis_fingerprint = lot_fingerprint(current_games)
 
 current_fingerprint = lot_fingerprint(games_frame())
@@ -484,9 +569,9 @@ if saved_fingerprint and saved_fingerprint != current_fingerprint:
     invalidate_analysis()
     st.warning("O lote foi alterado depois da última análise. Os resultados antigos foram descartados; clique em ANALISAR TODO O LOTE novamente.")
 
-entries = st.session_state.get("tex_entries", pd.DataFrame())
-readings = st.session_state.get("tex_readings", pd.DataFrame())
-evaluations = st.session_state.get("tex_evaluations", pd.DataFrame())
+entries = ensure_analysis_columns(st.session_state.get("tex_entries", pd.DataFrame()))
+readings = ensure_analysis_columns(st.session_state.get("tex_readings", pd.DataFrame()))
+evaluations = ensure_analysis_columns(st.session_state.get("tex_evaluations", pd.DataFrame()))
 diagnostics = st.session_state.get("tex_diagnostics", pd.DataFrame())
 ai_summary = st.session_state.get("tex_ai_summary", "")
 
@@ -630,8 +715,15 @@ if not readings.empty or not diagnostics.empty:
             else:
                 st.info(headline)
 
+            original_probability = row.get(
+                "OriginalProbability", row.get("ModelProbability", row.get("DecisionProbability", 0.0))
+            )
+            historical_adjustment = row.get(
+                "HistoricalAdjustment", float(row.get("DecisionProbability", 0.0)) - float(original_probability)
+            )
+
             p1, p2, p3, p4 = st.columns(4)
-            p1.metric("Probabilidade original", pct(row["OriginalProbability"]))
+            p1.metric("Probabilidade original", pct(original_probability))
             p2.metric("Probabilidade corrigida", pct(row["DecisionProbability"]))
             p3.metric("Acerto histórico", pct(row["EmpiricalHitRate"]))
             p4.metric("Probabilidade do mercado", pct(row["MarketProbability"]))
@@ -640,7 +732,7 @@ if not readings.empty or not diagnostics.empty:
             a1.metric("Casos históricos semelhantes", int(row["ProfileSample"]))
             a2.metric("Confiança da amostra", str(row["SampleConfidence"]))
             a3.metric("Estabilidade histórica", pct(row["Reliability"]))
-            a4.metric("Correção histórica", f"{float(row['HistoricalAdjustment']):+.1%}")
+            a4.metric("Correção histórica", f"{float(historical_adjustment):+.1%}")
 
             o1, o2, o3, o4 = st.columns(4)
             o1.metric("Cotação atual", f"{float(row['Odd']):.2f}")

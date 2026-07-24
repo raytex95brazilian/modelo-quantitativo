@@ -23,9 +23,9 @@ from tex_operacional_core import (
     standings_context,
 )
 
-APP_NAME = "Tex Statistics V28.1.4 — Análise Ampliada"
-CORE_API_VERSION = "28.1.4"
-MODEL_VERSION = "V28.1.4-analise-ampliada"
+APP_NAME = "Tex Statistics V28.1.4.3 — Faixa de cotação controlada"
+CORE_API_VERSION = "28.1.4.3"
+MODEL_VERSION = "V28.1.4.3-faixa-150-200"
 
 MARKET_DEFINITIONS = {
     "1X2": {
@@ -53,8 +53,8 @@ MARKET_DEFINITIONS = {
 class V28Config:
     unit_fraction: float = 0.01
     target_entries: int = 5
-    min_odd: float = 1.20
-    max_odd: float = 3.00
+    min_odd: float = 1.50
+    max_odd: float = 2.00
     price_haircut: float = 0.02
     minimum_ev: float = 0.0
     near_ev: float = -0.03
@@ -92,8 +92,8 @@ class V28Model:
         self.feature_order = list(self.metadata["feature_order"])
         self.category_maps = self.metadata["category_maps"]
         self.price_haircut = float(self.metadata.get("price_haircut", 0.02))
-        self.min_odd = float(self.metadata.get("min_odd", 1.20))
-        self.max_odd = float(self.metadata.get("max_odd", 3.00))
+        self.min_odd = float(self.metadata.get("min_odd", 1.50))
+        self.max_odd = float(self.metadata.get("max_odd", 2.00))
         self.profiles = pd.read_csv(reliability_file)
         self.profiles["ProbBin"] = pd.to_numeric(self.profiles["ProbBin"], errors="coerce").round(2)
 
@@ -492,7 +492,7 @@ def _evaluate_group(
         expected_value = probability * effective_odd - 1.0
         required_odd = 1.0 / max((1.0 - cfg.price_haircut) * probability, 1e-9)
         odd_gap = odd - required_odd
-        in_odd_range = cfg.min_odd <= effective_odd <= cfg.max_odd
+        in_odd_range = cfg.min_odd <= odd <= cfg.max_odd
 
         if not validated:
             status = "SEM VALIDAÇÃO"
@@ -511,7 +511,7 @@ def _evaluate_group(
             reason = "A análise é próxima do ponto de equilíbrio e precisa de cotação maior."
         elif not in_odd_range:
             status = "FORA DA FAIXA"
-            reason = f"Cotação após desconto fora da faixa testada ({cfg.min_odd:.2f} a {cfg.max_odd:.2f})."
+            reason = f"Cotação informada fora da faixa autorizada ({cfg.min_odd:.2f} a {cfg.max_odd:.2f})."
         else:
             status = "DESCARTADA"
             reason = "A cotação atual não remunera a probabilidade corrigida pelo histórico."
@@ -791,7 +791,7 @@ def build_ai_summary(
     lines = [
         f"RESUMO PARA IA — {APP_NAME}",
         "Arquitetura: probabilidades do mercado sem margem, modelo esportivo, modelo de árvores e correção pelo acerto histórico.",
-        "Protocolo: a cotação recebe desconto operacional de 2%; resultado final, total de gols e ambas marcam concorrem entre si; no máximo uma seleção por partida e cinco por semana.",
+        "Protocolo: somente cotações entre 1,50 e 2,00 podem ser autorizadas; a cotação recebe desconto operacional de 2%; resultado final, total de gols e ambas marcam concorrem entre si; no máximo uma seleção por partida e cinco por semana.",
         "A autorização exige valor esperado não negativo, quantidade histórica mínima e confiança moderada ou forte.",
         f"Partidas: {len(games)} | leituras principais: {len(readings)} | seleções avaliadas: {len(evaluations)}",
         "",
