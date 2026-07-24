@@ -38,7 +38,8 @@ import tex_operacional_core as _operacional
 
 EXPECTED_CORE_API = "28.1.4"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.4")
-APP_NAME = "Tex Statistics V28.1.4.1 — Correção de compatibilidade"
+APP_NAME = "Tex Statistics V28.1.4.2 — Correção de sessão"
+ANALYSIS_STATE_VERSION = "28.1.4-historico-v1"
 
 _REQUIRED_V28 = (
     "analyze_games", "build_ai_summary", "display_frame",
@@ -168,6 +169,18 @@ def games() -> list[dict]:
 def invalidate_analysis() -> None:
     for key in RESULT_STATE_KEYS:
         st.session_state.pop(key, None)
+
+
+# Resultados de versões anteriores não podem ser reaproveitados apenas porque
+# o lote de jogos continua igual. A V28.1.4 mudou a regra de autorização e
+# precisa obrigatoriamente recalcular as probabilidades corrigidas.
+_previous_analysis_version = st.session_state.get("tex_analysis_state_version")
+if _previous_analysis_version != ANALYSIS_STATE_VERSION:
+    _had_previous_results = any(key in st.session_state for key in RESULT_STATE_KEYS)
+    invalidate_analysis()
+    st.session_state.tex_analysis_state_version = ANALYSIS_STATE_VERSION
+    if _had_previous_results:
+        st.session_state.tex_force_reanalysis_notice = True
 
 
 def upsert_game(game: dict) -> str:
@@ -352,6 +365,12 @@ def make_analysis_records(evaluations: pd.DataFrame, unit_fraction: float) -> li
 
 
 apply_style()
+
+if st.session_state.pop("tex_force_reanalysis_notice", False):
+    st.warning(
+        "A análise exibida pertencia à versão anterior e foi descartada. "
+        "O lote de partidas foi preservado; clique em ANALISAR TODO O LOTE para recalcular com a análise ampliada."
+    )
 
 try:
     matches, update_report, source = load_matches()
@@ -541,6 +560,7 @@ else:
             st.session_state.tex_ai_summary = build_ai_summary(
                 current_games, readings, evaluations, diagnostics, matches
             )
+            st.session_state.tex_analysis_state_version = ANALYSIS_STATE_VERSION
             st.session_state.tex_analysis_fingerprint = lot_fingerprint(current_games)
 
 current_fingerprint = lot_fingerprint(games_frame())
