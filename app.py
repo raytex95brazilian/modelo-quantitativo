@@ -26,11 +26,18 @@ from tex_v25_storage import (
 # Importação por módulo, em vez de uma lista rígida de símbolos.
 # Isso evita o ImportError genérico quando app.py e o núcleo ficam em versões
 # diferentes durante um deploy parcial do GitHub/Streamlit.
-import tex_v28_core as _v28
+try:
+    import tex_v28_core_2812 as _v28
+except Exception as exc:
+    st.error("O módulo tex_v28_core_2812.py não foi carregado no deploy.")
+    st.code(f"{type(exc).__name__}: {exc}", language="text")
+    st.info("Confirme no GitHub que app.py e tex_v28_core_2812.py foram enviados no mesmo commit.")
+    st.stop()
+
 import tex_operacional_core as _operacional
 
-EXPECTED_CORE_API = "28.1.1"
-APP_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1")
+EXPECTED_CORE_API = "28.1.2"
+APP_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2")
 
 _REQUIRED_V28 = (
     "analyze_games", "build_ai_summary", "display_frame",
@@ -40,7 +47,7 @@ _REQUIRED_OPERACIONAL = (
     "INPUT_COLUMNS", "enrich_with_standings", "latest_team_catalog",
     "parse_odd", "standings_context",
 )
-_IMPORT_PROBLEMS = [f"tex_v28_core.{name}" for name in _REQUIRED_V28 if not hasattr(_v28, name)]
+_IMPORT_PROBLEMS = [f"tex_v28_core_2812.{name}" for name in _REQUIRED_V28 if not hasattr(_v28, name)]
 _IMPORT_PROBLEMS += [
     f"tex_operacional_core.{name}" for name in _REQUIRED_OPERACIONAL
     if not hasattr(_operacional, name)
@@ -74,7 +81,7 @@ if _IMPORT_PROBLEMS:
     st.error("Arquivos da V28 desencontrados no deploy.")
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
-        "Substitua juntos app.py, tex_v28_core.py, tex_operacional_core.py e "
+        "Substitua juntos app.py, tex_v28_core_2812.py, tex_operacional_core.py e "
         "tex_v25_core.py pelo mesmo patch e faça novo deploy."
     )
     st.stop()
