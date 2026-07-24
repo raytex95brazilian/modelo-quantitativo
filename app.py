@@ -22,21 +22,46 @@ from tex_v25_storage import (
     salvar_cotacoes,
     url_planilha_configurada,
 )
-from tex_v28_core import (
-    APP_NAME,
-    INPUT_COLUMNS,
-    analyze_games,
-    build_ai_summary,
-    display_frame,
-    enrich_with_standings,
-    latest_team_catalog,
-    load_v28_model,
-    lot_fingerprint,
-    no_vig_probabilities,
-    validate_market_odds,
-    parse_odd,
-    standings_context,
+
+# Importação por módulo, em vez de uma lista rígida de símbolos.
+# Isso evita o ImportError genérico quando app.py e o núcleo ficam em versões
+# diferentes durante um deploy parcial do GitHub/Streamlit.
+import tex_v28_core as _v28
+import tex_operacional_core as _operacional
+
+EXPECTED_CORE_API = "28.1.1"
+APP_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1")
+
+_REQUIRED_V28 = (
+    "analyze_games", "build_ai_summary", "display_frame",
+    "load_v28_model", "lot_fingerprint", "validate_market_odds",
 )
+_REQUIRED_OPERACIONAL = (
+    "INPUT_COLUMNS", "enrich_with_standings", "latest_team_catalog",
+    "parse_odd", "standings_context",
+)
+_IMPORT_PROBLEMS = [f"tex_v28_core.{name}" for name in _REQUIRED_V28 if not hasattr(_v28, name)]
+_IMPORT_PROBLEMS += [
+    f"tex_operacional_core.{name}" for name in _REQUIRED_OPERACIONAL
+    if not hasattr(_operacional, name)
+]
+if getattr(_v28, "CORE_API_VERSION", None) != EXPECTED_CORE_API:
+    _IMPORT_PROBLEMS.append(
+        f"CORE_API_VERSION esperado {EXPECTED_CORE_API}; encontrado "
+        f"{getattr(_v28, 'CORE_API_VERSION', 'ausente')}"
+    )
+
+analyze_games = getattr(_v28, "analyze_games", None)
+build_ai_summary = getattr(_v28, "build_ai_summary", None)
+display_frame = getattr(_v28, "display_frame", None)
+load_v28_model = getattr(_v28, "load_v28_model", None)
+lot_fingerprint = getattr(_v28, "lot_fingerprint", None)
+validate_market_odds = getattr(_v28, "validate_market_odds", None)
+INPUT_COLUMNS = getattr(_operacional, "INPUT_COLUMNS", [])
+enrich_with_standings = getattr(_operacional, "enrich_with_standings", None)
+latest_team_catalog = getattr(_operacional, "latest_team_catalog", None)
+parse_odd = getattr(_operacional, "parse_odd", None)
+standings_context = getattr(_operacional, "standings_context", None)
 
 ROOT = Path(__file__).resolve().parent
 DATA_ZIP = ROOT / "data" / "TEX_V22_DADOS_24_LIGAS.zip"
@@ -44,6 +69,15 @@ MODEL_DIR = ROOT / "model"
 FUSO = ZoneInfo("America/Sao_Paulo")
 
 st.set_page_config(page_title=APP_NAME, page_icon="⚽", layout="wide", initial_sidebar_state="expanded")
+
+if _IMPORT_PROBLEMS:
+    st.error("Arquivos da V28 desencontrados no deploy.")
+    st.code("\n".join(_IMPORT_PROBLEMS), language="text")
+    st.info(
+        "Substitua juntos app.py, tex_v28_core.py, tex_operacional_core.py e "
+        "tex_v25_core.py pelo mesmo patch e faça novo deploy."
+    )
+    st.stop()
 
 
 def now_br() -> datetime:

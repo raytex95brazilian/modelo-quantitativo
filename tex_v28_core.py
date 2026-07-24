@@ -24,6 +24,7 @@ from tex_operacional_core import (
 )
 
 APP_NAME = "Tex Statistics V28.1 — Estado e Odds Corrigidos"
+CORE_API_VERSION = "28.1.1"
 MODEL_VERSION = "V28.1-statefix"
 
 MARKET_DEFINITIONS = {
