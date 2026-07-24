@@ -1,0 +1,12 @@
+TESTE DO NÚCLEO
+V28.1.4: correção histórica, sete seleções, Ambas Marcam e autorização validadas.
+
+TESTE DE INICIALIZAÇÃO DA INTERFACE
+V28.1.4: app.py percorreu o fluxo inicial sem erro de nome ou atributo.
+
+TESTE DO CENÁRIO DE DEZ JOGOS
+Cenário de dez jogos: 3 leituras principais recuperadas pela correção histórica.
+- Santos: probabilidade corrigida 73.73%; valor esperado 1.15%
+- Flamengo: probabilidade corrigida 73.62%; valor esperado 6.06%
+- Bragantino: probabilidade corrigida 65.84%; valor esperado 3.23%
+Ambas Marcam é calculado separadamente no app com reconstrução histórica e pode acrescentar ou não novas entradas.
