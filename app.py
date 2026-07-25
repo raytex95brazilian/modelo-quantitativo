@@ -34,9 +34,10 @@ _operacional = _load_required_module("tex_operacional_core")
 EXPECTED_CORE_API = "28.1.2"
 EXPECTED_STORAGE_API = "28.1.5.1"
 EXPECTED_FINANCE_API = "28.1.5.1"
-INTERFACE_VERSION = "V28.1.5.1"
-APP_NAME = "Tex Statistics V28.1.5.1 — Hotfix de Deploy e Compatibilidade"
+INTERFACE_VERSION = "V28.1.5.3"
+APP_NAME = "Tex Statistics V28.1.5.3"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
+CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
 ENGINE_VERSION = getattr(_v28, "ENGINE_VERSION", "V28.1.2-estado-isolado")
 
@@ -120,7 +121,7 @@ reconciliar_ledgers = getattr(_finance, "reconciliar_ledgers", None)
 resumo_financeiro = getattr(_finance, "resumo_financeiro", None)
 salvar_ledger_local = getattr(_finance, "salvar_ledger_local", None)
 analyze_games = getattr(_v28, "analyze_games", None)
-build_ai_summary = getattr(_v28, "build_ai_summary", None)
+_core_build_ai_summary = getattr(_v28, "build_ai_summary", None)
 display_frame = getattr(_v28, "display_frame", None)
 load_v28_model = getattr(_v28, "load_v28_model", None)
 lot_fingerprint = getattr(_v28, "lot_fingerprint", None)
@@ -130,6 +131,28 @@ enrich_with_standings = getattr(_operacional, "enrich_with_standings", None)
 latest_team_catalog = getattr(_operacional, "latest_team_catalog", None)
 parse_odd = getattr(_operacional, "parse_odd", None)
 standings_context = getattr(_operacional, "standings_context", None)
+
+
+def build_ai_summary(
+    games: pd.DataFrame,
+    readings: pd.DataFrame,
+    evaluations: pd.DataFrame,
+    diagnostics: pd.DataFrame,
+    matches,
+) -> str:
+    """Gera o resumo com identificação inequívoca da interface e do motor."""
+    if not callable(_core_build_ai_summary):
+        raise RuntimeError("O núcleo V28.1.2 não disponibilizou build_ai_summary.")
+    original = _core_build_ai_summary(games, readings, evaluations, diagnostics, matches)
+    original_lines = str(original).splitlines()
+    body = original_lines[1:] if original_lines else []
+    return "\n".join([
+        "RESUMO PARA ANÁLISE — Tex Statistics",
+        f"Interface: {APP_NAME}",
+        f"Motor preditivo: {CORE_DISPLAY_NAME}",
+        *body,
+    ])
+
 
 ROOT = Path(__file__).resolve().parent
 DATA_ZIP = ROOT / "data" / "TEX_V22_DADOS_24_LIGAS.zip"
@@ -145,7 +168,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.1.5.1, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "pelo mesmo pacote V28.1.5.3, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -170,8 +193,10 @@ def apply_style() -> None:
         unsafe_allow_html=True,
     )
     st.markdown(
-        f'<div class="tex-head"><h1>{APP_NAME}</h1>'
-        '<p>Análise completa por partida, probabilidade conservadora, carteira limitada e controle financeiro com liquidação.</p></div>',
+        '<div class="tex-head"><h1>Tex Statistics</h1>'
+        f'<p><b>Interface:</b> {APP_NAME}<br>'
+        f'<b>Motor preditivo:</b> {CORE_DISPLAY_NAME}<br>'
+        'Análise completa por partida, probabilidade conservadora, carteira limitada e controle financeiro com liquidação.</p></div>',
         unsafe_allow_html=True,
     )
 
@@ -476,50 +501,81 @@ if st.session_state.pop("tex_flash", None):
     st.success(st.session_state.pop("tex_flash_message", "Partida salva."))
 form_version = int(st.session_state.get("tex_form_version", 0))
 
-with st.form(f"game_form_{form_version}", clear_on_submit=False):
-    row1 = st.columns([1.1, 0.8, 1.8, 1.8, 1.8])
-    game_date = row1[0].date_input("Data", value=date.today(), key=f"game_date_{form_version}")
-    game_time = row1[1].time_input("Horário", value=time(16, 0), key=f"game_time_{form_version}")
-    league_name = row1[2].selectbox("Liga", league_names, key=f"league_{form_version}")
+with st.container(border=True):
+    # Os seletores de liga e equipes não podem ficar dentro de st.form.
+    # Formulários só reenviam valores no submit; assim, a liga mudava visualmente,
+    # mas o Python mantinha o catálogo da liga anterior. Fora do formulário,
+    # cada alteração executa novamente o app e reconstrói as equipes pelo código correto.
+    row_top = st.columns([1.0, 0.8, 1.8])
+    game_date = row_top[0].date_input("Data", value=date.today(), key=f"game_date_{form_version}")
+    game_time = row_top[1].time_input("Horário", value=time(16, 0), key=f"game_time_{form_version}")
+    league_name = row_top[2].selectbox("Liga", league_names, key=f"league_{form_version}")
     code = name_to_code[league_name]
-    available_teams = teams_by_code.get(code, [])
-    home = row1[3].selectbox("Mandante", available_teams, key=f"home_{form_version}_{code}") if available_teams else ""
-    away_options = [team for team in available_teams if team != home]
-    away = row1[4].selectbox("Visitante", away_options, key=f"away_{form_version}_{code}") if away_options else ""
+    available_teams = list(teams_by_code.get(code, []))
+
+    if not available_teams:
+        st.error(
+            f"Não há equipes disponíveis para {league_name} na base carregada. "
+            "Atualize a base ou verifique o relatório de carregamento."
+        )
+        home = away = ""
+    else:
+        team_row = st.columns(2)
+        home = team_row[0].selectbox(
+            "Mandante",
+            available_teams,
+            key=f"home_{form_version}_{code}",
+        )
+        away_options = [team for team in available_teams if team != home]
+        away = team_row[1].selectbox(
+            "Visitante",
+            away_options,
+            key=f"away_{form_version}_{code}_{home}",
+        ) if away_options else ""
+        season_label = season_by_code.get(code, "")
+        st.caption(
+            f"Catálogo ativo: {league_name} — {len(available_teams)} equipes"
+            + (f" — temporada {season_label}" if season_label != "" else "")
+        )
 
     bookmaker = st.text_input("Casa de apostas", value="Pixbet", key=f"bookmaker_{form_version}")
-    include_1x2, include_ou, include_btts = st.columns(3)
-    with include_1x2:
-        use_1x2 = st.checkbox("Resultado final 1X2", value=True, key=f"use_1x2_{form_version}")
-        if use_1x2:
-            a, b, c = st.columns(3)
-            odd_h = a.number_input("Cotação mandante", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_h_{form_version}")
-            odd_d = b.number_input("Cotação empate", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_d_{form_version}")
-            odd_a = c.number_input("Cotação visitante", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_a_{form_version}")
-        else:
-            odd_h = odd_d = odd_a = 0.0
-    with include_ou:
-        use_ou = st.checkbox("Mais/menos de 2,5 gols", value=True, key=f"use_ou_{form_version}")
-        if use_ou:
-            a, b = st.columns(2)
-            odd_o = a.number_input("Cotação mais de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_o_{form_version}")
-            odd_u = b.number_input("Cotação menos de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_u_{form_version}")
-        else:
-            odd_o = odd_u = 0.0
-    with include_btts:
-        use_btts = st.checkbox("Ambas marcam — análise complementar", value=True, key=f"use_btts_{form_version}")
-        if use_btts:
-            a, b = st.columns(2)
-            odd_by = a.number_input("Cotação ambas — Sim", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_by_{form_version}")
-            odd_bn = b.number_input("Cotação ambas — Não", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_bn_{form_version}")
-        else:
-            odd_by = odd_bn = 0.0
+    st.markdown("**Mercados e cotações**")
 
-    submitted = st.form_submit_button("ADICIONAR OU ATUALIZAR PARTIDA", type="primary", use_container_width=True)
+    use_1x2 = st.checkbox("Resultado final 1X2", value=True, key=f"use_1x2_{form_version}")
+    if use_1x2:
+        a, b, c = st.columns(3)
+        odd_h = a.number_input("Cotação mandante", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_h_{form_version}")
+        odd_d = b.number_input("Cotação empate", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_d_{form_version}")
+        odd_a = c.number_input("Cotação visitante", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_a_{form_version}")
+    else:
+        odd_h = odd_d = odd_a = 0.0
+
+    use_ou = st.checkbox("Mais/menos de 2,5 gols", value=True, key=f"use_ou_{form_version}")
+    if use_ou:
+        a, b = st.columns(2)
+        odd_o = a.number_input("Cotação mais de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_o_{form_version}")
+        odd_u = b.number_input("Cotação menos de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_u_{form_version}")
+    else:
+        odd_o = odd_u = 0.0
+
+    use_btts = st.checkbox("Ambas marcam — análise complementar", value=True, key=f"use_btts_{form_version}")
+    if use_btts:
+        a, b = st.columns(2)
+        odd_by = a.number_input("Cotação ambas — Sim", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_by_{form_version}")
+        odd_bn = b.number_input("Cotação ambas — Não", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_bn_{form_version}")
+    else:
+        odd_by = odd_bn = 0.0
+
+    submitted = st.button(
+        "ADICIONAR OU ATUALIZAR PARTIDA",
+        type="primary",
+        use_container_width=True,
+        key=f"submit_game_{form_version}",
+    )
     if submitted:
         game_start = datetime.combine(game_date, game_time, tzinfo=FUSO)
         if not home or not away or home == away:
-            st.error("Selecione duas equipes diferentes.")
+            st.error("Selecione duas equipes diferentes da liga escolhida.")
         elif game_start <= now_br():
             st.error(
                 "A partida precisa estar programada para um horário futuro. "

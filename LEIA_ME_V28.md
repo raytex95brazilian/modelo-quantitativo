@@ -1,4 +1,4 @@
-# Tex Statistics V28.1.5
+# Tex Statistics V28.1.5.2
 
 Aplicativo Streamlit para análise pré-jogo de futebol em 24 ligas, com retirada da margem do mercado, modelo dinâmico de gols, árvores regularizadas, probabilidade conservadora, carteira limitada, auditoria e liquidação financeira.
 
@@ -36,8 +36,13 @@ A probabilidade conservadora é o menor valor entre a probabilidade do modelo e 
 
 ## Controle de versão
 
-- Interface: V28.1.5.
+- Interface: V28.1.5.2 — correção dos seletores dependentes de liga e equipes.
 - API do núcleo isolado: 28.1.2.
 - Modelo treinado: V28.0.
 
 Leia `LEIA_PRIMEIRO_V28_1_5.md` antes do deploy e `RELATORIO_AUDITORIA_V28_1_5.md` para o resultado da revisão.
+
+
+## Correção V28.1.5.2
+
+A seleção de liga e equipes agora reage imediatamente. Os campos foram retirados de `st.form`, que impedia a reconstrução do catálogo antes do envio. A base e o motor V28.1.2 não foram alterados.
