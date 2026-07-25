@@ -1,19 +1,24 @@
-# Tex Statistics V28.1.5.4 — estabilidade dos formulários
+# Tex Statistics V28.1.5.5 — etapa única e campos vazios
 
-Este hotfix corrige a reexecução visível do aplicativo a cada campo preenchido.
+## Deploy
 
-## O que mudou
-
-1. A configuração operacional da barra lateral foi colocada em formulário e só é aplicada pelo botão **APLICAR CONFIGURAÇÃO**.
-2. Liga, mandante e visitante ficam em um fragmento independente. Alterar esses seletores atualiza apenas o quadro de confronto.
-3. Depois da confirmação do confronto, data, horário, casa de apostas, mercados e cotações são preenchidos em um único formulário.
-4. Digitar ou sair de um campo de cotação não reexecuta o app e não apaga valores.
-5. Para mudar liga ou equipes, use **ALTERAR CONFRONTO** antes de enviar a partida.
+1. Extraia o ZIP.
+2. Envie o conteúdo interno desta pasta para a raiz do repositório GitHub.
+3. Não envie apenas o ZIP e não crie uma pasta adicional acima de `app.py`.
+4. Preserve os Secrets do Streamlit Cloud.
+5. Após o commit, execute **Manage app → Reboot app**.
 
 ## Versões
 
-- Interface: Tex Statistics V28.1.5.4
-- Motor preditivo: V28.1.2 — Estado Isolado
-- API do núcleo: 28.1.2
+- Interface: **Tex Statistics V28.1.5.5**
+- Motor preditivo: **V28.1.2 — Estado Isolado**
+- API do núcleo: **28.1.2**
 
-Substitua todo o conteúdo da raiz do repositório pelo conteúdo desta pasta e execute **Reboot app** no Streamlit Cloud.
+## Correções desta revisão
+
+- inclusão de partidas em uma única etapa, sem botão intermediário de confirmação;
+- liga e equipes atualizadas por fragmento independente;
+- data, horário, casa de apostas e todas as cotações começam vazios;
+- as cotações permanecem em formulário e não são apagadas ao trocar liga ou equipe;
+- seção **Análise para IA** exibida diretamente na tela, com botão de copiar do bloco;
+- download do texto mantido apenas como opção.

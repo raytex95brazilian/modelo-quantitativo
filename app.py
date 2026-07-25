@@ -34,8 +34,8 @@ _operacional = _load_required_module("tex_operacional_core")
 EXPECTED_CORE_API = "28.1.2"
 EXPECTED_STORAGE_API = "28.1.5.1"
 EXPECTED_FINANCE_API = "28.1.5.1"
-INTERFACE_VERSION = "V28.1.5.4"
-APP_NAME = "Tex Statistics V28.1.5.4"
+INTERFACE_VERSION = "V28.1.5.5"
+APP_NAME = "Tex Statistics V28.1.5.5"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -147,7 +147,7 @@ def build_ai_summary(
     original_lines = str(original).splitlines()
     body = original_lines[1:] if original_lines else []
     return "\n".join([
-        "RESUMO PARA ANÁLISE — Tex Statistics",
+        "ANÁLISE PARA IA — Tex Statistics",
         f"Interface: {APP_NAME}",
         f"Motor preditivo: {CORE_DISPLAY_NAME}",
         *body,
@@ -168,7 +168,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.1.5.4, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "pelo mesmo pacote V28.1.5.5, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -559,122 +559,121 @@ if st.session_state.pop("tex_flash", None):
 
 
 @_fragment
+def render_match_selectors(form_version: int) -> None:
+    """Atualiza somente liga e equipes, sem tocar nos campos de cotações."""
+    selection_key = f"tex_selected_match_{form_version}"
+    selector_row = st.columns([1.8, 1.4, 1.4])
+
+    league_name = selector_row[0].selectbox(
+        "Liga",
+        league_names,
+        index=None,
+        placeholder="Selecione a liga",
+        key=f"entry_league_{form_version}",
+    )
+
+    if league_name is None:
+        st.session_state.pop(selection_key, None)
+        selector_row[1].selectbox(
+            "Mandante",
+            [],
+            index=None,
+            placeholder="Selecione primeiro a liga",
+            disabled=True,
+            key=f"entry_home_{form_version}_empty",
+        )
+        selector_row[2].selectbox(
+            "Visitante",
+            [],
+            index=None,
+            placeholder="Selecione primeiro a liga",
+            disabled=True,
+            key=f"entry_away_{form_version}_empty",
+        )
+        st.caption("Selecione a liga para carregar o catálogo correto de equipes.")
+        return
+
+    code = name_to_code[league_name]
+    available_teams = list(teams_by_code.get(code, []))
+    if not available_teams:
+        st.session_state.pop(selection_key, None)
+        st.error(
+            f"Não há equipes disponíveis para {league_name} na base carregada. "
+            "Atualize a base ou verifique o relatório de carregamento."
+        )
+        return
+
+    home = selector_row[1].selectbox(
+        "Mandante",
+        available_teams,
+        index=None,
+        placeholder="Selecione o mandante",
+        key=f"entry_home_{form_version}_{code}",
+    )
+    away_options = [team for team in available_teams if team != home] if home else []
+    away = selector_row[2].selectbox(
+        "Visitante",
+        away_options,
+        index=None,
+        placeholder="Selecione o visitante" if home else "Selecione primeiro o mandante",
+        disabled=not bool(home),
+        key=f"entry_away_{form_version}_{code}_{home or 'empty'}",
+    )
+
+    season_label = season_by_code.get(code, "")
+    st.caption(
+        f"Catálogo ativo: {league_name} — {len(available_teams)} equipes"
+        + (f" — temporada {season_label}" if season_label != "" else "")
+    )
+
+    if home and away and home != away:
+        st.session_state[selection_key] = {
+            "Código da liga": code,
+            "Liga": league_name,
+            "Mandante": home,
+            "Visitante": away,
+        }
+    else:
+        st.session_state.pop(selection_key, None)
+
+
 def render_game_entry() -> None:
-    """Entrada em duas etapas, sem reexecutar o aplicativo a cada campo digitado."""
+    """Entrada em etapa única; seletores reativos e demais campos enviados em lote."""
     form_version = int(st.session_state.get("tex_form_version", 0))
-    draft_key = "tex_confirmed_match"
-    confirmed_match = st.session_state.get(draft_key)
+    selection_key = f"tex_selected_match_{form_version}"
 
     with st.container(border=True):
-        if not confirmed_match:
-            st.markdown("**Etapa 1 de 2 — escolher o confronto**")
-            st.caption(
-                "Apenas este quadro é atualizado ao trocar liga ou equipe. "
-                "Os demais componentes do aplicativo permanecem estáveis."
-            )
-            selector_row = st.columns([1.8, 1.4, 1.4])
-            league_name = selector_row[0].selectbox(
-                "Liga",
-                league_names,
-                key=f"draft_league_{form_version}",
-            )
-            code = name_to_code[league_name]
-            available_teams = list(teams_by_code.get(code, []))
-
-            if not available_teams:
-                st.error(
-                    f"Não há equipes disponíveis para {league_name} na base carregada. "
-                    "Atualize a base ou verifique o relatório de carregamento."
-                )
-                return
-
-            home = selector_row[1].selectbox(
-                "Mandante",
-                available_teams,
-                key=f"draft_home_{form_version}_{code}",
-            )
-            away_options = [team for team in available_teams if team != home]
-            away = selector_row[2].selectbox(
-                "Visitante",
-                away_options,
-                key=f"draft_away_{form_version}_{code}_{home}",
-            ) if away_options else ""
-
-            season_label = season_by_code.get(code, "")
-            st.caption(
-                f"Catálogo ativo: {league_name} — {len(available_teams)} equipes"
-                + (f" — temporada {season_label}" if season_label != "" else "")
-            )
-
-            if st.button(
-                "CONFIRMAR CONFRONTO E INFORMAR COTAÇÕES",
-                type="primary",
-                use_container_width=True,
-                key=f"confirm_match_{form_version}",
-            ):
-                if not home or not away or home == away:
-                    st.error("Selecione duas equipes diferentes da liga escolhida.")
-                else:
-                    st.session_state[draft_key] = {
-                        "Código da liga": code,
-                        "Liga": league_name,
-                        "Mandante": home,
-                        "Visitante": away,
-                    }
-                    try:
-                        st.rerun(scope="fragment")
-                    except TypeError:
-                        st.rerun()
-            return
-
-        code = str(confirmed_match["Código da liga"])
-        league_name = str(confirmed_match["Liga"])
-        home = str(confirmed_match["Mandante"])
-        away = str(confirmed_match["Visitante"])
-
-        title_col, change_col = st.columns([4, 1])
-        title_col.markdown(
-            f"**Etapa 2 de 2 — {home} x {away}**  \n"
-            f"{league_name}"
-        )
-        if change_col.button(
-            "ALTERAR CONFRONTO",
-            use_container_width=True,
-            key=f"change_match_{form_version}",
-        ):
-            st.session_state.pop(draft_key, None)
-            try:
-                st.rerun(scope="fragment")
-            except TypeError:
-                st.rerun()
-            return
-
+        st.markdown("**Partida e cotações — etapa única**")
         st.caption(
-            "Os campos abaixo são enviados em um único lote. Digitar data, horário, casa e "
-            "cotações não reexecuta nem apaga o formulário."
+            "Selecione liga e equipes e preencha os demais campos abaixo. "
+            "A troca de liga atualiza somente os seletores; data, horário, casa e cotações permanecem estáveis."
         )
+
+        render_match_selectors(form_version)
 
         with st.form(f"game_form_{form_version}", clear_on_submit=False):
             row_top = st.columns([1.0, 0.8, 1.8])
             game_date = row_top[0].date_input(
                 "Data",
-                value=date.today(),
+                value=None,
+                format="DD/MM/YYYY",
                 key=f"game_date_{form_version}",
             )
             game_time = row_top[1].time_input(
                 "Horário",
-                value=time(16, 0),
+                value=None,
                 key=f"game_time_{form_version}",
             )
             bookmaker = row_top[2].text_input(
                 "Casa de apostas",
-                value="Pixbet",
+                value="",
+                placeholder="Digite a casa de apostas",
                 key=f"bookmaker_{form_version}",
             )
 
             st.markdown("**Mercados e cotações**")
             st.caption(
-                "Marque os mercados que deseja avaliar. Campos de mercados desmarcados são ignorados."
+                "Os campos começam vazios. Marque somente os mercados que deseja avaliar."
             )
 
             use_1x2 = st.checkbox(
@@ -685,26 +684,32 @@ def render_game_entry() -> None:
             a, b, c = st.columns(3)
             odd_h = a.number_input(
                 "Cotação mandante",
-                min_value=0.0,
-                value=0.0,
+                min_value=1.01,
+                max_value=100.0,
+                value=None,
                 step=0.01,
                 format="%.2f",
+                placeholder="Digite a cotação",
                 key=f"odd_h_{form_version}",
             )
             odd_d = b.number_input(
                 "Cotação empate",
-                min_value=0.0,
-                value=0.0,
+                min_value=1.01,
+                max_value=100.0,
+                value=None,
                 step=0.01,
                 format="%.2f",
+                placeholder="Digite a cotação",
                 key=f"odd_d_{form_version}",
             )
             odd_a = c.number_input(
                 "Cotação visitante",
-                min_value=0.0,
-                value=0.0,
+                min_value=1.01,
+                max_value=100.0,
+                value=None,
                 step=0.01,
                 format="%.2f",
+                placeholder="Digite a cotação",
                 key=f"odd_a_{form_version}",
             )
 
@@ -716,18 +721,22 @@ def render_game_entry() -> None:
             a, b = st.columns(2)
             odd_o = a.number_input(
                 "Cotação mais de 2,5",
-                min_value=0.0,
-                value=0.0,
+                min_value=1.01,
+                max_value=100.0,
+                value=None,
                 step=0.01,
                 format="%.2f",
+                placeholder="Digite a cotação",
                 key=f"odd_o_{form_version}",
             )
             odd_u = b.number_input(
                 "Cotação menos de 2,5",
-                min_value=0.0,
-                value=0.0,
+                min_value=1.01,
+                max_value=100.0,
+                value=None,
                 step=0.01,
                 format="%.2f",
+                placeholder="Digite a cotação",
                 key=f"odd_u_{form_version}",
             )
 
@@ -739,18 +748,22 @@ def render_game_entry() -> None:
             a, b = st.columns(2)
             odd_by = a.number_input(
                 "Cotação ambas — Sim",
-                min_value=0.0,
-                value=0.0,
+                min_value=1.01,
+                max_value=100.0,
+                value=None,
                 step=0.01,
                 format="%.2f",
+                placeholder="Digite a cotação",
                 key=f"odd_by_{form_version}",
             )
             odd_bn = b.number_input(
                 "Cotação ambas — Não",
-                min_value=0.0,
-                value=0.0,
+                min_value=1.01,
+                max_value=100.0,
+                value=None,
                 step=0.01,
                 format="%.2f",
+                placeholder="Digite a cotação",
                 key=f"odd_bn_{form_version}",
             )
 
@@ -763,6 +776,40 @@ def render_game_entry() -> None:
         if not submitted:
             return
 
+        selected_match = st.session_state.get(selection_key)
+        if not selected_match:
+            st.error("Selecione liga, mandante e visitante antes de adicionar a partida.")
+            return
+        if game_date is None or game_time is None:
+            st.error("Preencha a data e o horário da partida.")
+            return
+        if not any((use_1x2, use_ou, use_btts)):
+            st.error("Ative ao menos um mercado.")
+            return
+
+        missing_odds: list[str] = []
+        if use_1x2:
+            missing_odds.extend(
+                label for label, value in (
+                    ("mandante", odd_h), ("empate", odd_d), ("visitante", odd_a)
+                ) if value is None
+            )
+        if use_ou:
+            missing_odds.extend(
+                label for label, value in (
+                    ("mais de 2,5", odd_o), ("menos de 2,5", odd_u)
+                ) if value is None
+            )
+        if use_btts:
+            missing_odds.extend(
+                label for label, value in (
+                    ("ambas marcam — Sim", odd_by), ("ambas marcam — Não", odd_bn)
+                ) if value is None
+            )
+        if missing_odds:
+            st.error("Preencha as cotações: " + ", ".join(missing_odds) + ".")
+            return
+
         game_start = datetime.combine(game_date, game_time, tzinfo=FUSO)
         if game_start <= now_br():
             st.error(
@@ -770,21 +817,22 @@ def render_game_entry() -> None:
                 "O aplicativo é exclusivamente pré-jogo."
             )
             return
-        if not any((use_1x2, use_ou, use_btts)):
-            st.error("Ative ao menos um mercado.")
-            return
 
         try:
             if use_1x2:
-                validate_market_odds("1X2", [odd_h, odd_d, odd_a])
+                validate_market_odds("1X2", [float(odd_h), float(odd_d), float(odd_a)])
             if use_ou:
-                validate_market_odds("OU25", [odd_o, odd_u])
+                validate_market_odds("OU25", [float(odd_o), float(odd_u)])
             if use_btts:
-                validate_market_odds("BTTS", [odd_by, odd_bn])
+                validate_market_odds("BTTS", [float(odd_by), float(odd_bn)])
         except ValueError as exc:
             st.error(str(exc))
             return
 
+        code = str(selected_match["Código da liga"])
+        league_name = str(selected_match["Liga"])
+        home = str(selected_match["Mandante"])
+        away = str(selected_match["Visitante"])
         game = {
             "ID": uuid4().hex[:12],
             "Data": game_date.isoformat(),
@@ -804,11 +852,11 @@ def render_game_entry() -> None:
         }
         action = upsert_game(game)
         st.session_state.tex_form_version = form_version + 1
-        st.session_state.pop(draft_key, None)
+        st.session_state.pop(selection_key, None)
         st.session_state.tex_flash = True
         st.session_state.tex_flash_message = (
             f"Partida {action}: {home} x {away}. A análise anterior foi invalidada e "
-            "os campos de cotações foram reiniciados para impedir reaproveitamento entre jogos."
+            "o novo formulário foi aberto completamente vazio."
         )
         st.rerun()
 
@@ -1118,8 +1166,8 @@ if not readings.empty or not diagnostics.empty:
                 )
 
     st.markdown("### Carteira e auditoria")
-    tab_entries, tab_all, tab_errors, tab_ai = st.tabs(
-        ["Carteira validada", "Todos os mercados", "Diagnóstico", "Resumo para análise"]
+    tab_entries, tab_all, tab_errors = st.tabs(
+        ["Carteira validada", "Todos os mercados", "Diagnóstico"]
     )
     with tab_entries:
         if entries.empty:
@@ -1148,18 +1196,21 @@ if not readings.empty or not diagnostics.empty:
         )
     with tab_errors:
         st.dataframe(diagnostics, hide_index=True, use_container_width=True)
-    with tab_ai:
-        if not ai_summary:
-            ai_summary = build_ai_summary(games_frame(), readings, evaluations, diagnostics, matches)
-        st.caption("Use o ícone de copiar no canto do bloco ou baixe o arquivo de texto.")
-        st.code(ai_summary, language=None, wrap_lines=True)
-        st.download_button(
-            "BAIXAR RESUMO PARA ANÁLISE",
-            ai_summary.encode("utf-8"),
-            "resumo_tex_statistics_para_analise.txt",
-            "text/plain",
-            use_container_width=True,
-        )
+    st.markdown("### Análise para IA")
+    if not ai_summary:
+        ai_summary = build_ai_summary(games_frame(), readings, evaluations, diagnostics, matches)
+    st.caption(
+        "O texto está disponível diretamente na tela. Use o ícone de copiar no canto do bloco; "
+        "não é necessário baixar arquivo."
+    )
+    st.code(ai_summary, language=None, wrap_lines=True)
+    st.download_button(
+        "BAIXAR ANÁLISE PARA IA — OPCIONAL",
+        ai_summary.encode("utf-8"),
+        "analise_tex_statistics_para_ia.txt",
+        "text/plain",
+        use_container_width=True,
+    )
 
     st.subheader("4. Salvar cotações e probabilidades")
     st.caption("O clique grava as cotações e todas as probabilidades avaliadas. Analisar não grava automaticamente.")
@@ -1189,7 +1240,7 @@ if not readings.empty or not diagnostics.empty:
         else:
             st.error("A Planilha Google não está conectada nos Secrets deste aplicativo.")
 
-    export1, export2, export3 = st.columns(3)
+    export1, export2 = st.columns(2)
     export1.download_button(
         "BAIXAR PROBABILIDADES CSV",
         pd.DataFrame(make_analysis_records(evaluations, unit_percent / 100.0)).to_csv(index=False).encode("utf-8-sig"),
@@ -1202,13 +1253,6 @@ if not readings.empty or not diagnostics.empty:
         pd.DataFrame(make_catalog_records(evaluations, bankroll)).to_csv(index=False).encode("utf-8-sig"),
         "cotacoes_lote.csv",
         "text/csv",
-        use_container_width=True,
-    )
-    export3.download_button(
-        "BAIXAR RESUMO PARA ANÁLISE",
-        (ai_summary or build_ai_summary(games_frame(), readings, evaluations, diagnostics, matches)).encode("utf-8"),
-        "resumo_lote_para_analise.txt",
-        "text/plain",
         use_container_width=True,
     )
 

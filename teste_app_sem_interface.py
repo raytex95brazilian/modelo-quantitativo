@@ -98,7 +98,7 @@ update_stub = types.ModuleType("tex_v25_atualizacao")
 sys.modules["tex_v25_atualizacao"] = update_stub
 
 app = importlib.import_module("app")
-assert app.INTERFACE_VERSION == "V28.1.5.4"
+assert app.INTERFACE_VERSION == "V28.1.5.5"
 assert app.EXPECTED_CORE_API == "28.1.2"
 assert app.max_entries == 5
 
@@ -139,7 +139,7 @@ assert abs(float(catalog[catalog["Grupo do mercado"].eq("1X2")].iloc[0]["Margem 
 config = json.loads(str(analysis.iloc[0]["Configuração JSON"]))
 assert config["api_nucleo"] == "28.1.2"
 assert config["percentual_unidade"] == 0.01
-assert catalog.iloc[0]["Versão da interface"] == "V28.1.5.4"
-assert analysis.iloc[0]["Versão da interface"] == "V28.1.5.4"
+assert catalog.iloc[0]["Versão da interface"] == "V28.1.5.5"
+assert analysis.iloc[0]["Versão da interface"] == "V28.1.5.5"
 
-print("TESTE DO APP SEM INTERFACE GRÁFICA V28.1.5.4: OK")
+print("TESTE DO APP SEM INTERFACE GRÁFICA V28.1.5.5: OK")

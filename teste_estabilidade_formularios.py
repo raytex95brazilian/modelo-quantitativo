@@ -8,12 +8,23 @@ start = source.index('st.subheader("1. Adicionar partidas")')
 end = source.index('st.subheader("2. Partidas do lote")', start)
 entry = source[start:end]
 
-assert "@_fragment" in entry
-assert 'draft_key = "tex_confirmed_match"' in entry
-assert 'CONFIRMAR CONFRONTO E INFORMAR COTAÇÕES' in entry
-assert 'ALTERAR CONFRONTO' in entry
+# Uma única etapa visual: não existe confirmação intermediária.
+assert "Partida e cotações — etapa única" in entry
+assert "Etapa 1 de 2" not in entry
+assert "Etapa 2 de 2" not in entry
+assert "CONFIRMAR CONFRONTO" not in entry
+assert "ALTERAR CONFRONTO" not in entry
+
+# Liga e equipes ficam em fragmento independente; os demais campos ficam em formulário.
+assert "@_fragment\ndef render_match_selectors" in entry
 assert 'with st.form(f"game_form_{form_version}"' in entry
 assert 'submitted = st.form_submit_button(' in entry
+selector_end = entry.index('def render_game_entry()')
+selector_part = entry[:selector_end]
+assert 'key=f"entry_league_{form_version}"' in selector_part
+assert 'key=f"entry_home_{form_version}_{code}"' in selector_part
+assert 'key=f"entry_away_{form_version}_{code}_{home or \'empty\'}"' in selector_part
+assert 'index=None' in selector_part
 
 form_start = entry.index('with st.form(f"game_form_{form_version}"')
 form_end = entry.index('if not submitted:', form_start)
@@ -27,10 +38,19 @@ for field in (
 ):
     assert field in form_body, f"Campo fora do formulário estável: {field}"
 
-selector_part = entry[:form_start]
-assert 'key=f"draft_league_{form_version}"' in selector_part
-assert 'key=f"draft_home_{form_version}_{code}"' in selector_part
-assert 'key=f"draft_away_{form_version}_{code}_{home}"' in selector_part
+# Todos os campos de entrada manual começam vazios.
+assert 'game_date = row_top[0].date_input(\n                "Data",\n                value=None,' in form_body
+assert 'game_time = row_top[1].time_input(\n                "Horário",\n                value=None,' in form_body
+assert 'bookmaker = row_top[2].text_input(\n                "Casa de apostas",\n                value="",' in form_body
+assert form_body.count('value=None,') >= 9  # data, horário e sete cotações
+assert 'value="Pixbet"' not in form_body
+assert 'value=0.0' not in form_body
+
+# A análise para IA aparece na própria tela e o download é opcional.
+assert 'st.markdown("### Análise para IA")' in source
+assert 'st.code(ai_summary, language=None, wrap_lines=True)' in source
+assert 'não é necessário baixar arquivo' in source
+assert 'BAIXAR ANÁLISE PARA IA — OPCIONAL' in source
 
 sidebar_start = source.index('with st.sidebar:')
 sidebar_end = source.index('st.markdown(', sidebar_start)
@@ -39,4 +59,4 @@ assert 'with st.form("tex_operational_config_form"' in sidebar
 assert 'APLICAR CONFIGURAÇÃO' in sidebar
 
 assert 'streamlit>=1.37,<2.0' in requirements
-print("TESTE DE ESTABILIDADE DOS FORMULÁRIOS V28.1.5.4: OK")
+print("TESTE DE USABILIDADE E ESTABILIDADE V28.1.5.5: OK")

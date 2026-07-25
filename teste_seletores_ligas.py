@@ -23,14 +23,16 @@ start = source.index('st.subheader("1. Adicionar partidas")')
 end = source.index('st.subheader("2. Partidas do lote")', start)
 entry_block = source[start:end]
 
-assert "@_fragment" in entry_block, "Seletores devem rerodar somente o fragmento."
-assert 'key=f"draft_league_{form_version}"' in entry_block
-assert 'key=f"draft_home_{form_version}_{code}"' in entry_block
-assert 'key=f"draft_away_{form_version}_{code}_{home}"' in entry_block
+assert "@_fragment\ndef render_match_selectors" in entry_block
+assert 'key=f"entry_league_{form_version}"' in entry_block
+assert 'key=f"entry_home_{form_version}_{code}"' in entry_block
+assert 'key=f"entry_away_{form_version}_{code}_{home or \'empty\'}"' in entry_block
 assert 'teams_by_code.get(code, [])' in entry_block
-assert 'CONFIRMAR CONFRONTO E INFORMAR COTAÇÕES' in entry_block
+assert 'index=None' in entry_block
+assert 'placeholder="Selecione a liga"' in entry_block
+assert 'CONFIRMAR CONFRONTO' not in entry_block
 assert 'with st.form(f"game_form_{form_version}"' in entry_block
-assert entry_block.index('key=f"draft_league_{form_version}"') < entry_block.index('with st.form(f"game_form_{form_version}"')
+assert entry_block.index('def render_match_selectors') < entry_block.index('with st.form(f"game_form_{form_version}"')
 assert 'st.form_submit_button(' in entry_block
 
-print("TESTE DOS SELETORES DAS 24 LIGAS V28.1.5.4: OK")
+print("TESTE DOS SELETORES DAS 24 LIGAS V28.1.5.5: OK")
