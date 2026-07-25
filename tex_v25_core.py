@@ -751,7 +751,15 @@ def sports_probabilities_for_match(
     lambda_home = min(4.0, max(0.15, league_home_goals * shrink_ratio(home_for, league_home_goals, home_n) * shrink_ratio(away_against, league_home_goals, away_n)))
     lambda_away = min(3.5, max(0.10, league_away_goals * shrink_ratio(away_for, league_away_goals, away_n) * shrink_ratio(home_against, league_away_goals, home_n)))
     result = _poisson_probabilities(lambda_home, lambda_away, cfg.dixon_coles_rho)
-    return {"LambdaHome": lambda_home, "LambdaAway": lambda_away, **result}
+    return {
+        "LambdaHome": lambda_home,
+        "LambdaAway": lambda_away,
+        "HomeSample": int(round(home_n)),
+        "AwaySample": int(round(away_n)),
+        "HomeScoreProbability": float(1.0 - math.exp(-lambda_home)),
+        "AwayScoreProbability": float(1.0 - math.exp(-lambda_away)),
+        **result,
+    }
 
 
 def evaluate_live_market(

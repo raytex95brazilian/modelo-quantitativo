@@ -1,40 +1,43 @@
-# CORREÇÃO V28.1 — ESTADO DO LOTE E ISOLAMENTO DAS ODDS
+# Histórico de correções — V28.1.2 a V28.1.5
 
-## Erro confirmado
+## Estado isolado
 
-A V28 mantinha os resultados da última análise no `session_state` mesmo depois que uma partida era adicionada ou atualizada. Assim, a tabela do lote podia exibir odds corrigidas enquanto o resumo para IA continuava mostrando as odds usadas na análise anterior.
+- O aplicativo principal importa exclusivamente `tex_v28_core_2812.py`.
+- A execução exige `CORE_API_VERSION = "28.1.2"`.
+- `tex_v28_core.py` permanece somente como ponte controlada para scripts antigos.
+- O lote é invalidado quando partidas, cotações, banca, unidade, máximo semanal ou histórico registrado mudam.
 
-O formulário também preservava os valores dos campos entre partidas, aumentando o risco de reaproveitamento acidental de odds.
+## Cotações e probabilidades
 
-## Correções
+- Cada partida mantém cotações próprias e o formulário é reiniciado após o salvamento.
+- Linhas matematicamente incoerentes são bloqueadas antes da análise.
+- A margem salva corresponde à margem total do mercado.
+- Probabilidade esportiva, probabilidade do modelo e probabilidade conservadora são distintas.
+- Amostras de mandante e visitante são registradas separadamente.
+- A configuração operacional é persistida como JSON válido.
 
-- Toda inclusão, atualização, remoção ou limpeza do lote invalida imediatamente resultados, carteira e resumo anteriores.
-- Cada análise recebe um hash SHA-256 de todo o lote, incluindo todas as odds. Resultados só permanecem válidos enquanto o hash for idêntico.
-- Os campos do formulário recebem chaves novas e são reiniciados após cada partida salva.
-- Cada partida é armazenada como cópia independente do dicionário de entrada.
-- Linhas de mercado matematicamente incoerentes são bloqueadas antes de salvar e novamente antes de analisar.
-- 1X2 aceita soma implícita entre 98% e 130%; mercados de duas vias entre 98% e 122%.
-- Mercado experimental não pode mais ultrapassar mercado validado na leitura principal.
+## Carteira
 
-## Regressão reproduzida
+- O parâmetro semanal é um máximo de 1 a 5 entradas, com valor padrão de 5.
+- Entram apenas mercados validados com amostra suficiente, confiança moderada ou forte e valor esperado conservador não negativo.
+- Há no máximo uma seleção por partida.
+- Apostas já registradas consomem o limite semanal em lotes e sessões posteriores.
+- Partidas já registradas não recebem segunda entrada automática.
+- Ambas Marcam permanece complementar e não entra automaticamente.
 
-Linha real Athletico-PR x Internacional: 1,99 / 3,24 / 3,87.
+## Controle financeiro
 
-- soma implícita: 106,96%; aceita;
-- probabilidade sem margem do Athletico-PR: 46,98%.
+- Entradas e análises só são gravadas por clique explícito.
+- A liquidação valida a compatibilidade entre mercado e seleção.
+- Placar negativo, cotação inválida e entrada negativa são bloqueados.
+- A atualização remota da liquidação é feita por linha, reduzindo chamadas à API.
+- Falha da planilha não elimina a liquidação local.
+- O maior recuo é calculado em ordem cronológica.
+- A banca informada não recebe o lucro histórico novamente.
 
-Linha misturada observada no resumo antigo: 1,99 / 4,55 / 7,30.
+## Preferências operacionais preservadas
 
-- soma implícita: 85,93%; bloqueada como `ODDS INCONSISTENTES`.
-
-## Testes executados
-
-- compilação de `app.py` e `tex_v28_core.py`;
-- teste original da V28;
-- alteração de uma única odd muda o hash do lote;
-- três partidas consecutivas mantêm odds isoladas por `InputID`;
-- normalização da linha real do Athletico-PR;
-- bloqueio da linha misturada;
-- leitura principal nunca usa `EXPERIMENTAL` quando existe mercado validado.
-
-Com as odds reais do lote apresentado, a entrada falsa no Athletico-PR desaparece.
+- não existe validade artificial de cotações;
+- não existe CLV ou cálculo de fechamento;
+- a interface usa nomenclatura operacional em português;
+- o modelo V28.0 e a API 28.1.2 foram preservados.

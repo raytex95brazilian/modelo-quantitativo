@@ -7,6 +7,8 @@ import json
 
 import pandas as pd
 
+from tex_v28_finance import COLUNAS_APOSTAS, liquidar_registro
+
 # Planilha histórica que já era usada pelas versões anteriores.
 PLANILHA_ANTIGA_ID = "1exfvkvNC_7W-0Nk51ZOue5Do7LtR9sS-8x5R0Gf_zMo"
 PLANILHA_ANTIGA_URL = f"https://docs.google.com/spreadsheets/d/{PLANILHA_ANTIGA_ID}/edit"
@@ -20,7 +22,9 @@ ABA_AUDITORIA = "auditoria_entradas"
 _CLIENTES_GOOGLE: dict[tuple[str, str], Any] = {}
 _PLANILHAS_GOOGLE: dict[tuple[str, str], Any] = {}
 _ABAS_GOOGLE: dict[tuple[str, str, str], Any] = {}
-_CHAVES_GRAVADAS_NO_PROCESSO: dict[tuple[str, str], set[tuple[str, ...]]] = {}
+_CHAVES_GRAVADAS_NO_PROCESSO: dict[tuple[str, str, str], set[tuple[str, ...]]] = {}
+_CABECALHOS_SINCRONIZADOS: set[tuple[str, str, str]] = set()
+_CABECALHOS_ATUAIS: dict[tuple[str, str, str], list[str]] = {}
 
 # Mantém a estrutura histórica da planilha antiga e apenas acrescenta campos novos à direita.
 COLUNAS_COTACOES = [
@@ -32,6 +36,7 @@ COLUNAS_COTACOES = [
     "Temporada", "Posição do mandante", "Posição do visitante",
     "Pontos do mandante", "Pontos do visitante", "Pontos por jogo do mandante",
     "Pontos por jogo do visitante",
+    "Versão da interface", "Versão da API do núcleo", "Versão do modelo",
 ]
 
 COLUNAS_ANALISES = [
@@ -49,11 +54,14 @@ COLUNAS_ANALISES = [
     "Pontos por jogo do mandante", "Pontos por jogo do visitante",
     "Resultado — gols do mandante", "Resultado — gols do visitante", "Resultado confirmado",
     "Seleção vencedora", "Lucro em unidades", "Observações",
+    "Versão da interface", "Versão da API do núcleo", "Probabilidade conservadora %",
+    "Valor esperado do modelo %", "Valor esperado conservador %",
+    "Limite conservador dos casos semelhantes %", "Código do mercado", "Código da seleção",
 ]
 
 
 def agora_brasilia() -> str:
-    return datetime.now(ZoneInfo("America/Sao_Paulo")).replace(microsecond=0).strftime("%d/%m/%Y %H:%M:%S")
+    return datetime.now(ZoneInfo("America/Fortaleza")).replace(microsecond=0).strftime("%d/%m/%Y %H:%M:%S")
 
 
 def _dict_seguro(obj: Any) -> dict[str, Any]:
@@ -158,6 +166,24 @@ def _obter_aba_cacheada(secrets: Any, titulo: str, colunas: list[str]):
         aba = planilha.add_worksheet(title=str(titulo), rows=20000, cols=max(80, len(colunas) + 5))
         aba.append_row(colunas, value_input_option="RAW")
 
+    if chave not in _CABECALHOS_SINCRONIZADOS:
+        cabecalho = aba.row_values(1)
+        if not cabecalho:
+            aba.append_row(colunas, value_input_option="RAW")
+            cabecalho = list(colunas)
+        elif cabecalho != colunas:
+            # Preserva as colunas antigas e acrescenta somente as ausentes à direita.
+            atualizado = list(cabecalho)
+            for coluna in colunas:
+                if coluna not in atualizado:
+                    atualizado.append(coluna)
+            if atualizado != cabecalho:
+                ultima = _letra_coluna(len(atualizado))
+                aba.update(f"A1:{ultima}1", [atualizado], value_input_option="RAW")
+                cabecalho = atualizado
+        _CABECALHOS_ATUAIS[chave] = list(cabecalho)
+        _CABECALHOS_SINCRONIZADOS.add(chave)
+
     _ABAS_GOOGLE[chave] = aba
     return aba
 
@@ -195,7 +221,7 @@ def _acrescentar_sem_leitura(
         return 0
 
     cfg = configuracao_google(secrets)
-    cache_key = (cfg["spreadsheet_id"], str(titulo))
+    cache_key = (cfg["spreadsheet_id"], cfg["client_email"], str(titulo))
     conhecidas = _CHAVES_GRAVADAS_NO_PROCESSO.setdefault(cache_key, set())
     novas: list[dict[str, Any]] = []
     novas_chaves: list[tuple[str, ...]] = []
@@ -210,7 +236,9 @@ def _acrescentar_sem_leitura(
         return 0
 
     aba = _obter_aba_cacheada(secrets, titulo, colunas)
-    linhas = [[registro.get(coluna, "") for coluna in colunas] for registro in novas]
+    worksheet_key = (cfg["spreadsheet_id"], cfg["client_email"], str(titulo))
+    cabecalho_real = _CABECALHOS_ATUAIS.get(worksheet_key, list(colunas))
+    linhas = [[registro.get(coluna, "") for coluna in cabecalho_real] for registro in novas]
     aba.append_rows(linhas, value_input_option="USER_ENTERED")
     conhecidas.update(novas_chaves)
     return len(linhas)
@@ -224,6 +252,40 @@ def _garantir_aba_para_leitura(secrets: Any, titulo: str, colunas: list[str]):
         aba.append_row(colunas, value_input_option="RAW")
         cabecalho = list(colunas)
     return aba, cabecalho
+
+
+def _identificadores_existentes(
+    secrets: Any, titulo: str, colunas: list[str], coluna_id: str
+) -> set[str]:
+    aba = _obter_aba_cacheada(secrets, titulo, colunas)
+    cfg = configuracao_google(secrets)
+    chave = (cfg["spreadsheet_id"], cfg["client_email"], str(titulo))
+    cabecalho = _CABECALHOS_ATUAIS.get(chave) or aba.row_values(1)
+    if coluna_id not in cabecalho:
+        return set()
+    valores = aba.col_values(cabecalho.index(coluna_id) + 1)
+    return {str(value).strip() for value in valores[1:] if str(value).strip()}
+
+
+def identificadores_cotacoes(secrets: Any) -> set[str]:
+    cfg = configuracao_google(secrets)
+    return _identificadores_existentes(
+        secrets, cfg["worksheet_catalogo"], COLUNAS_COTACOES, "ID Coleta"
+    )
+
+
+def identificadores_analises(secrets: Any) -> set[str]:
+    cfg = configuracao_google(secrets)
+    return _identificadores_existentes(
+        secrets, cfg["worksheet_historico"], COLUNAS_ANALISES, "ID Análise"
+    )
+
+
+def identificadores_apostas(secrets: Any) -> set[str]:
+    cfg = configuracao_google(secrets)
+    return _identificadores_existentes(
+        secrets, cfg["worksheet_auditoria"], COLUNAS_APOSTAS, "ID Aposta"
+    )
 
 def salvar_cotacoes(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
     cfg = configuracao_google(secrets)
@@ -279,6 +341,51 @@ def carregar_analises(secrets: Any) -> pd.DataFrame:
     return _carregar_aba(secrets, cfg["worksheet_historico"], COLUNAS_ANALISES)
 
 
+
+def salvar_apostas(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
+    cfg = configuracao_google(secrets)
+    return _acrescentar_sem_leitura(
+        secrets, cfg["worksheet_auditoria"], COLUNAS_APOSTAS, registros, ["ID Aposta"]
+    )
+
+
+def carregar_apostas(secrets: Any) -> pd.DataFrame:
+    cfg = configuracao_google(secrets)
+    return _carregar_aba(secrets, cfg["worksheet_auditoria"], COLUNAS_APOSTAS)
+
+
+def liquidar_aposta(
+    secrets: Any,
+    identificador: str,
+    gols_mandante: int,
+    gols_visitante: int,
+    observacoes: str = "",
+) -> dict[str, Any]:
+    cfg = configuracao_google(secrets)
+    aba, cabecalho = _garantir_aba_para_leitura(secrets, cfg["worksheet_auditoria"], COLUNAS_APOSTAS)
+    valores = aba.get_all_values()
+    indices = {nome: posicao for posicao, nome in enumerate(cabecalho)}
+    if "ID Aposta" not in indices:
+        raise RuntimeError("A aba de auditoria não possui a coluna ID Aposta.")
+    for numero_linha, linha in enumerate(valores[1:], start=2):
+        linha = linha + [""] * (len(cabecalho) - len(linha))
+        if str(linha[indices["ID Aposta"]]).strip() != str(identificador).strip():
+            continue
+        record = {coluna: linha[posicao] if posicao < len(linha) else "" for coluna, posicao in indices.items()}
+        updated = liquidar_registro(record, gols_mandante, gols_visitante, observacoes)
+        row_values = list(linha[:len(cabecalho)])
+        for coluna, valor in updated.items():
+            if coluna in indices:
+                row_values[indices[coluna]] = valor
+        ultima = _letra_coluna(len(cabecalho))
+        aba.update(
+            f"A{numero_linha}:{ultima}{numero_linha}",
+            [row_values],
+            value_input_option="USER_ENTERED",
+        )
+        return updated
+    raise KeyError(f"Aposta não encontrada: {identificador}.")
+
 def confirmar_resultado(
     secrets: Any,
     identificador: str,
@@ -298,14 +405,20 @@ def confirmar_resultado(
         if str(linha[indices["ID Análise"]]).strip() != str(identificador).strip():
             continue
         mercado = str(linha[indices["Mercado"]]).strip()
+        mandante = str(linha[indices.get("Mandante", -1)]).strip() if "Mandante" in indices else ""
+        visitante = str(linha[indices.get("Visitante", -1)]).strip() if "Visitante" in indices else ""
+        selecao = mercado.split("—", 1)[1].strip() if "—" in mercado else mercado
         total_gols = gols_mandante + gols_visitante
-        venceu = {
-            "Vitória Casa": gols_mandante > gols_visitante,
-            "Empate": gols_mandante == gols_visitante,
-            "Vitória Fora": gols_mandante < gols_visitante,
-            "Mais de 2.5 gols": total_gols >= 3,
-            "Menos de 2.5 gols": total_gols <= 2,
-        }.get(mercado, False)
+        ambas = gols_mandante > 0 and gols_visitante > 0
+        venceu = (
+            (selecao == mandante and gols_mandante > gols_visitante)
+            or (selecao == visitante and gols_visitante > gols_mandante)
+            or (selecao == "Empate" and gols_mandante == gols_visitante)
+            or (selecao in {"Mais de 2,5 gols", "Mais de 2.5 gols"} and total_gols >= 3)
+            or (selecao in {"Menos de 2,5 gols", "Menos de 2.5 gols"} and total_gols <= 2)
+            or (selecao == "Ambas marcam — Sim" and ambas)
+            or (selecao == "Ambas marcam — Não" and not ambas)
+        )
         try:
             odd = float(str(linha[indices["Cotação"]]).replace(",", ".") or 0.0)
         except Exception:
@@ -318,8 +431,15 @@ def confirmar_resultado(
             "Lucro em unidades": odd - 1.0 if venceu else -1.0,
             "Observações": observacoes,
         }
+        row_values = list(linha[:len(cabecalho)])
         for coluna, valor in alteracoes.items():
             if coluna in indices:
-                aba.update_cell(numero_linha, indices[coluna] + 1, valor)
+                row_values[indices[coluna]] = valor
+        ultima = _letra_coluna(len(cabecalho))
+        aba.update(
+            f"A{numero_linha}:{ultima}{numero_linha}",
+            [row_values],
+            value_input_option="USER_ENTERED",
+        )
         total_atualizacoes += 1
     return total_atualizacoes

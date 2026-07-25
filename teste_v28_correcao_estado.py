@@ -4,6 +4,8 @@ import pandas as pd
 from tex_v25_core import normalize_zip
 from tex_v28_core import (
     INPUT_COLUMNS,
+    V28Config,
+    V28_CFG,
     analyze_games,
     load_v28_model,
     lot_fingerprint,
@@ -65,6 +67,7 @@ vasco = {
 games = pd.DataFrame([athletico, santos, vasco], columns=INPUT_COLUMNS)
 
 # 1) A linha real da Pixbet deve ser aceita e normalizada corretamente.
+assert V28_CFG.max_entries == 5
 overround = validate_market_odds("1X2", [1.99, 3.24, 3.87])
 assert 1.069 < overround < 1.070
 
@@ -72,7 +75,7 @@ assert 1.069 < overround < 1.070
 try:
     validate_market_odds("1X2", [1.99, 4.55, 7.30])
 except ValueError as exc:
-    assert "ODDS INCONSISTENTES" in str(exc)
+    assert "COTAÇÕES INCONSISTENTES" in str(exc)
 else:
     raise AssertionError("Linha 1X2 inconsistente não foi bloqueada")
 
@@ -82,8 +85,29 @@ changed = games.copy(deep=True)
 changed.loc[0, "Odd empate"] = 4.55
 fingerprint_after = lot_fingerprint(changed)
 assert fingerprint_before != fingerprint_after
+fingerprint_bankroll = lot_fingerprint(games, 1000.0, 0.01, 4)
+fingerprint_other_bankroll = lot_fingerprint(games, 1200.0, 0.01, 4)
+fingerprint_other_unit = lot_fingerprint(games, 1000.0, 0.02, 4)
+fingerprint_other_limit = lot_fingerprint(games, 1000.0, 0.01, 3)
+fingerprint_registered = lot_fingerprint(games, 1000.0, 0.01, 4, {"2026-30": 1})
+fingerprint_registered_match = lot_fingerprint(
+    games,
+    1000.0,
+    0.01,
+    4,
+    {"2026-30": 1},
+    {"BRA|2026-07-25|Athletico-PR|Internacional"},
+)
+assert len({
+    fingerprint_bankroll,
+    fingerprint_other_bankroll,
+    fingerprint_other_unit,
+    fingerprint_other_limit,
+    fingerprint_registered,
+    fingerprint_registered_match,
+}) == 6
 
-# 4) Três jogos consecutivos não podem compartilhar odds.
+# 4) Três jogos consecutivos não podem compartilhar cotações.
 entries, readings, evaluations, diagnostics = analyze_games(games, matches, model, 1000, 0.01, 4)
 assert diagnostics["Situação"].eq("ANALISADO").all(), diagnostics.to_string(index=False)
 
@@ -103,9 +127,72 @@ ath_home = evaluations[
     & (evaluations["Side"] == "H")
 ].iloc[0]
 assert abs(float(ath_home["MarketProbability"]) - 0.4698) < 0.001
+ath_market = evaluations[
+    (evaluations["InputID"] == "ath") & (evaluations["Market"] == "1X2")
+]
+expected_margin = sum(1.0 / odd for odd in [1.99, 3.24, 3.87]) - 1.0
+assert ath_market["MarketMargin"].nunique() == 1
+assert abs(float(ath_market.iloc[0]["MarketMargin"]) - expected_margin) < 1e-12
+
+for invalid_limit in (0, 6):
+    try:
+        analyze_games(games, matches, model, 1000, 0.01, invalid_limit)
+    except ValueError as exc:
+        assert "máximo semanal" in str(exc).casefold()
+    else:
+        raise AssertionError(f"Limite semanal inválido aceito: {invalid_limit}")
 
 # 5) Leitura experimental não pode ultrapassar mercado validado na leitura principal.
 assert not readings["Status"].eq("EXPERIMENTAL").any(), readings[["InputID", "Status", "Selection"]].to_string(index=False)
 
-print("TESTE V28.1 — ESTADO, ISOLAMENTO E ODDS: OK")
+# 6) Apostas já registradas precisam consumir o limite da semana, inclusive em outro lote.
+permissive_cfg = V28Config(
+    unit_fraction=0.01,
+    max_entries=4,
+    minimum_conservative_ev=-1.0,
+    near_conservative_ev=-1.0,
+    minimum_profile_sample=0,
+)
+open_entries, _, _, _ = analyze_games(
+    games, matches, model, 1000, 0.01, 4, cfg=permissive_cfg
+)
+blocked_entries, _, blocked_evaluations, _ = analyze_games(
+    games,
+    matches,
+    model,
+    1000,
+    0.01,
+    4,
+    cfg=permissive_cfg,
+    existing_week_counts={"2026-30": 4},
+)
+assert not open_entries.empty
+assert blocked_entries.empty
+qualified_reserves = blocked_evaluations[blocked_evaluations["StatusBase"].eq("QUALIFICADA")]
+assert qualified_reserves["Status"].eq("RESERVA").all()
+assert qualified_reserves["Reason"].str.contains("já foi atingido", regex=False).all()
+
+match_blocked_entries, _, match_blocked_evaluations, _ = analyze_games(
+    games,
+    matches,
+    model,
+    1000,
+    0.01,
+    4,
+    cfg=permissive_cfg,
+    existing_match_ids={"BRA|2026-07-25|Athletico-PR|Internacional"},
+)
+assert not match_blocked_entries["MatchID"].astype(str).eq(
+    "BRA|2026-07-25|Athletico-PR|Internacional"
+).any()
+blocked_match_rows = match_blocked_evaluations[
+    match_blocked_evaluations["MatchID"].astype(str).eq(
+        "BRA|2026-07-25|Athletico-PR|Internacional"
+    )
+    & match_blocked_evaluations["StatusBase"].eq("QUALIFICADA")
+]
+assert blocked_match_rows["Status"].eq("RESERVA").all()
+assert blocked_match_rows["Reason"].str.contains("já possui uma aposta", regex=False).all()
+
+print("TESTE V28.1.5 — ESTADO, ISOLAMENTO, COTAÇÕES E LIMITE SEMANAL: OK")
 print(evaluations[evaluations["Market"].eq("1X2")][["InputID", "Home", "Away", "Side", "Odd", "MarketProbability"]].to_string(index=False))

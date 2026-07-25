@@ -1,15 +1,14 @@
-import tex_v28_core_2812 as module
+import tex_v28_core as compat
+import tex_v28_core_2812 as core
 
-assert module.CORE_API_VERSION == "28.1.2"
-for name in ("analyze_games", "build_ai_summary", "display_frame", "load_v28_model", "lot_fingerprint", "validate_market_odds"):
-    assert hasattr(module, name), name
-
-assert abs(module.validate_market_odds("1X2", [1.99, 3.24, 3.87]) - (1/1.99 + 1/3.24 + 1/3.87)) < 1e-12
-try:
-    module.validate_market_odds("1X2", [1.99, 4.55, 7.30])
-except ValueError:
-    pass
-else:
-    raise AssertionError("Linha contaminada deveria ser bloqueada")
-
-print("V28.1.2: importação e validação de odds aprovadas")
+assert core.CORE_API_VERSION == "28.1.2"
+assert compat.CORE_API_VERSION == core.CORE_API_VERSION
+assert compat.MODEL_VERSION == core.MODEL_VERSION
+for name in (
+    "analyze_games", "build_ai_summary", "display_frame", "load_v28_model",
+    "lot_fingerprint", "validate_market_odds",
+):
+    assert hasattr(core, name), name
+    assert hasattr(compat, name), name
+    assert name in core.__all__, name
+print("TESTE DE IMPORTAÇÃO V28.1.2 ISOLADA: OK")

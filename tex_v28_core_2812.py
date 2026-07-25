@@ -25,7 +25,8 @@ from tex_operacional_core import (
 
 APP_NAME = "Tex Statistics V28.1.2 — Estado Isolado"
 CORE_API_VERSION = "28.1.2"
-MODEL_VERSION = "V28.1.2-statefix"
+MODEL_VERSION = "V28.0"
+ENGINE_VERSION = "V28.1.2-estado-isolado"
 
 MARKET_DEFINITIONS = {
     "1X2": {
@@ -52,12 +53,14 @@ MARKET_DEFINITIONS = {
 @dataclass(frozen=True)
 class V28Config:
     unit_fraction: float = 0.01
-    target_entries: int = 4
+    max_entries: int = 5
     min_odd: float = 1.20
     max_odd: float = 3.00
     price_haircut: float = 0.02
-    minimum_ev: float = 0.0
-    near_ev: float = -0.03
+    minimum_conservative_ev: float = 0.0
+    near_conservative_ev: float = -0.03
+    minimum_profile_sample: int = 100
+    wilson_z: float = 1.2815515655446004
 
 
 V28_CFG = V28Config()
@@ -83,15 +86,45 @@ def _logit(value: float) -> float:
 class V28Model:
     def __init__(self, model_file: str | Path, metadata_file: str | Path, reliability_file: str | Path):
         # Inferência pura em Python: evita dependência binária do LightGBM no Streamlit Cloud.
-        self.model_dump = json.loads(Path(model_file).read_text(encoding="utf-8"))
-        self.trees = [tree["tree_structure"] for tree in self.model_dump["tree_info"]]
-        self.metadata = json.loads(Path(metadata_file).read_text(encoding="utf-8"))
-        self.feature_order = list(self.metadata["feature_order"])
-        self.category_maps = self.metadata["category_maps"]
+        model_path = Path(model_file)
+        metadata_path = Path(metadata_file)
+        reliability_path = Path(reliability_file)
+        missing = [str(path) for path in (model_path, metadata_path, reliability_path) if not path.is_file()]
+        if missing:
+            raise FileNotFoundError("Arquivos obrigatórios do modelo ausentes: " + ", ".join(missing))
+
+        self.model_dump = json.loads(model_path.read_text(encoding="utf-8"))
+        tree_info = self.model_dump.get("tree_info")
+        if not isinstance(tree_info, list) or not tree_info:
+            raise RuntimeError("O arquivo do modelo não contém árvores válidas.")
+        self.trees = [tree["tree_structure"] for tree in tree_info]
+        self.metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if str(self.metadata.get("model_version", "")) != MODEL_VERSION:
+            raise RuntimeError(
+                f"Versão do artefato esperada {MODEL_VERSION}; encontrada "
+                f"{self.metadata.get('model_version', 'ausente')}."
+            )
+        self.feature_order = list(self.metadata.get("feature_order") or [])
+        if not self.feature_order:
+            raise RuntimeError("A ordem das variáveis do modelo está ausente.")
+        self.category_maps = self.metadata.get("category_maps") or {}
+        for category in ("Code", "Market", "Side"):
+            if category not in self.category_maps:
+                raise RuntimeError(f"Mapa de categoria ausente no modelo: {category}.")
         self.price_haircut = float(self.metadata.get("price_haircut", 0.02))
         self.min_odd = float(self.metadata.get("min_odd", 1.20))
         self.max_odd = float(self.metadata.get("max_odd", 3.00))
-        self.profiles = pd.read_csv(reliability_file)
+        self.profiles = pd.read_csv(reliability_path)
+        required_profile_columns = {
+            "Level", "Code", "Market", "Side", "ProbBin", "Sample", "Wins",
+            "MeanPred", "HitRate", "Brier", "CalibrationGap",
+        }
+        missing_profile_columns = required_profile_columns.difference(self.profiles.columns)
+        if missing_profile_columns:
+            raise RuntimeError(
+                "Colunas ausentes nos perfis de confiabilidade: "
+                + ", ".join(sorted(missing_profile_columns))
+            )
         self.profiles["ProbBin"] = pd.to_numeric(self.profiles["ProbBin"], errors="coerce").round(2)
 
     def predict(self, code: str, market: str, side: str, market_probability: float, raw_probability: float, odd: float, month: int) -> float:
@@ -191,31 +224,65 @@ def load_v28_model(directory: str | Path) -> V28Model:
     )
 
 
-def lot_fingerprint(games: pd.DataFrame) -> str:
-    """Hash determinístico do lote inteiro, incluindo todas as cotações.
+def lot_fingerprint(
+    games: pd.DataFrame,
+    bankroll: float | None = None,
+    unit_fraction: float | None = None,
+    max_entries: int | None = None,
+    existing_week_counts: dict[str, int] | None = None,
+    existing_match_ids: set[str] | list[str] | tuple[str, ...] | None = None,
+) -> str:
+    """Hash determinístico do lote e dos parâmetros que alteram a análise.
 
-    Impede que resultados antigos continuem visíveis depois que qualquer jogo,
-    equipe, horário ou odd for alterado na interface.
+    Além das partidas e cotações, inclui banca, percentual da unidade e limite
+    semanal quando esses valores são informados. Assim, um resultado calculado
+    com parâmetros antigos nunca permanece válido na interface.
     """
-    if games is None or games.empty:
-        return hashlib.sha256(b"[]").hexdigest()
-    frame = games.reindex(columns=INPUT_COLUMNS).copy()
     records: list[dict[str, Any]] = []
-    for _, row in frame.iterrows():
-        record: dict[str, Any] = {}
-        for column in INPUT_COLUMNS:
-            value = row.get(column)
-            if value is None or (not isinstance(value, (list, dict, tuple)) and pd.isna(value)):
-                record[column] = None
-            elif isinstance(value, (float, np.floating)):
-                record[column] = round(float(value), 8)
-            elif isinstance(value, (int, np.integer)):
-                record[column] = int(value)
-            else:
-                record[column] = str(value)
-        records.append(record)
-    payload = json.dumps(records, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if games is not None and not games.empty:
+        frame = games.reindex(columns=INPUT_COLUMNS).copy()
+        for _, row in frame.iterrows():
+            record: dict[str, Any] = {}
+            for column in INPUT_COLUMNS:
+                value = row.get(column)
+                if value is None or (not isinstance(value, (list, dict, tuple)) and pd.isna(value)):
+                    record[column] = None
+                elif isinstance(value, (float, np.floating)):
+                    record[column] = round(float(value), 8)
+                elif isinstance(value, (int, np.integer)):
+                    record[column] = int(value)
+                else:
+                    record[column] = str(value)
+            records.append(record)
+    parameters = {
+        "bankroll": None if bankroll is None else round(float(bankroll), 8),
+        "unit_fraction": None if unit_fraction is None else round(float(unit_fraction), 8),
+        "max_entries": None if max_entries is None else int(max_entries),
+        "existing_week_counts": {
+            str(key): int(value)
+            for key, value in sorted((existing_week_counts or {}).items())
+        },
+        "existing_match_ids": sorted(str(value) for value in (existing_match_ids or [])),
+    }
+    payload = json.dumps(
+        {"games": records, "parameters": parameters},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _wilson_lower_bound(wins: int, sample: int, z: float) -> float:
+    """Limite inferior conservador para a taxa de acerto de casos semelhantes."""
+    n = int(sample)
+    if n <= 0:
+        return 0.0
+    p = float(np.clip(float(wins) / n, 0.0, 1.0))
+    denominator = 1.0 + (z * z) / n
+    centre = p + (z * z) / (2.0 * n)
+    adjustment = z * math.sqrt((p * (1.0 - p) + (z * z) / (4.0 * n)) / n)
+    return float(np.clip((centre - adjustment) / denominator, 0.0, 1.0))
 
 
 def validate_market_odds(market: str, odds: list[float]) -> float:
@@ -228,12 +295,12 @@ def validate_market_odds(market: str, odds: list[float]) -> float:
     if market not in MARKET_DEFINITIONS:
         raise ValueError(f"Mercado desconhecido: {market}.")
     if any((not math.isfinite(float(odd))) or float(odd) <= 1.0 for odd in odds):
-        raise ValueError(f"{MARKET_DEFINITIONS[market]['label']}: todas as odds devem ser maiores que 1,00.")
+        raise ValueError(f"{MARKET_DEFINITIONS[market]['label']}: todas as cotações devem ser maiores que 1,00.")
     implied_sum = sum(1.0 / float(odd) for odd in odds)
     lower, upper = ((0.98, 1.30) if market == "1X2" else (0.98, 1.22))
     if not lower <= implied_sum <= upper:
         raise ValueError(
-            f"ODDS INCONSISTENTES em {MARKET_DEFINITIONS[market]['label']}: "
+            f"COTAÇÕES INCONSISTENTES em {MARKET_DEFINITIONS[market]['label']}: "
             f"soma implícita {implied_sum:.2%}; faixa aceita {lower:.0%}–{upper:.0%}. "
             "Revise se alguma cotação pertence a outra partida."
         )
@@ -245,7 +312,7 @@ def _complete_odds(row: pd.Series, columns: list[str]) -> list[float] | None:
     if all(value is None for value in parsed):
         return None
     if any(value is None for value in parsed):
-        raise ValueError(f"Preencha todas as odds do mercado: {', '.join(columns)}.")
+        raise ValueError(f"Preencha todas as cotações do mercado: {', '.join(columns)}.")
     return [float(value) for value in parsed if value is not None]
 
 
@@ -268,6 +335,8 @@ def _evaluate_group(
     cfg: V28Config,
 ) -> list[dict[str, Any]]:
     definition = MARKET_DEFINITIONS[market]
+    implied_sum = sum(1.0 / float(value) for value in odds)
+    market_margin = max(0.0, implied_sum - 1.0)
     market_probabilities = no_vig_probabilities(odds)
     output: list[dict[str, Any]] = []
     for side, odd, market_probability in zip(definition["sides"], odds, market_probabilities):
@@ -284,27 +353,58 @@ def _evaluate_group(
                 "CalibrationGap": np.nan, "Confidence": "NÃO VALIDADA", "Reliability": 0.0,
             }
 
+        profile_sample = int(profile["Sample"])
+        profile_wins = int(profile["Wins"])
+        if validated and profile_sample > 0:
+            similar_cases_lower = _wilson_lower_bound(profile_wins, profile_sample, cfg.wilson_z)
+            conservative_probability = min(float(probability), similar_cases_lower)
+        else:
+            similar_cases_lower = float(probability)
+            conservative_probability = float(probability)
+
         effective_odd = odd * (1.0 - cfg.price_haircut)
-        expected_value = probability * effective_odd - 1.0
-        required_odd = 1.0 / max((1.0 - cfg.price_haircut) * probability, 1e-9)
+        model_expected_value = probability * effective_odd - 1.0
+        conservative_expected_value = conservative_probability * effective_odd - 1.0
+        required_odd = 1.0 / max((1.0 - cfg.price_haircut) * conservative_probability, 1e-9)
         odd_gap = odd - required_odd
         in_odd_range = cfg.min_odd <= effective_odd <= cfg.max_odd
+        sufficient_profile = (
+            profile_sample >= cfg.minimum_profile_sample
+            and str(profile["Confidence"]) in {"MODERADA", "FORTE"}
+        )
 
         if not validated:
             status = "EXPERIMENTAL"
-            reason = "Ambas marcam é calculado e exibido, mas não entra na carteira: faltam odds históricas completas para backtest financeiro."
-        elif in_odd_range and expected_value >= cfg.minimum_ev:
-            status = "QUALIFICADA"
-            reason = "Preço atual supera a odd mínima do modelo após desconto operacional de 2%."
-        elif in_odd_range and expected_value >= cfg.near_ev:
-            status = "AGUARDAR PREÇO"
-            reason = "Leitura próxima do ponto de equilíbrio; precisa de cotação maior para entrar."
+            reason = (
+                "Ambas marcam é analisado como sinal complementar, mas não entra automaticamente "
+                "na carteira porque não há histórico completo de cotações para validação financeira equivalente."
+            )
         elif not in_odd_range:
             status = "FORA DA FAIXA"
-            reason = f"Odd efetiva fora da faixa testada ({cfg.min_odd:.2f} a {cfg.max_odd:.2f})."
+            reason = f"Cotação efetiva fora da faixa testada ({cfg.min_odd:.2f} a {cfg.max_odd:.2f})."
+        elif not sufficient_profile:
+            status = "AMOSTRA INSUFICIENTE"
+            reason = (
+                f"Casos semelhantes insuficientes ou instáveis: {profile_sample} registros; "
+                f"confiança {profile['Confidence']}."
+            )
+        elif conservative_expected_value >= cfg.minimum_conservative_ev:
+            status = "QUALIFICADA"
+            reason = (
+                "A cotação supera o preço mínimo calculado com probabilidade conservadora, "
+                "casos semelhantes, estabilidade e desconto operacional de 2%."
+            )
+        elif conservative_expected_value >= cfg.near_conservative_ev:
+            status = "AGUARDAR PREÇO"
+            reason = "Leitura próxima do ponto de equilíbrio conservador; precisa de cotação maior para entrar."
         else:
             status = "DESCARTAR"
-            reason = "Preço atual não remunera a probabilidade estimada pelo modelo."
+            reason = "A cotação atual não remunera a probabilidade conservadora estimada."
+
+        home_sample = int(sports.get("HomeSample", 0) or 0)
+        away_sample = int(sports.get("AwaySample", 0) or 0)
+        sports_sample = min(home_sample, away_sample) if home_sample and away_sample else max(home_sample, away_sample)
+        sports_reliability = float(np.clip(sports_sample / 20.0, 0.0, 1.0))
 
         output.append({
             "DateParsed": pd.Timestamp(match_date),
@@ -315,38 +415,48 @@ def _evaluate_group(
             "Selection": selection_name(side, home, away), "Odd": odd,
             "EffectiveOdd": effective_odd, "PriceHaircut": cfg.price_haircut,
             "MarketProbability": market_probability,
+            "MarketOverround": implied_sum,
+            "MarketMargin": market_margin,
             "CalibratedMarketProbability": market_probability,
             "RawSportsProbability": raw_probability,
             "CalibratedSportsProbability": raw_probability,
             "DecisionProbability": probability,
+            "ConservativeProbability": conservative_probability,
+            "SimilarCasesLowerProbability": similar_cases_lower,
             "ModelProbability": probability,
             "BreakEvenProbability": 1.0 / effective_odd,
-            "ExpectedValue": expected_value,
+            "ModelExpectedValue": model_expected_value,
+            "ConservativeExpectedValue": conservative_expected_value,
+            "ExpectedValue": conservative_expected_value,
             "RequiredOddForOperation": required_odd,
             "OddGapToOperation": odd_gap,
-            "ModelMarketDifference": raw_probability - market_probability,
-            "ProfileSample": int(profile["Sample"]), "ProfileWins": int(profile["Wins"]),
+            "ModelMarketDifference": probability - market_probability,
+            "ProfileSample": profile_sample, "ProfileWins": profile_wins,
             "EmpiricalHitRate": float(profile["HitRate"]),
-            "SportsSample": int(profile["Sample"]),
-            "SportsReliability": float(profile["Reliability"]),
-            "SportsEmpiricalHitRate": float(profile["HitRate"]),
+            "HomeSample": home_sample, "AwaySample": away_sample,
+            "SportsSample": sports_sample,
+            "SportsReliability": sports_reliability,
+            "SportsEmpiricalHitRate": raw_probability,
             "Reliability": float(profile["Reliability"]),
             "CalibrationGap": profile["CalibrationGap"], "Brier": profile["Brier"],
             "SampleConfidence": str(profile["Confidence"]),
             "SampleConfidenceReason": (
-                f"{int(profile['Sample'])} previsões fora da amostra; desvio de calibração "
-                f"{float(profile['CalibrationGap']):.1%}." if int(profile["Sample"]) > 0 and pd.notna(profile["CalibrationGap"])
+                f"{profile_sample} previsões fora da amostra; desvio de calibração "
+                f"{float(profile['CalibrationGap']):.1%}; limite conservador dos casos semelhantes "
+                f"{similar_cases_lower:.1%}." if profile_sample > 0 and pd.notna(profile["CalibrationGap"])
                 else "Mercado sem perfil financeiro fora da amostra."
             ),
             "ProfileLevel": str(profile["Level"]),
-            "SportsProfileLevel": str(profile["Level"]),
+            "SportsProfileLevel": "AMOSTRA DAS EQUIPES",
             "Confidence": str(profile["Confidence"]),
             "Status": status, "StatusBase": status,
             "Stake": unit_value if status == "QUALIFICADA" else 0.0,
-            "Score": expected_value,
+            "Score": conservative_expected_value,
             "Reason": reason,
             "LambdaHome": float(sports["LambdaHome"]), "LambdaAway": float(sports["LambdaAway"]),
-            "ValidatedMarket": validated, "ModelVersion": MODEL_VERSION,
+            "HomeScoreProbability": float(sports.get("HomeScoreProbability", 1.0 - math.exp(-float(sports["LambdaHome"])))),
+            "AwayScoreProbability": float(sports.get("AwayScoreProbability", 1.0 - math.exp(-float(sports["LambdaAway"])))),
+            "ValidatedMarket": validated, "ModelVersion": MODEL_VERSION, "CoreVersion": ENGINE_VERSION,
         })
     return output
 
@@ -357,21 +467,39 @@ def analyze_games(
     model: V28Model,
     bankroll: float,
     unit_fraction: float = V28_CFG.unit_fraction,
-    max_entries: int = V28_CFG.target_entries,
+    max_entries: int = V28_CFG.max_entries,
     cfg: V28Config = V28_CFG,
     sports_cfg: V25Config = CFG,
+    existing_week_counts: dict[str, int] | None = None,
+    existing_match_ids: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Analisa todos os mercados e monta uma carteira ranqueada por semana.
+    """Analisa todos os mercados e monta uma carteira com limite semanal.
 
-    O volume é um alvo de 3–5 entradas por semana, nunca uma fabricação: somente
-    preços com EV não negativo entram. Uma seleção por partida.
+    O número informado é apenas um máximo. Entram somente preços aprovados pelo
+    filtro conservador, e no máximo uma seleção por partida.
     """
     if games.empty:
         empty = pd.DataFrame()
         return empty, empty, empty, empty
 
-    target = int(np.clip(max_entries, 3, 5))
-    unit_value = max(0.0, float(bankroll) * float(unit_fraction))
+    if not math.isfinite(float(bankroll)) or float(bankroll) < 0.0:
+        raise ValueError("A banca deve ser um número não negativo.")
+    if not math.isfinite(float(unit_fraction)) or not 0.0 < float(unit_fraction) <= 0.02:
+        raise ValueError("A unidade fixa deve ser maior que 0% e no máximo 2% da banca.")
+    try:
+        target = int(max_entries)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("O máximo semanal deve ser um número inteiro entre 1 e 5.") from exc
+    if not 1 <= target <= 5:
+        raise ValueError("O máximo semanal deve estar entre 1 e 5 entradas.")
+    registered_by_week: dict[str, int] = {}
+    for week, count in (existing_week_counts or {}).items():
+        parsed_count = int(count)
+        if parsed_count < 0:
+            raise ValueError("A contagem semanal de apostas registradas não pode ser negativa.")
+        registered_by_week[str(week)] = parsed_count
+    registered_matches = {str(value) for value in (existing_match_ids or [])}
+    unit_value = float(bankroll) * float(unit_fraction)
     state_cache: dict[str, dict[str, Any]] = {}
     evaluations: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
@@ -404,12 +532,12 @@ def analyze_games(
             for market, odds in groups:
                 evaluations.extend(_evaluate_group(code, match_date, home, away, market, odds, sports, model, unit_value, cfg))
             for item in evaluations[start:]:
-                item["InputID"] = clean_text(row.get("ID"))
+                item["InputID"] = clean_text(row.get("ID")) or str(item["MatchID"])
                 item["Time"] = clean_text(row.get("Hora"))
                 item["Bookmaker"] = clean_text(row.get("Casa de apostas")) or "Não informada"
             diagnostics.append({
                 "Jogo": f"{home} x {away}", "Liga": LEAGUES[code], "Situação": "ANALISADO",
-                "Detalhe": f"{len(evaluations)-start} seleções avaliadas; carteira V28 usa 1X2 e gols, uma seleção por jogo."
+                "Detalhe": f"{len(evaluations)-start} seleções avaliadas; carteira validada usa 1X2 e gols, uma seleção por jogo."
             })
         except Exception as exc:
             diagnostics.append({
@@ -423,44 +551,63 @@ def analyze_games(
         empty = pd.DataFrame()
         return empty, empty, empty, diagnostics_frame
 
-    # Primeiro, melhor preço qualificado por partida; depois, top 3–5 por semana.
+    # Primeiro, melhor preço qualificado por partida; depois, respeita o máximo semanal.
     qualified = all_evaluations[
         all_evaluations["ValidatedMarket"].eq(True)
         & all_evaluations["StatusBase"].eq("QUALIFICADA")
+        & ~all_evaluations["MatchID"].astype(str).isin(registered_matches)
     ].copy()
     best_per_match = (
         qualified.sort_values(["MatchID", "ExpectedValue", "DecisionProbability"], ascending=[True, False, False])
         .drop_duplicates("MatchID")
     )
+    weekly_entries: list[pd.DataFrame] = []
+    ordered_candidates = best_per_match.sort_values(
+        ["WeekID", "ExpectedValue", "DecisionProbability"],
+        ascending=[True, False, False],
+    )
+    for week_id, candidates in ordered_candidates.groupby("WeekID", sort=True):
+        remaining = max(0, target - registered_by_week.get(str(week_id), 0))
+        if remaining:
+            weekly_entries.append(candidates.head(remaining).copy())
     entries = (
-        best_per_match.sort_values(["WeekID", "ExpectedValue", "DecisionProbability"], ascending=[True, False, False])
-        .groupby("WeekID", group_keys=False)
-        .head(target)
-        .copy()
+        pd.concat(weekly_entries, ignore_index=False)
+        if weekly_entries else best_per_match.iloc[0:0].copy()
     )
     if not entries.empty:
         entries["Rank"] = entries.groupby("WeekID")["ExpectedValue"].rank(method="first", ascending=False).astype(int)
         entries["Status"] = "OPERAR"
         entries["Stake"] = unit_value
-        entries["Reason"] = "Selecionada na carteira semanal pelo maior EV entre preços qualificados; uma seleção por partida."
+        entries["Reason"] = "Selecionada pelo maior valor esperado conservador entre preços qualificados; uma seleção por partida."
 
     selected_keys = set(zip(entries.get("MatchID", []), entries.get("Side", [])))
-    selected_matches = set(entries.get("MatchID", []))
     for idx, row in all_evaluations.iterrows():
         key = (row["MatchID"], row["Side"])
         if key in selected_keys:
             all_evaluations.at[idx, "Status"] = "OPERAR"
             all_evaluations.at[idx, "Stake"] = unit_value
-            all_evaluations.at[idx, "Reason"] = "Selecionada na carteira semanal pelo maior EV entre preços qualificados."
+            all_evaluations.at[idx, "Reason"] = "Selecionada pelo maior valor esperado conservador entre preços qualificados."
         elif row["StatusBase"] == "QUALIFICADA":
             all_evaluations.at[idx, "Status"] = "RESERVA"
             all_evaluations.at[idx, "Stake"] = 0.0
-            all_evaluations.at[idx, "Reason"] = (
-                "Preço qualificado, mas ficou atrás de outra seleção do mesmo jogo ou do limite semanal."
-            )
+            already_registered = registered_by_week.get(str(row["WeekID"]), 0)
+            if str(row["MatchID"]) in registered_matches:
+                all_evaluations.at[idx, "Reason"] = (
+                    "Preço qualificado, mas esta partida já possui uma aposta registrada."
+                )
+            elif already_registered >= target:
+                all_evaluations.at[idx, "Reason"] = (
+                    f"Preço qualificado, mas o máximo semanal de {target} já foi atingido "
+                    f"por {already_registered} aposta(s) registrada(s)."
+                )
+            else:
+                all_evaluations.at[idx, "Reason"] = (
+                    "Preço qualificado, mas ficou atrás de outra seleção do mesmo jogo ou do máximo semanal."
+                )
 
     # Uma leitura experimental nunca deve ocultar um mercado financeiramente validado.
-    order = {"OPERAR":0,"RESERVA":1,"QUALIFICADA":1,"AGUARDAR PREÇO":2,"DESCARTAR":3,"FORA DA FAIXA":4,"EXPERIMENTAL":5}
+    order = {"OPERAR": 0, "RESERVA": 1, "QUALIFICADA": 1, "AGUARDAR PREÇO": 2,
+             "DESCARTAR": 3, "AMOSTRA INSUFICIENTE": 4, "FORA DA FAIXA": 5, "EXPERIMENTAL": 6}
     all_evaluations["StatusOrder"] = all_evaluations["Status"].map(order).fillna(9)
     readings = (
         all_evaluations.sort_values(["MatchID","StatusOrder","ExpectedValue","DecisionProbability"], ascending=[True,True,False,False])
@@ -473,18 +620,22 @@ def display_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
     cols = [
-        "Rank","Status","DateParsed","Time","League","Home","Away","MarketName","Selection","Odd","EffectiveOdd",
-        "DecisionProbability","MarketProbability","RawSportsProbability","ExpectedValue","RequiredOddForOperation",
-        "OddGapToOperation","ProfileSample","EmpiricalHitRate","SampleConfidence","Reliability","Stake","Reason"
+        "Rank", "Status", "DateParsed", "Time", "League", "Home", "Away", "MarketName", "Selection",
+        "Odd", "EffectiveOdd", "DecisionProbability", "ConservativeProbability", "MarketProbability",
+        "RawSportsProbability", "ExpectedValue", "RequiredOddForOperation", "OddGapToOperation",
+        "ProfileSample", "EmpiricalHitRate", "SampleConfidence", "Reliability", "Stake", "Reason",
     ]
-    out=frame[[c for c in cols if c in frame.columns]].copy()
-    rename={
-        "Rank":"Rank","Status":"Status","DateParsed":"Data","Time":"Hora","League":"Liga","Home":"Mandante","Away":"Visitante",
-        "MarketName":"Mercado","Selection":"Seleção","Odd":"Odd informada","EffectiveOdd":"Odd efetiva (-2%)",
-        "DecisionProbability":"Probabilidade V28","MarketProbability":"Mercado sem margem","RawSportsProbability":"Poisson dinâmico",
-        "ExpectedValue":"EV após desconto","RequiredOddForOperation":"Odd mínima","OddGapToOperation":"Folga da odd",
-        "ProfileSample":"Amostra OOS","EmpiricalHitRate":"Acerto OOS","SampleConfidence":"Confiança da amostra",
-        "Reliability":"Estabilidade","Stake":"Entrada fixa","Reason":"Motivo"
+    out = frame[[column for column in cols if column in frame.columns]].copy()
+    rename = {
+        "Rank": "Posição", "Status": "Situação", "DateParsed": "Data", "Time": "Hora",
+        "League": "Liga", "Home": "Mandante", "Away": "Visitante", "MarketName": "Mercado",
+        "Selection": "Seleção", "Odd": "Cotação informada", "EffectiveOdd": "Cotação após desconto de 2%",
+        "DecisionProbability": "Probabilidade do modelo", "ConservativeProbability": "Probabilidade conservadora",
+        "MarketProbability": "Mercado sem margem", "RawSportsProbability": "Probabilidade esportiva",
+        "ExpectedValue": "Valor esperado conservador", "RequiredOddForOperation": "Cotação mínima",
+        "OddGapToOperation": "Diferença da cotação", "ProfileSample": "Casos semelhantes",
+        "EmpiricalHitRate": "Acerto dos casos semelhantes", "SampleConfidence": "Confiança da amostra",
+        "Reliability": "Estabilidade", "Stake": "Entrada fixa", "Reason": "Motivo",
     }
     return out.rename(columns=rename)
 
@@ -496,42 +647,73 @@ def build_ai_summary(
     diagnostics: pd.DataFrame,
     matches: list[dict[str, Any]],
 ) -> str:
-    lines=[
-        f"RESUMO PARA IA — {APP_NAME}",
-        "Arquitetura: mercado sem margem + Poisson dinâmico + LightGBM regularizado, treinado sem CalP/Rel/N e testado walk-forward.",
-        "Protocolo: odd informada recebe desconto operacional de 2%; carteira usa 1X2 e mais/menos 2,5; uma seleção por jogo; alvo de 3–5 entradas por semana.",
-        "Ambas marcam é exibido como experimental e não entra na carteira financeira por ausência de odds históricas completas.",
-        f"Partidas: {len(games)} | leituras: {len(readings)} | mercados: {len(evaluations)}",
+    lines = [
+        f"RESUMO PARA ANÁLISE — {APP_NAME}",
+        "Arquitetura: mercado sem margem, modelo dinâmico de gols e árvores regularizadas, com avaliação fora da amostra.",
+        "Protocolo: desconto operacional de 2% na cotação, probabilidade conservadora baseada em casos semelhantes e no máximo uma seleção por jogo.",
+        "A quantidade semanal é um limite máximo, nunca uma obrigação de preencher apostas.",
+        "Ambas marcam é exibido como análise complementar e não entra automaticamente na carteira validada por ausência de histórico completo de cotações.",
+        f"Partidas: {len(games)} | leituras principais: {len(readings)} | seleções avaliadas: {len(evaluations)}",
         "",
     ]
     for _, game in games.iterrows():
-        input_id=str(game.get("ID","")); home=str(game.get("Mandante","")); away=str(game.get("Visitante",""))
-        code=str(game.get("Código da liga","")); match_date=parse_date(game.get("Data"))
-        context=standings_context(matches,code,match_date,home,away)
-        lines.append(f"JOGO: {home} x {away} | {game.get('Liga','')} | {match_date.strftime('%d/%m/%Y')} {game.get('Hora','')}")
+        input_id = str(game.get("ID", ""))
+        home = str(game.get("Mandante", ""))
+        away = str(game.get("Visitante", ""))
+        code = str(game.get("Código da liga", ""))
+        match_date = parse_date(game.get("Data"))
+        context = standings_context(matches, code, match_date, home, away)
+        lines.append(
+            f"JOGO: {home} x {away} | {game.get('Liga', '')} | "
+            f"{match_date.strftime('%d/%m/%Y')} {game.get('Hora', '')}"
+        )
         if context.get("Available"):
-            lines.append(f"Classificação: {home} {context['HomePosition']}º, {context['HomePoints']} pts, {context['HomePPG']:.2f} PPG | {away} {context['AwayPosition']}º, {context['AwayPoints']} pts, {context['AwayPPG']:.2f} PPG.")
-        r=readings[readings["InputID"].astype(str).eq(input_id)] if not readings.empty else pd.DataFrame()
-        if not r.empty:
-            row=r.iloc[0]
             lines.append(
-                f"Leitura principal: {row['Selection']} | {row['Status']} | odd {row['Odd']:.2f} | odd efetiva {row['EffectiveOdd']:.2f} | "
-                f"P(V28) {row['DecisionProbability']:.1%} | mercado {row['MarketProbability']:.1%} | Poisson {row['RawSportsProbability']:.1%} | "
-                f"EV {row['ExpectedValue']:.1%} | odd mínima {row['RequiredOddForOperation']:.2f}."
+                f"Classificação: {home} {context['HomePosition']}º, {context['HomePoints']} pontos, "
+                f"{context['HomePPG']:.2f} ponto(s) por jogo | {away} {context['AwayPosition']}º, "
+                f"{context['AwayPoints']} pontos, {context['AwayPPG']:.2f} ponto(s) por jogo."
             )
-            lines.append(f"Amostra OOS: {int(row['ProfileSample'])}; acerto {row['EmpiricalHitRate']:.1%}; confiança {row['SampleConfidence']}; estabilidade {row['Reliability']:.1%}.")
-        evs=evaluations[evaluations["InputID"].astype(str).eq(input_id)] if not evaluations.empty else pd.DataFrame()
-        for _,e in evs.sort_values(["StatusOrder","ExpectedValue"],ascending=[True,False]).iterrows():
-            lines.append(f"- {e['Selection']}: {e['Status']}; odd {e['Odd']:.2f}; P(V28) {e['DecisionProbability']:.1%}; EV {e['ExpectedValue']:.1%}; odd mínima {e['RequiredOddForOperation']:.2f}; amostra {int(e['ProfileSample'])}.")
+        reading = readings[readings["InputID"].astype(str).eq(input_id)] if not readings.empty else pd.DataFrame()
+        if not reading.empty:
+            row = reading.iloc[0]
+            lines.append(
+                f"Leitura principal: {row['Selection']} | {row['Status']} | cotação {row['Odd']:.2f} | "
+                f"cotação após desconto {row['EffectiveOdd']:.2f} | probabilidade do modelo "
+                f"{row['DecisionProbability']:.1%} | probabilidade conservadora "
+                f"{row['ConservativeProbability']:.1%} | mercado {row['MarketProbability']:.1%} | "
+                f"probabilidade esportiva {row['RawSportsProbability']:.1%} | valor esperado conservador "
+                f"{row['ExpectedValue']:.1%} | cotação mínima {row['RequiredOddForOperation']:.2f}."
+            )
+            lines.append(
+                f"Casos semelhantes: {int(row['ProfileSample'])}; acerto {row['EmpiricalHitRate']:.1%}; "
+                f"confiança {row['SampleConfidence']}; estabilidade {row['Reliability']:.1%}."
+            )
+        game_evaluations = (
+            evaluations[evaluations["InputID"].astype(str).eq(input_id)]
+            if not evaluations.empty else pd.DataFrame()
+        )
+        for _, item in game_evaluations.sort_values(["StatusOrder", "ExpectedValue"], ascending=[True, False]).iterrows():
+            lines.append(
+                f"- {item['Selection']}: {item['Status']}; cotação {item['Odd']:.2f}; "
+                f"probabilidade do modelo {item['DecisionProbability']:.1%}; probabilidade conservadora "
+                f"{item['ConservativeProbability']:.1%}; valor esperado conservador "
+                f"{item['ExpectedValue']:.1%}; cotação mínima {item['RequiredOddForOperation']:.2f}; "
+                f"casos semelhantes {int(item['ProfileSample'])}."
+            )
         lines.append("")
     if not diagnostics.empty:
-        errors=diagnostics[diagnostics["Situação"].eq("ERRO")]
-        for _,row in errors.iterrows(): lines.append(f"ERRO: {row['Jogo']} — {row['Detalhe']}")
-    lines.append("Nota: probabilidades não são garantias. A evidência histórica depende de preços competitivos; odds médias com desconto de 2% não foram lucrativas no teste.")
+        errors = diagnostics[diagnostics["Situação"].eq("ERRO")]
+        for _, row in errors.iterrows():
+            lines.append(f"ERRO: {row['Jogo']} — {row['Detalhe']}")
+    lines.append(
+        "Nota: probabilidades não garantem resultado. A evidência histórica depende de cotações competitivas e disciplina de entrada fixa."
+    )
     return "\n".join(lines)
 
 
-__all__=[
-    "APP_NAME","INPUT_COLUMNS","V28_CFG","V28Config","analyze_games","build_ai_summary","display_frame",
-    "enrich_with_standings","latest_team_catalog","load_v28_model","no_vig_probabilities","parse_odd","standings_context"
+__all__ = [
+    "APP_NAME", "CORE_API_VERSION", "MODEL_VERSION", "ENGINE_VERSION", "INPUT_COLUMNS", "V28_CFG", "V28Config",
+    "analyze_games", "build_ai_summary", "display_frame", "enrich_with_standings",
+    "latest_team_catalog", "load_v28_model", "lot_fingerprint", "no_vig_probabilities",
+    "parse_odd", "standings_context", "validate_market_odds",
 ]

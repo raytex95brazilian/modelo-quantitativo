@@ -1,97 +1,102 @@
-# Tex Statistics V28 — metodologia e backtest
+# Tex Statistics V28 — metodologia e avaliações retrospectivas
 
-## Problema corrigido
+## Arquitetura do motor
 
-A V25 tentava decidir cada mercado por um portão rígido e independente. Isso produziu semanas vazias e uma discrepância entre o relatório histórico e o comportamento do aplicativo. A V28 troca esse desenho por **ranqueamento de carteira**:
+Para cada seleção, o sistema:
 
-1. calcula o mercado sem margem;
-2. estima a força esportiva com Poisson dinâmico e pesos temporais;
-3. entrega essas informações a um modelo de boosting regularizado;
-4. estima a probabilidade de retorno de cada seleção;
-5. desconta 2% da odd informada;
-6. elimina EV negativo e odds fora de 1,20–3,00;
-7. mantém uma seleção por partida;
-8. seleciona as quatro melhores por semana, configurável entre três e cinco.
+1. valida se todas as cotações do mercado pertencem à mesma linha e têm margem implícita plausível;
+2. remove proporcionalmente a margem do mercado;
+3. estima probabilidades esportivas com um modelo dinâmico de gols, forças de ataque e defesa, mando e ponderação temporal;
+4. combina as variáveis pré-jogo em um modelo de árvores regularizadas executado por inferência pura em Python;
+5. localiza casos semelhantes nas previsões fora da amostra;
+6. calcula um limite inferior de Wilson unilateral para a taxa de acerto desses casos;
+7. define a probabilidade conservadora como o menor valor entre a probabilidade do modelo e esse limite inferior;
+8. aplica desconto operacional de 2% à cotação informada;
+9. exige valor esperado conservador não negativo, amostra suficiente e estabilidade aceitável;
+10. mantém no máximo uma seleção por partida e respeita o máximo semanal restante.
 
-## Fundamentação usada
+## Variáveis do modelo treinado
 
-- Modelo de gols com fatores de ataque, defesa e mando de campo.
-- Atualização temporal das forças das equipes, evitando tratar uma temporada inteira como estática.
-- Probabilidades de 1X2 e totais derivadas de contagens de gols.
-- Boosting regularizado para corrigir erros sistemáticos do mercado e do Poisson sem substituir a informação das odds.
-- Avaliação fora da amostra, por temporada, sem usar resultados futuros na previsão.
-- Regularização para reduzir sobreajuste.
+O artefato V28.0 usa apenas informações disponíveis antes da partida:
 
-## Variáveis do modelo
-
-Somente variáveis disponíveis antes do jogo:
-
-- probabilidade sem margem do mercado;
-- probabilidade do Poisson dinâmico;
-- diferença e razão entre as duas probabilidades;
-- odd do mercado;
-- transformações logit;
+- probabilidade de mercado sem margem;
+- probabilidade esportiva bruta;
+- diferença, módulo da diferença e razão entre probabilidades;
+- cotação;
+- transformações logarítmicas das probabilidades;
 - mês;
-- liga, mercado e lado.
+- liga, mercado e seleção codificados.
 
-Foram deliberadamente excluídas `CalP`, `Rel` e `N` dos modelos anteriores porque poderiam carregar perfis ajustados com períodos posteriores.
+Os perfis de confiabilidade não entram como variáveis do modelo treinado. Eles são usados posteriormente como camada operacional conservadora.
 
-## Protocolo walk-forward
+## Avaliação progressiva original
 
-- Teste: 2022–2025.
-- 2022 treinado em 2018–2021.
-- 2023 treinado em 2018–2022.
-- 2024 treinado em 2018–2023.
+O modelo foi avaliado por temporadas:
+
+- 2022 treinado em 2018–2021;
+- 2023 treinado em 2018–2022;
+- 2024 treinado em 2018–2023;
 - 2025 treinado em 2018–2024.
-- Unidade fixa de uma unidade.
-- Uma seleção por jogo.
-- Quatro entradas por semana, quando existem preços com EV não negativo.
-- Odd efetiva = melhor odd registrada × 0,98.
 
-## Resultado principal
+Protocolo original: unidade fixa, uma seleção por jogo, até quatro entradas por semana, melhor preço disponível com desconto de 2%.
 
-- 893 entradas.
-- 225 semanas.
-- 3,97 entradas por semana.
-- 461 vitórias.
-- 51,62% de acerto.
-- +103,7482 unidades.
-- ROI +11,62%.
-- Drawdown máximo 14,094 unidades.
-- Maior sequência: 9 derrotas.
-- Bootstrap semanal de 95% do ROI: aproximadamente +4,31% a +19,36%.
-- Todas as temporadas testadas terminaram positivas.
+Resultado registrado no pacote original:
 
-## Resultado por temporada
+- 893 entradas;
+- 225 semanas;
+- 3,97 entradas por semana;
+- 461 vitórias;
+- 51,62% de acerto;
+- +103,7482 unidades;
+- retorno sobre entradas de +11,62%;
+- maior recuo de 14,094 unidades.
 
-| Temporada | Entradas | Acerto | Lucro | ROI |
-|---|---:|---:|---:|---:|
-| 2022 | 257 | 53,31% | +45,6044 u | +17,74% |
-| 2023 | 208 | 54,33% | +35,5496 u | +17,09% |
-| 2024 | 202 | 50,00% | +11,3068 u | +5,60% |
-| 2025 | 226 | 48,67% | +11,2874 u | +4,99% |
+### Sensibilidade ao preço do protocolo original
 
-## Teste de preço
-
-O resultado depende de cotações competitivas:
-
-| Protocolo | Entradas | ROI | Drawdown |
+| Protocolo | Entradas | Retorno sobre entradas | Maior recuo |
 |---|---:|---:|---:|
 | Melhor preço, menos 2% | 893 | +11,62% | 14,09 u |
 | Pinnacle, menos 2% | 812 | +4,36% | 20,72 u |
 | Bet365, menos 2% | 686 | +2,85% | 20,06 u |
-| Odd média, sem desconto | 884 | +2,27% | 22,90 u |
-| Odd média, menos 2% | 860 | −3,06% | 30,81 u |
+| Cotação média, sem desconto | 884 | +2,27% | 22,90 u |
+| Cotação média, menos 2% | 860 | −3,06% | 30,81 u |
 
-Por isso, o aplicativo não libera uma seleção apenas porque o jogo parece provável: compara a odd digitada com a odd mínima. O alvo de três a cinco entradas é um **alvo de carteira**, não uma autorização para fabricar apostas com EV negativo.
+Essa sensibilidade demonstra que preço competitivo é parte essencial do método.
 
-## Ambas marcam
+## Recalculo operacional do filtro conservador V28.1.5
 
-O aplicativo calcula e exibe Ambas Marcam — Sim/Não, mas não o inclui na carteira principal. A base histórica das 24 ligas não possui odds completas desse mercado para um backtest financeiro equivalente. O status permanece `EXPERIMENTAL` até existir essa evidência.
+O arquivo `backtest_v28_conservador.py` reaplica a camada conservadora às previsões fora da amostra já existentes, com máximo de cinco entradas semanais. O resultado armazenado em `backtest/V28_1_5_FILTRO_CONSERVADOR_RESUMO.json` é:
+
+- 1.059 entradas;
+- 221 semanas;
+- média de 4,79 entradas por semana;
+- 588 vitórias;
+- 55,52% de acerto;
+- +134,5910 unidades;
+- retorno sobre entradas de +12,71%;
+- maior recuo de 24,4098 unidades.
+
+| Temporada | Entradas | Acerto | Lucro | Retorno sobre entradas |
+|---|---:|---:|---:|---:|
+| 2022 | 306 | 54,58% | +43,1936 u | +14,12% |
+| 2023 | 240 | 59,58% | +38,3494 u | +15,98% |
+| 2024 | 244 | 56,15% | +37,2306 u | +15,26% |
+| 2025 | 269 | 52,42% | +15,8174 u | +5,88% |
+
+### Advertência metodológica
+
+Esse recalculo é uma verificação operacional retrospectiva, não um novo teste final independente. Os perfis de confiabilidade agregam previsões fora da amostra de 2022–2025; por isso, o mesmo período não deve ser apresentado como validação inédita da camada conservadora. Uma validação final adequada exige dados futuros ainda não usados para ajustar ou escolher o filtro.
+
+## Ambas Marcam
+
+O sistema calcula Ambas Marcam — Sim/Não como sinal complementar, usando mercado e probabilidade esportiva. Esse mercado não participa da carteira automática porque a base das 24 ligas não contém histórico completo de cotações para uma avaliação financeira equivalente à de 1X2 e Mais/Menos 2,5.
 
 ## Limitações
 
-- Backtest não garante lucro futuro.
-- O resultado principal usa melhor preço de fechamento; preço pior degrada o retorno.
-- Escalações, suspensões, clima e informações táticas não estão automatizadas.
-- O período 2022–2025 já foi usado para desenvolvimento e não deve ser reutilizado como teste final depois de novas alterações.
+- Nenhuma probabilidade garante o resultado de uma partida.
+- Resultados retrospectivos podem não se repetir.
+- Cotações piores reduzem ou eliminam a vantagem estimada.
+- Escalações, lesões, suspensões, clima e informações táticas não são automatizados.
+- A fonte externa pode ficar indisponível; nesse caso, o aplicativo usa a base local.
+- A carteira só respeita apostas históricas que estejam presentes no controle financeiro sincronizado.
+- O arquivo local do Streamlit não deve ser tratado como armazenamento permanente.

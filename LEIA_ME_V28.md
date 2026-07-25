@@ -1,19 +1,43 @@
-# Tex Statistics V28
+# Tex Statistics V28.1.5
 
-Aplicativo Streamlit com 24 ligas e seletores de times. O usuário informa apenas data, horário, casa e odds.
+Aplicativo Streamlit para análise pré-jogo de futebol em 24 ligas, com retirada da margem do mercado, modelo dinâmico de gols, árvores regularizadas, probabilidade conservadora, carteira limitada, auditoria e liquidação financeira.
 
-## Instalação no repositório
+## Fluxo de uso
 
-Copie todos os arquivos do patch para a raiz, preservando as pastas `model/` e `data/`. Faça commit e push. O modelo é executado por um interpretador puro em Python; o deploy não depende do pacote binário LightGBM.
-
-## Fluxo
-
-1. Escolha liga, mandante e visitante.
-2. Informe odds 1X2, mais/menos 2,5 e Ambas Marcam.
-3. Adicione todas as partidas disponíveis da semana.
-4. Defina alvo de 3, 4 ou 5 entradas.
+1. Informe banca, unidade fixa e máximo de entradas por semana.
+2. Escolha uma partida futura, liga, equipes e casa de apostas.
+3. Informe as cotações completas dos mercados desejados.
+4. Adicione todas as partidas do lote.
 5. Clique em **ANALISAR TODO O LOTE**.
-6. A aba **Carteira V28** mostra as entradas ranqueadas.
-7. **SALVAR COTAÇÕES E PROBABILIDADES** grava a análise na planilha Google já configurada.
+6. Consulte a leitura principal, os mercados avaliados e a carteira validada.
+7. Clique em **SALVAR COTAÇÕES E PROBABILIDADES** para registrar a avaliação.
+8. Clique em **REGISTRAR ENTRADAS DA CARTEIRA** somente quando a aposta tiver sido efetivamente realizada.
+9. Após o jogo, informe o placar no controle financeiro.
 
-A V28 não usa Kelly nem progressão. Cada entrada usa unidade fixa.
+## Mercados
+
+- **Resultado final 1X2:** validado para carteira.
+- **Mais/Menos 2,5 gols:** validado para carteira.
+- **Ambas Marcam — Sim/Não:** análise complementar; não entra automaticamente na carteira por falta de histórico completo de cotações equivalente.
+
+## Filtro conservador
+
+Uma entrada só é autorizada quando:
+
+- o mercado é financeiramente validado;
+- a cotação após desconto de 2% está na faixa testada;
+- existem ao menos 100 casos semelhantes;
+- a confiança é moderada ou forte;
+- o valor esperado conservador não é negativo;
+- a partida ainda não possui aposta registrada;
+- existe espaço no máximo semanal de cinco entradas.
+
+A probabilidade conservadora é o menor valor entre a probabilidade do modelo e o limite inferior estatístico da taxa de acerto dos casos semelhantes.
+
+## Controle de versão
+
+- Interface: V28.1.5.
+- API do núcleo isolado: 28.1.2.
+- Modelo treinado: V28.0.
+
+Leia `LEIA_PRIMEIRO_V28_1_5.md` antes do deploy e `RELATORIO_AUDITORIA_V28_1_5.md` para o resultado da revisão.

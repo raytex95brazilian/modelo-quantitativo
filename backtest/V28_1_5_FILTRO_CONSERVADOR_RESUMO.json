@@ -1,0 +1,46 @@
+{
+  "metodo": "Recalculo das previsões fora da amostra com filtro operacional conservador e máximo de cinco entradas semanais",
+  "advertencia": "Recalculo operacional retrospectivo. Os perfis de confiabilidade agregam previsões fora da amostra; portanto, isto não é um novo teste final independente.",
+  "entries": 1059,
+  "weeks": 221,
+  "average_entries_per_week": 4.791855203619909,
+  "wins": 588,
+  "hit_rate": 0.5552407932011332,
+  "profit_units": 134.591,
+  "roi": 0.1270925401322002,
+  "max_drawdown_units": 24.409799999999997,
+  "yearly": [
+    {
+      "Season": 2022,
+      "entries": 306,
+      "wins": 167,
+      "hit_rate": 0.545751633986928,
+      "profit_units": 43.193599999999996,
+      "roi": 0.14115555555555553
+    },
+    {
+      "Season": 2023,
+      "entries": 240,
+      "wins": 143,
+      "hit_rate": 0.5958333333333333,
+      "profit_units": 38.3494,
+      "roi": 0.15978916666666668
+    },
+    {
+      "Season": 2024,
+      "entries": 244,
+      "wins": 137,
+      "hit_rate": 0.5614754098360656,
+      "profit_units": 37.2306,
+      "roi": 0.1525844262295082
+    },
+    {
+      "Season": 2025,
+      "entries": 269,
+      "wins": 141,
+      "hit_rate": 0.5241635687732342,
+      "profit_units": 15.817399999999997,
+      "roi": 0.05880074349442378
+    }
+  ]
+}
