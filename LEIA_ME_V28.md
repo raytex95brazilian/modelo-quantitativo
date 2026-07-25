@@ -1,4 +1,4 @@
-# Tex Statistics V28.1.5.2
+# Tex Statistics V28.1.5.4
 
 Aplicativo Streamlit para análise pré-jogo de futebol em 24 ligas, com retirada da margem do mercado, modelo dinâmico de gols, árvores regularizadas, probabilidade conservadora, carteira limitada, auditoria e liquidação financeira.
 
@@ -36,12 +36,32 @@ A probabilidade conservadora é o menor valor entre a probabilidade do modelo e 
 
 ## Controle de versão
 
-- Interface: V28.1.5.2 — correção dos seletores dependentes de liga e equipes.
+- Interface: V28.1.5.4 — seletores por liga, fragmento reativo e formulários estáveis.
 - API do núcleo isolado: 28.1.2.
 - Modelo treinado: V28.0.
 
 Leia `LEIA_PRIMEIRO_V28_1_5.md` antes do deploy e `RELATORIO_AUDITORIA_V28_1_5.md` para o resultado da revisão.
 
+
+
+## Correção V28.1.5.4
+
+- a configuração da banca/unidade/limite passou para formulário com botão **APLICAR CONFIGURAÇÃO**;
+- a escolha de liga, mandante e visitante roda dentro de `st.fragment`, sem apagar o restante da tela;
+- o confronto é confirmado antes da digitação das cotações;
+- data, horário, casa de apostas, mercados e cotações ficam em `st.form` e são enviados de uma vez;
+- nenhum campo de cotação provoca rerun durante a digitação;
+- o motor preditivo permanece V28.1.2 — Estado Isolado.
+
+
+## Correção V28.1.5.4
+
+- a configuração da banca/unidade/limite passou para formulário com botão **APLICAR CONFIGURAÇÃO**;
+- a escolha de liga, mandante e visitante roda dentro de `st.fragment`, sem apagar o restante da tela;
+- o confronto é confirmado antes da digitação das cotações;
+- data, horário, casa de apostas, mercados e cotações ficam em `st.form` e são enviados de uma vez;
+- nenhum campo de cotação provoca rerun durante a digitação;
+- o motor preditivo permanece V28.1.2 — Estado Isolado.
 
 ## Correção V28.1.5.2
 

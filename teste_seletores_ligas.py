@@ -21,10 +21,16 @@ assert seasons["MEX"] == 2026
 source = (ROOT / "app.py").read_text(encoding="utf-8")
 start = source.index('st.subheader("1. Adicionar partidas")')
 end = source.index('st.subheader("2. Partidas do lote")', start)
-selector_block = source[start:end]
-assert "with st.form" not in selector_block, "Seletores dependentes não podem ficar em st.form."
-assert 'teams_by_code.get(code, [])' in selector_block
-assert 'key=f"home_{form_version}_{code}"' in selector_block
-assert 'key=f"away_{form_version}_{code}_{home}"' in selector_block
+entry_block = source[start:end]
 
-print("TESTE DOS SELETORES DAS 24 LIGAS V28.1.5.2: OK")
+assert "@_fragment" in entry_block, "Seletores devem rerodar somente o fragmento."
+assert 'key=f"draft_league_{form_version}"' in entry_block
+assert 'key=f"draft_home_{form_version}_{code}"' in entry_block
+assert 'key=f"draft_away_{form_version}_{code}_{home}"' in entry_block
+assert 'teams_by_code.get(code, [])' in entry_block
+assert 'CONFIRMAR CONFRONTO E INFORMAR COTAÇÕES' in entry_block
+assert 'with st.form(f"game_form_{form_version}"' in entry_block
+assert entry_block.index('key=f"draft_league_{form_version}"') < entry_block.index('with st.form(f"game_form_{form_version}"')
+assert 'st.form_submit_button(' in entry_block
+
+print("TESTE DOS SELETORES DAS 24 LIGAS V28.1.5.4: OK")

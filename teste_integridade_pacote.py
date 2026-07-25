@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import gzip
+import hashlib
 import json
 from pathlib import Path
 import py_compile
@@ -41,8 +42,16 @@ ast.parse(app_source)
 assert '_v28 = _load_required_module("tex_v28_core_2812")' in app_source
 assert "import tex_v28_core as _v28" not in app_source
 assert 'EXPECTED_CORE_API = "28.1.2"' in app_source
-assert 'INTERFACE_VERSION = "V28.1.5.2"' in app_source
-assert 'value=5, step=1' in app_source
+assert 'INTERFACE_VERSION = "V28.1.5.4"' in app_source
+assert '@_fragment' in app_source
+assert 'with st.form("tex_operational_config_form"' in app_source
+assert 'with st.form(f"game_form_{form_version}"' in app_source
+assert 'CONFIRMAR CONFRONTO E INFORMAR COTAÇÕES' in app_source
+assert '@_fragment' in app_source
+assert 'with st.form("tex_operational_config_form"' in app_source
+assert 'with st.form(f"game_form_{form_version}"' in app_source
+assert 'CONFIRMAR CONFRONTO E INFORMAR COTAÇÕES' in app_source
+assert '"max_entries": 5' in app_source
 for forbidden in (
     "ODDS_VALIDITY_MINUTES",
     "Cotação capturada em",
@@ -86,4 +95,27 @@ for path in ROOT.rglob("*"):
         if path.name != Path(__file__).name:
             assert b"-----BEGIN PRIVATE KEY-----" not in content, path
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.1.5.2: OK")
+manifest_path = ROOT / "MANIFESTO_SHA256.txt"
+manifest_entries = {}
+for line in manifest_path.read_text(encoding="utf-8").splitlines():
+    digest, relative = line.split("  ", 1)
+    manifest_entries[relative] = digest
+
+distributed_files = {
+    path.relative_to(ROOT).as_posix(): path
+    for path in ROOT.rglob("*")
+    if path.is_file()
+    and path.name != "MANIFESTO_SHA256.txt"
+    and path.suffix != ".pyc"
+    and "__pycache__" not in path.parts
+}
+assert set(manifest_entries) == set(distributed_files), (
+    "Manifesto não corresponde aos arquivos distribuídos: "
+    f"faltando={sorted(set(distributed_files) - set(manifest_entries))}, "
+    f"extras={sorted(set(manifest_entries) - set(distributed_files))}"
+)
+for relative, path in distributed_files.items():
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert manifest_entries[relative] == digest, f"SHA-256 divergente: {relative}"
+
+print("TESTE DE INTEGRIDADE DO PACOTE V28.1.5.4: OK")

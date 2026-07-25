@@ -34,8 +34,8 @@ _operacional = _load_required_module("tex_operacional_core")
 EXPECTED_CORE_API = "28.1.2"
 EXPECTED_STORAGE_API = "28.1.5.1"
 EXPECTED_FINANCE_API = "28.1.5.1"
-INTERFACE_VERSION = "V28.1.5.3"
-APP_NAME = "Tex Statistics V28.1.5.3"
+INTERFACE_VERSION = "V28.1.5.4"
+APP_NAME = "Tex Statistics V28.1.5.4"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -168,10 +168,20 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.1.5.3, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "pelo mesmo pacote V28.1.5.4, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
+
+
+# Streamlit 1.37+ oferece st.fragment, que limita a reexecução ao bloco interativo.
+# O fallback experimental mantém compatibilidade com instalações 1.35/1.36.
+_FRAGMENT_DECORATOR = getattr(st, "fragment", getattr(st, "experimental_fragment", None))
+if _FRAGMENT_DECORATOR is None:
+    def _fragment(function):
+        return function
+else:
+    _fragment = _FRAGMENT_DECORATOR
 
 
 def now_br() -> datetime:
@@ -453,11 +463,58 @@ registered_week_counts = contagens_semanais(ledger)
 registered_match_ids = identificadores_partidas_registradas(ledger)
 backtest_summary = load_conservative_backtest_summary()
 
+if "tex_operational_config" not in st.session_state:
+    st.session_state.tex_operational_config = {
+        "bankroll": 1000.0,
+        "unit_percent": 1.0,
+        "max_entries": 5,
+    }
+
 with st.sidebar:
     st.header("Operação")
-    bankroll = st.number_input("Banca informada para a análise (R$)", min_value=0.0, value=1000.0, step=10.0)
-    unit_percent = st.number_input("Unidade fixa (%)", min_value=0.1, max_value=2.0, value=1.0, step=0.1)
-    max_entries = st.number_input("Máximo de entradas por semana", min_value=1, max_value=5, value=5, step=1)
+    current_operational_config = dict(st.session_state.tex_operational_config)
+    with st.form("tex_operational_config_form", clear_on_submit=False):
+        pending_bankroll = st.number_input(
+            "Banca informada para a análise (R$)",
+            min_value=0.0,
+            value=float(current_operational_config.get("bankroll", 1000.0)),
+            step=10.0,
+        )
+        pending_unit_percent = st.number_input(
+            "Unidade fixa (%)",
+            min_value=0.1,
+            max_value=2.0,
+            value=float(current_operational_config.get("unit_percent", 1.0)),
+            step=0.1,
+        )
+        pending_max_entries = st.number_input(
+            "Máximo de entradas por semana",
+            min_value=1,
+            max_value=5,
+            value=int(current_operational_config.get("max_entries", 5)),
+            step=1,
+        )
+        operational_config_submitted = st.form_submit_button(
+            "APLICAR CONFIGURAÇÃO",
+            use_container_width=True,
+        )
+
+    if operational_config_submitted:
+        updated_operational_config = {
+            "bankroll": float(pending_bankroll),
+            "unit_percent": float(pending_unit_percent),
+            "max_entries": int(pending_max_entries),
+        }
+        if updated_operational_config != current_operational_config:
+            st.session_state.tex_operational_config = updated_operational_config
+            invalidate_analysis()
+        current_operational_config = updated_operational_config
+        st.success("Configuração aplicada.")
+
+    bankroll = float(current_operational_config["bankroll"])
+    unit_percent = float(current_operational_config["unit_percent"])
+    max_entries = int(current_operational_config["max_entries"])
+
     st.divider()
     st.caption(f"Fonte: {source}")
     st.caption(f"Partidas históricas: {len(matches):,}".replace(",", "."))
@@ -499,126 +556,264 @@ name_to_code = {name: code for code, name in LEAGUES.items()}
 
 if st.session_state.pop("tex_flash", None):
     st.success(st.session_state.pop("tex_flash_message", "Partida salva."))
-form_version = int(st.session_state.get("tex_form_version", 0))
 
-with st.container(border=True):
-    # Os seletores de liga e equipes não podem ficar dentro de st.form.
-    # Formulários só reenviam valores no submit; assim, a liga mudava visualmente,
-    # mas o Python mantinha o catálogo da liga anterior. Fora do formulário,
-    # cada alteração executa novamente o app e reconstrói as equipes pelo código correto.
-    row_top = st.columns([1.0, 0.8, 1.8])
-    game_date = row_top[0].date_input("Data", value=date.today(), key=f"game_date_{form_version}")
-    game_time = row_top[1].time_input("Horário", value=time(16, 0), key=f"game_time_{form_version}")
-    league_name = row_top[2].selectbox("Liga", league_names, key=f"league_{form_version}")
-    code = name_to_code[league_name]
-    available_teams = list(teams_by_code.get(code, []))
 
-    if not available_teams:
-        st.error(
-            f"Não há equipes disponíveis para {league_name} na base carregada. "
-            "Atualize a base ou verifique o relatório de carregamento."
+@_fragment
+def render_game_entry() -> None:
+    """Entrada em duas etapas, sem reexecutar o aplicativo a cada campo digitado."""
+    form_version = int(st.session_state.get("tex_form_version", 0))
+    draft_key = "tex_confirmed_match"
+    confirmed_match = st.session_state.get(draft_key)
+
+    with st.container(border=True):
+        if not confirmed_match:
+            st.markdown("**Etapa 1 de 2 — escolher o confronto**")
+            st.caption(
+                "Apenas este quadro é atualizado ao trocar liga ou equipe. "
+                "Os demais componentes do aplicativo permanecem estáveis."
+            )
+            selector_row = st.columns([1.8, 1.4, 1.4])
+            league_name = selector_row[0].selectbox(
+                "Liga",
+                league_names,
+                key=f"draft_league_{form_version}",
+            )
+            code = name_to_code[league_name]
+            available_teams = list(teams_by_code.get(code, []))
+
+            if not available_teams:
+                st.error(
+                    f"Não há equipes disponíveis para {league_name} na base carregada. "
+                    "Atualize a base ou verifique o relatório de carregamento."
+                )
+                return
+
+            home = selector_row[1].selectbox(
+                "Mandante",
+                available_teams,
+                key=f"draft_home_{form_version}_{code}",
+            )
+            away_options = [team for team in available_teams if team != home]
+            away = selector_row[2].selectbox(
+                "Visitante",
+                away_options,
+                key=f"draft_away_{form_version}_{code}_{home}",
+            ) if away_options else ""
+
+            season_label = season_by_code.get(code, "")
+            st.caption(
+                f"Catálogo ativo: {league_name} — {len(available_teams)} equipes"
+                + (f" — temporada {season_label}" if season_label != "" else "")
+            )
+
+            if st.button(
+                "CONFIRMAR CONFRONTO E INFORMAR COTAÇÕES",
+                type="primary",
+                use_container_width=True,
+                key=f"confirm_match_{form_version}",
+            ):
+                if not home or not away or home == away:
+                    st.error("Selecione duas equipes diferentes da liga escolhida.")
+                else:
+                    st.session_state[draft_key] = {
+                        "Código da liga": code,
+                        "Liga": league_name,
+                        "Mandante": home,
+                        "Visitante": away,
+                    }
+                    try:
+                        st.rerun(scope="fragment")
+                    except TypeError:
+                        st.rerun()
+            return
+
+        code = str(confirmed_match["Código da liga"])
+        league_name = str(confirmed_match["Liga"])
+        home = str(confirmed_match["Mandante"])
+        away = str(confirmed_match["Visitante"])
+
+        title_col, change_col = st.columns([4, 1])
+        title_col.markdown(
+            f"**Etapa 2 de 2 — {home} x {away}**  \n"
+            f"{league_name}"
         )
-        home = away = ""
-    else:
-        team_row = st.columns(2)
-        home = team_row[0].selectbox(
-            "Mandante",
-            available_teams,
-            key=f"home_{form_version}_{code}",
-        )
-        away_options = [team for team in available_teams if team != home]
-        away = team_row[1].selectbox(
-            "Visitante",
-            away_options,
-            key=f"away_{form_version}_{code}_{home}",
-        ) if away_options else ""
-        season_label = season_by_code.get(code, "")
+        if change_col.button(
+            "ALTERAR CONFRONTO",
+            use_container_width=True,
+            key=f"change_match_{form_version}",
+        ):
+            st.session_state.pop(draft_key, None)
+            try:
+                st.rerun(scope="fragment")
+            except TypeError:
+                st.rerun()
+            return
+
         st.caption(
-            f"Catálogo ativo: {league_name} — {len(available_teams)} equipes"
-            + (f" — temporada {season_label}" if season_label != "" else "")
+            "Os campos abaixo são enviados em um único lote. Digitar data, horário, casa e "
+            "cotações não reexecuta nem apaga o formulário."
         )
 
-    bookmaker = st.text_input("Casa de apostas", value="Pixbet", key=f"bookmaker_{form_version}")
-    st.markdown("**Mercados e cotações**")
+        with st.form(f"game_form_{form_version}", clear_on_submit=False):
+            row_top = st.columns([1.0, 0.8, 1.8])
+            game_date = row_top[0].date_input(
+                "Data",
+                value=date.today(),
+                key=f"game_date_{form_version}",
+            )
+            game_time = row_top[1].time_input(
+                "Horário",
+                value=time(16, 0),
+                key=f"game_time_{form_version}",
+            )
+            bookmaker = row_top[2].text_input(
+                "Casa de apostas",
+                value="Pixbet",
+                key=f"bookmaker_{form_version}",
+            )
 
-    use_1x2 = st.checkbox("Resultado final 1X2", value=True, key=f"use_1x2_{form_version}")
-    if use_1x2:
-        a, b, c = st.columns(3)
-        odd_h = a.number_input("Cotação mandante", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_h_{form_version}")
-        odd_d = b.number_input("Cotação empate", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_d_{form_version}")
-        odd_a = c.number_input("Cotação visitante", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_a_{form_version}")
-    else:
-        odd_h = odd_d = odd_a = 0.0
+            st.markdown("**Mercados e cotações**")
+            st.caption(
+                "Marque os mercados que deseja avaliar. Campos de mercados desmarcados são ignorados."
+            )
 
-    use_ou = st.checkbox("Mais/menos de 2,5 gols", value=True, key=f"use_ou_{form_version}")
-    if use_ou:
-        a, b = st.columns(2)
-        odd_o = a.number_input("Cotação mais de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_o_{form_version}")
-        odd_u = b.number_input("Cotação menos de 2,5", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_u_{form_version}")
-    else:
-        odd_o = odd_u = 0.0
+            use_1x2 = st.checkbox(
+                "Resultado final 1X2",
+                value=True,
+                key=f"use_1x2_{form_version}",
+            )
+            a, b, c = st.columns(3)
+            odd_h = a.number_input(
+                "Cotação mandante",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"odd_h_{form_version}",
+            )
+            odd_d = b.number_input(
+                "Cotação empate",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"odd_d_{form_version}",
+            )
+            odd_a = c.number_input(
+                "Cotação visitante",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"odd_a_{form_version}",
+            )
 
-    use_btts = st.checkbox("Ambas marcam — análise complementar", value=True, key=f"use_btts_{form_version}")
-    if use_btts:
-        a, b = st.columns(2)
-        odd_by = a.number_input("Cotação ambas — Sim", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_by_{form_version}")
-        odd_bn = b.number_input("Cotação ambas — Não", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"odd_bn_{form_version}")
-    else:
-        odd_by = odd_bn = 0.0
+            use_ou = st.checkbox(
+                "Mais/menos de 2,5 gols",
+                value=True,
+                key=f"use_ou_{form_version}",
+            )
+            a, b = st.columns(2)
+            odd_o = a.number_input(
+                "Cotação mais de 2,5",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"odd_o_{form_version}",
+            )
+            odd_u = b.number_input(
+                "Cotação menos de 2,5",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"odd_u_{form_version}",
+            )
 
-    submitted = st.button(
-        "ADICIONAR OU ATUALIZAR PARTIDA",
-        type="primary",
-        use_container_width=True,
-        key=f"submit_game_{form_version}",
-    )
-    if submitted:
+            use_btts = st.checkbox(
+                "Ambas marcam — análise complementar",
+                value=True,
+                key=f"use_btts_{form_version}",
+            )
+            a, b = st.columns(2)
+            odd_by = a.number_input(
+                "Cotação ambas — Sim",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"odd_by_{form_version}",
+            )
+            odd_bn = b.number_input(
+                "Cotação ambas — Não",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"odd_bn_{form_version}",
+            )
+
+            submitted = st.form_submit_button(
+                "ADICIONAR OU ATUALIZAR PARTIDA",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if not submitted:
+            return
+
         game_start = datetime.combine(game_date, game_time, tzinfo=FUSO)
-        if not home or not away or home == away:
-            st.error("Selecione duas equipes diferentes da liga escolhida.")
-        elif game_start <= now_br():
+        if game_start <= now_br():
             st.error(
                 "A partida precisa estar programada para um horário futuro. "
                 "O aplicativo é exclusivamente pré-jogo."
             )
-        elif not any((use_1x2, use_ou, use_btts)):
+            return
+        if not any((use_1x2, use_ou, use_btts)):
             st.error("Ative ao menos um mercado.")
-        else:
-            try:
-                if use_1x2:
-                    validate_market_odds("1X2", [odd_h, odd_d, odd_a])
-                if use_ou:
-                    validate_market_odds("OU25", [odd_o, odd_u])
-                if use_btts:
-                    validate_market_odds("BTTS", [odd_by, odd_bn])
-            except ValueError as exc:
-                st.error(str(exc))
-            else:
-                game = {
-                    "ID": uuid4().hex[:12],
-                    "Data": game_date.isoformat(),
-                    "Hora": game_time.strftime("%H:%M"),
-                    "Código da liga": code,
-                    "Liga": league_name,
-                    "Mandante": home,
-                    "Visitante": away,
-                    "Casa de apostas": bookmaker.strip() or "Não informada",
-                    "Odd mandante": float(odd_h) if use_1x2 else None,
-                    "Odd empate": float(odd_d) if use_1x2 else None,
-                    "Odd visitante": float(odd_a) if use_1x2 else None,
-                    "Odd mais de 2,5": float(odd_o) if use_ou else None,
-                    "Odd menos de 2,5": float(odd_u) if use_ou else None,
-                    "Odd ambas marcam — Sim": float(odd_by) if use_btts else None,
-                    "Odd ambas marcam — Não": float(odd_bn) if use_btts else None,
-                }
-                action = upsert_game(game)
-                st.session_state.tex_form_version = form_version + 1
-                st.session_state.tex_flash = True
-                st.session_state.tex_flash_message = (
-                    f"Partida {action}: {home} x {away}. A análise anterior foi invalidada e "
-                    "os campos de cotações foram reiniciados para impedir reaproveitamento entre jogos."
-                )
-                st.rerun()
+            return
+
+        try:
+            if use_1x2:
+                validate_market_odds("1X2", [odd_h, odd_d, odd_a])
+            if use_ou:
+                validate_market_odds("OU25", [odd_o, odd_u])
+            if use_btts:
+                validate_market_odds("BTTS", [odd_by, odd_bn])
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+
+        game = {
+            "ID": uuid4().hex[:12],
+            "Data": game_date.isoformat(),
+            "Hora": game_time.strftime("%H:%M"),
+            "Código da liga": code,
+            "Liga": league_name,
+            "Mandante": home,
+            "Visitante": away,
+            "Casa de apostas": bookmaker.strip() or "Não informada",
+            "Odd mandante": float(odd_h) if use_1x2 else None,
+            "Odd empate": float(odd_d) if use_1x2 else None,
+            "Odd visitante": float(odd_a) if use_1x2 else None,
+            "Odd mais de 2,5": float(odd_o) if use_ou else None,
+            "Odd menos de 2,5": float(odd_u) if use_ou else None,
+            "Odd ambas marcam — Sim": float(odd_by) if use_btts else None,
+            "Odd ambas marcam — Não": float(odd_bn) if use_btts else None,
+        }
+        action = upsert_game(game)
+        st.session_state.tex_form_version = form_version + 1
+        st.session_state.pop(draft_key, None)
+        st.session_state.tex_flash = True
+        st.session_state.tex_flash_message = (
+            f"Partida {action}: {home} x {away}. A análise anterior foi invalidada e "
+            "os campos de cotações foram reiniciados para impedir reaproveitamento entre jogos."
+        )
+        st.rerun()
+
+
+render_game_entry()
 
 st.subheader("2. Partidas do lote")
 if not games():
