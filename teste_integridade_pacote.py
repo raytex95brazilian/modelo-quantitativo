@@ -38,14 +38,13 @@ for path in ROOT.glob("*.py"):
 
 app_source = (ROOT / "app.py").read_text(encoding="utf-8")
 ast.parse(app_source)
-assert "import tex_v28_core_2812 as _v28" in app_source
+assert '_v28 = _load_required_module("tex_v28_core_2812")' in app_source
 assert "import tex_v28_core as _v28" not in app_source
 assert 'EXPECTED_CORE_API = "28.1.2"' in app_source
-assert 'INTERFACE_VERSION = "V28.1.5"' in app_source
+assert 'INTERFACE_VERSION = "V28.1.5.1"' in app_source
 assert 'value=5, step=1' in app_source
 for forbidden in (
     "ODDS_VALIDITY_MINUTES",
-    "FINANCE_API_VERSION",
     "Cotação capturada em",
     "Validade da cotação",
     "CLV",
@@ -87,4 +86,4 @@ for path in ROOT.rglob("*"):
         if path.name != Path(__file__).name:
             assert b"-----BEGIN PRIVATE KEY-----" not in content, path
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.1.5: OK")
+print("TESTE DE INTEGRIDADE DO PACOTE V28.1.5.1: OK")

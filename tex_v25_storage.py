@@ -7,6 +7,8 @@ import json
 
 import pandas as pd
 
+STORAGE_API_VERSION = "28.1.5.1"
+
 from tex_v28_finance import COLUNAS_APOSTAS, liquidar_registro
 
 # Planilha histórica que já era usada pelas versões anteriores.

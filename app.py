@@ -9,55 +9,51 @@ import json
 import pandas as pd
 import streamlit as st
 
+_MODULE_IMPORT_ERRORS: list[str] = []
+
+
+def _load_required_module(name: str):
+    try:
+        return __import__(name)
+    except Exception as exc:
+        _MODULE_IMPORT_ERRORS.append(f"{name}: {type(exc).__name__}: {exc}")
+        return None
+
+
 try:
     import tex_v25_atualizacao as _atualizacao
 except Exception:
     _atualizacao = None
 
-from tex_v25_core import LEAGUES, normalize_zip
-from tex_v25_storage import (
-    COLUNAS_ANALISES,
-    COLUNAS_COTACOES,
-    carregar_apostas,
-    google_configurado,
-    identificadores_analises,
-    identificadores_apostas,
-    identificadores_cotacoes,
-    liquidar_aposta,
-    salvar_analises,
-    salvar_apostas,
-    salvar_cotacoes,
-    url_planilha_configurada,
-)
-from tex_v28_finance import (
-    COLUNAS_APOSTAS,
-    atualizar_registro,
-    carregar_ledger_local,
-    contagens_semanais,
-    criar_registros_apostas,
-    identificador_registro,
-    identificadores_partidas_registradas,
-    liquidar_registro,
-    mesclar_registros,
-    normalizar_ledger,
-    reconciliar_ledgers,
-    resumo_financeiro,
-    salvar_ledger_local,
-)
-
-# Importação por módulo, em vez de uma lista rígida de símbolos.
-# Isso evita o ImportError genérico quando app.py e o núcleo ficam em versões
-# diferentes durante um deploy parcial do GitHub/Streamlit.
-import tex_v28_core_2812 as _v28
-import tex_operacional_core as _operacional
+_v25 = _load_required_module("tex_v25_core")
+_storage = _load_required_module("tex_v25_storage")
+_finance = _load_required_module("tex_v28_finance")
+_v28 = _load_required_module("tex_v28_core_2812")
+_operacional = _load_required_module("tex_operacional_core")
 
 EXPECTED_CORE_API = "28.1.2"
-INTERFACE_VERSION = "V28.1.5"
-APP_NAME = "Tex Statistics V28.1.5 — Estado Isolado, Operação e Liquidação"
+EXPECTED_STORAGE_API = "28.1.5.1"
+EXPECTED_FINANCE_API = "28.1.5.1"
+INTERFACE_VERSION = "V28.1.5.1"
+APP_NAME = "Tex Statistics V28.1.5.1 — Hotfix de Deploy e Compatibilidade"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
 ENGINE_VERSION = getattr(_v28, "ENGINE_VERSION", "V28.1.2-estado-isolado")
 
+_REQUIRED_V25 = ("LEAGUES", "normalize_zip")
+_REQUIRED_STORAGE = (
+    "COLUNAS_ANALISES", "COLUNAS_COTACOES", "carregar_apostas",
+    "google_configurado", "identificadores_analises", "identificadores_apostas",
+    "identificadores_cotacoes", "liquidar_aposta", "salvar_analises",
+    "salvar_apostas", "salvar_cotacoes", "url_planilha_configurada",
+)
+_REQUIRED_FINANCE = (
+    "COLUNAS_APOSTAS", "atualizar_registro", "carregar_ledger_local",
+    "contagens_semanais", "criar_registros_apostas", "identificador_registro",
+    "identificadores_partidas_registradas", "liquidar_registro", "mesclar_registros",
+    "normalizar_ledger", "reconciliar_ledgers", "resumo_financeiro",
+    "salvar_ledger_local",
+)
 _REQUIRED_V28 = (
     "analyze_games", "build_ai_summary", "display_frame",
     "load_v28_model", "lot_fingerprint", "validate_market_odds",
@@ -66,17 +62,63 @@ _REQUIRED_OPERACIONAL = (
     "INPUT_COLUMNS", "enrich_with_standings", "latest_team_catalog",
     "parse_odd", "standings_context",
 )
-_IMPORT_PROBLEMS = [f"tex_v28_core_2812.{name}" for name in _REQUIRED_V28 if not hasattr(_v28, name)]
-_IMPORT_PROBLEMS += [
-    f"tex_operacional_core.{name}" for name in _REQUIRED_OPERACIONAL
-    if not hasattr(_operacional, name)
-]
-if getattr(_v28, "CORE_API_VERSION", None) != EXPECTED_CORE_API:
+
+_IMPORT_PROBLEMS = list(_MODULE_IMPORT_ERRORS)
+for module_name, module, required in (
+    ("tex_v25_core", _v25, _REQUIRED_V25),
+    ("tex_v25_storage", _storage, _REQUIRED_STORAGE),
+    ("tex_v28_finance", _finance, _REQUIRED_FINANCE),
+    ("tex_v28_core_2812", _v28, _REQUIRED_V28),
+    ("tex_operacional_core", _operacional, _REQUIRED_OPERACIONAL),
+):
+    if module is not None:
+        _IMPORT_PROBLEMS.extend(
+            f"{module_name}.{name} ausente" for name in required if not hasattr(module, name)
+        )
+
+if _v28 is not None and getattr(_v28, "CORE_API_VERSION", None) != EXPECTED_CORE_API:
     _IMPORT_PROBLEMS.append(
         f"CORE_API_VERSION esperado {EXPECTED_CORE_API}; encontrado "
         f"{getattr(_v28, 'CORE_API_VERSION', 'ausente')}"
     )
+if _storage is not None and getattr(_storage, "STORAGE_API_VERSION", None) != EXPECTED_STORAGE_API:
+    _IMPORT_PROBLEMS.append(
+        f"STORAGE_API_VERSION esperado {EXPECTED_STORAGE_API}; encontrado "
+        f"{getattr(_storage, 'STORAGE_API_VERSION', 'ausente')}"
+    )
+if _finance is not None and getattr(_finance, "FINANCE_API_VERSION", None) != EXPECTED_FINANCE_API:
+    _IMPORT_PROBLEMS.append(
+        f"FINANCE_API_VERSION esperado {EXPECTED_FINANCE_API}; encontrado "
+        f"{getattr(_finance, 'FINANCE_API_VERSION', 'ausente')}"
+    )
 
+LEAGUES = getattr(_v25, "LEAGUES", {})
+normalize_zip = getattr(_v25, "normalize_zip", None)
+COLUNAS_ANALISES = getattr(_storage, "COLUNAS_ANALISES", [])
+COLUNAS_COTACOES = getattr(_storage, "COLUNAS_COTACOES", [])
+carregar_apostas = getattr(_storage, "carregar_apostas", None)
+google_configurado = getattr(_storage, "google_configurado", None)
+identificadores_analises = getattr(_storage, "identificadores_analises", None)
+identificadores_apostas = getattr(_storage, "identificadores_apostas", None)
+identificadores_cotacoes = getattr(_storage, "identificadores_cotacoes", None)
+liquidar_aposta = getattr(_storage, "liquidar_aposta", None)
+salvar_analises = getattr(_storage, "salvar_analises", None)
+salvar_apostas = getattr(_storage, "salvar_apostas", None)
+salvar_cotacoes = getattr(_storage, "salvar_cotacoes", None)
+url_planilha_configurada = getattr(_storage, "url_planilha_configurada", None)
+COLUNAS_APOSTAS = getattr(_finance, "COLUNAS_APOSTAS", [])
+atualizar_registro = getattr(_finance, "atualizar_registro", None)
+carregar_ledger_local = getattr(_finance, "carregar_ledger_local", None)
+contagens_semanais = getattr(_finance, "contagens_semanais", None)
+criar_registros_apostas = getattr(_finance, "criar_registros_apostas", None)
+identificador_registro = getattr(_finance, "identificador_registro", None)
+identificadores_partidas_registradas = getattr(_finance, "identificadores_partidas_registradas", None)
+liquidar_registro = getattr(_finance, "liquidar_registro", None)
+mesclar_registros = getattr(_finance, "mesclar_registros", None)
+normalizar_ledger = getattr(_finance, "normalizar_ledger", None)
+reconciliar_ledgers = getattr(_finance, "reconciliar_ledgers", None)
+resumo_financeiro = getattr(_finance, "resumo_financeiro", None)
+salvar_ledger_local = getattr(_finance, "salvar_ledger_local", None)
 analyze_games = getattr(_v28, "analyze_games", None)
 build_ai_summary = getattr(_v28, "build_ai_summary", None)
 display_frame = getattr(_v28, "display_frame", None)
@@ -102,8 +144,9 @@ if _IMPORT_PROBLEMS:
     st.error("Arquivos da V28 desencontrados no deploy.")
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
-        "Substitua juntos app.py, tex_v28_core_2812.py, tex_v28_core.py, "
-        "tex_operacional_core.py e tex_v25_core.py pelo mesmo pacote e faça novo deploy."
+        "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
+        "pelo mesmo pacote V28.1.5.1, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
 
