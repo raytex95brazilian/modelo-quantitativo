@@ -32,10 +32,10 @@ _v28 = _load_required_module("tex_v28_core_2812")
 _operacional = _load_required_module("tex_operacional_core")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.1.5.10"
-EXPECTED_FINANCE_API = "28.1.5.10"
-INTERFACE_VERSION = "V28.1.5.10"
-APP_NAME = "Tex Statistics V28.1.5.10"
+EXPECTED_STORAGE_API = "28.1.5.11"
+EXPECTED_FINANCE_API = "28.1.5.11"
+INTERFACE_VERSION = "V28.1.5.11"
+APP_NAME = "Tex Statistics V28.1.5.11"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -175,7 +175,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.1.5.10, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "pelo mesmo pacote V28.1.5.11, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()

@@ -1,4 +1,4 @@
-# Tex Statistics V28.1.5.10
+# Tex Statistics V28.1.5.11
 
 Interface operacional sobre o motor V28.1.2 — Estado Isolado.
 

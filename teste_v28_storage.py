@@ -109,15 +109,15 @@ games = [
     }
 ]
 snapshot = storage.salvar_lote_pendente(
-    secrets, games, interface_version="V28.1.5.10"
+    secrets, games, interface_version="V28.1.5.11"
 )
 assert snapshot["Quantidade de partidas"] == 1
 restored = storage.carregar_lote_pendente(secrets)
 assert restored["Jogos"] == games
-assert restored["Versão da interface"] == "V28.1.5.10"
+assert restored["Versão da interface"] == "V28.1.5.11"
 
 # Atualizar o lote sobrescreve o snapshot atual em vez de depender da sessão.
-storage.salvar_lote_pendente(secrets, [], interface_version="V28.1.5.10")
+storage.salvar_lote_pendente(secrets, [], interface_version="V28.1.5.11")
 restored_empty = storage.carregar_lote_pendente(secrets)
 assert restored_empty["Jogos"] == []
 

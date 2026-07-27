@@ -59,4 +59,4 @@ assert 'with st.form("tex_operational_config_form"' in sidebar
 assert 'APLICAR CONFIGURAÇÃO' in sidebar
 
 assert 'streamlit>=1.37,<2.0' in requirements
-print("TESTE DE USABILIDADE E ESTABILIDADE V28.1.5.10: OK")
+print("TESTE DE USABILIDADE E ESTABILIDADE V28.1.5.11: OK")

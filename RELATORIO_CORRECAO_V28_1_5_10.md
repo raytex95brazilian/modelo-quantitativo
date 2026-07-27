@@ -1,4 +1,4 @@
-# Relatório de correção — Tex Statistics V28.1.5.10
+# Relatório de correção — Tex Statistics V28.1.5.11
 
 ## Defeitos confirmados na V28.1.5.9
 
@@ -6,7 +6,7 @@
 2. Quando `spreadsheet_id` não estava presente ou era lido com outra chave, o armazenamento usava silenciosamente um ID antigo embutido no código. Assim, o app podia informar sucesso enquanto o usuário conferia outra planilha.
 3. O código considerava o retorno do `append_rows` suficiente. Não relia a linha para confirmar ID da partida, confronto e cotações.
 
-## Correções da V28.1.5.10
+## Correções da V28.1.5.11
 
 - Removido o fallback silencioso para a planilha antiga.
 - `spreadsheet_id` ou `spreadsheet_url` tornou-se obrigatório nos Secrets.

@@ -35,4 +35,4 @@ assert 'with st.form(f"game_form_{form_version}"' in entry_block
 assert entry_block.index('def render_match_selectors') < entry_block.index('with st.form(f"game_form_{form_version}"')
 assert 'st.form_submit_button(' in entry_block
 
-print("TESTE DOS SELETORES DAS 24 LIGAS V28.1.5.10: OK")
+print("TESTE DOS SELETORES DAS 24 LIGAS V28.1.5.11: OK")

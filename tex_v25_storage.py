@@ -9,7 +9,7 @@ import re
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.1.5.10"
+STORAGE_API_VERSION = "28.1.5.11"
 
 from tex_v28_finance import COLUNAS_APOSTAS, liquidar_registro
 
@@ -31,6 +31,29 @@ _ABAS_GOOGLE: dict[tuple[str, str, str], Any] = {}
 _CHAVES_GRAVADAS_NO_PROCESSO: dict[tuple[str, str, str], set[tuple[str, ...]]] = {}
 _CABECALHOS_SINCRONIZADOS: set[tuple[str, str, str]] = set()
 _CABECALHOS_ATUAIS: dict[tuple[str, str, str], list[str]] = {}
+_FORMATOS_NUMERICOS_SINCRONIZADOS: set[tuple[str, str, str]] = set()
+
+# Colunas que precisam permanecer numéricas no Google Sheets. Algumas planilhas
+# antigas carregavam formatação de data nessas posições; nesse caso, valores
+# como 3.44 eram exibidos como 02.01 e 1.80 como 31.12.
+COLUNAS_NUMERICAS_PLANILHA = {
+    "Cotação", "Probabilidade implícita bruta %", "Margem do mercado %",
+    "Probabilidade ajustada sem margem %", "Banca no momento",
+    "Probabilidade operacional %", "Probabilidade Poisson %",
+    "Probabilidade empírica %", "Probabilidade de mercado ajustada %",
+    "Cotação justa", "Valor esperado %", "Gols projetados casa",
+    "Gols projetados fora", "Gols projetados total", "Chance mandante marcar %",
+    "Chance visitante marcar %", "Estabilidade", "Entrada %",
+    "Probabilidade mínima exigida %", "Diferença modelo–mercado (p.p.)",
+    "Retorno histórico %", "Pontos por jogo do mandante",
+    "Pontos por jogo do visitante", "Lucro em unidades",
+    "Probabilidade conservadora %", "Valor esperado do modelo %",
+    "Valor esperado conservador %", "Limite conservador da faixa histórica %",
+    "Odd mandante", "Odd empate", "Odd visitante", "Odd mais de 2,5",
+    "Odd menos de 2,5", "Odd ambas marcam — Sim", "Odd ambas marcam — Não",
+    "Entrada (R$)", "Lucro ou prejuízo (R$)", "Banca antes (R$)",
+    "Banca depois (R$)",
+}
 
 # Mantém a estrutura histórica da planilha antiga e apenas acrescenta campos novos à direita.
 COLUNAS_COTACOES = [
@@ -116,7 +139,7 @@ def configuracao_google(secrets: Any) -> dict[str, Any]:
 
     Versões anteriores podiam usar PLANILHA_ANTIGA_ID como fallback. Isso
     permitia uma gravação aparentemente bem-sucedida em outra planilha. A partir
-    da V28.1.5.10, o ID/URL precisa estar declarado nos Secrets.
+    da V28.1.5.11, o ID/URL precisa estar declarado nos Secrets.
     """
     antigo = _dict_seguro(getattr(secrets, "get", lambda *_: {}) ("google_sheets", {}))
     novo = _dict_seguro(getattr(secrets, "get", lambda *_: {}) ("google_sheet", {}))
@@ -211,8 +234,8 @@ def _abrir_planilha(secrets: Any):
     cfg = configuracao_google(secrets)
     if not cfg["configurado"]:
         raise RuntimeError(
-            "A conta de serviço do Google não foi encontrada nos segredos do Streamlit. "
-            "O identificador da planilha antiga já está configurado no aplicativo."
+            "O Google Sheets não está configurado. Informe spreadsheet_id ou spreadsheet_url "
+            "e as credenciais da conta de serviço nos Secrets do Streamlit."
         )
     chave = (cfg["spreadsheet_id"], cfg["client_email"])
     if chave not in _PLANILHAS_GOOGLE:
@@ -226,6 +249,71 @@ def _letra_coluna(numero: int) -> str:
         numero, resto = divmod(numero - 1, 26)
         texto = chr(65 + resto) + texto
     return texto
+
+
+def _ler_intervalo_sem_formatacao(aba: Any, intervalo: str) -> list[list[Any]]:
+    """Lê valores brutos, ignorando a máscara visual da célula.
+
+    O Google Sheets pode exibir um número como data quando a coluna herdou
+    formatação antiga. A validação deve comparar o valor armazenado, não o texto
+    formatado mostrado na grade.
+    """
+    getter = getattr(aba, "get", None)
+    if callable(getter):
+        try:
+            valores = getter(
+                intervalo,
+                value_render_option="UNFORMATTED_VALUE",
+                date_time_render_option="SERIAL_NUMBER",
+            )
+        except TypeError:
+            valores = getter(intervalo)
+        return [list(linha) for linha in (valores or [])]
+    return []
+
+
+def _ler_linha_sem_formatacao(aba: Any, numero_linha: int, largura: int) -> list[Any]:
+    ultima = _letra_coluna(max(1, largura))
+    valores = _ler_intervalo_sem_formatacao(aba, f"A{numero_linha}:{ultima}{numero_linha}")
+    if valores:
+        return list(valores[0])
+    return list(aba.row_values(numero_linha))
+
+
+def _aplicar_formato_numerico(aba: Any, cabecalho: list[str]) -> None:
+    """Remove formatação de data herdada das colunas de odds/probabilidades.
+
+    A operação é idempotente e executada uma única vez por aba/processo. Falhas
+    de formatação não impedem o append; a leitura bruta ainda garante a
+    conferência correta.
+    """
+    if not cabecalho:
+        return
+    row_count = max(int(getattr(aba, "row_count", 20000) or 20000), 2)
+    formatos: list[dict[str, Any]] = []
+    for indice, nome in enumerate(cabecalho, start=1):
+        if nome not in COLUNAS_NUMERICAS_PLANILHA:
+            continue
+        letra = _letra_coluna(indice)
+        formatos.append({
+            "range": f"{letra}2:{letra}{row_count}",
+            "format": {"numberFormat": {"type": "NUMBER", "pattern": "0.00"}},
+        })
+    if not formatos:
+        return
+    try:
+        batch = getattr(aba, "batch_format", None)
+        if callable(batch):
+            batch(formatos)
+            return
+        formatter = getattr(aba, "format", None)
+        if callable(formatter):
+            for item in formatos:
+                formatter(item["range"], item["format"])
+    except Exception:
+        # A persistência não deve falhar só porque a API recusou uma alteração
+        # visual. A conferência usa UNFORMATTED_VALUE e continuará correta.
+        return
 
 
 def _obter_aba_cacheada(secrets: Any, titulo: str, colunas: list[str]):
@@ -268,6 +356,10 @@ def _obter_aba_cacheada(secrets: Any, titulo: str, colunas: list[str]):
         _CABECALHOS_ATUAIS[chave] = list(cabecalho)
         _CABECALHOS_SINCRONIZADOS.add(chave)
 
+    if chave not in _FORMATOS_NUMERICOS_SINCRONIZADOS:
+        _aplicar_formato_numerico(aba, _CABECALHOS_ATUAIS.get(chave, list(colunas)))
+        _FORMATOS_NUMERICOS_SINCRONIZADOS.add(chave)
+
     _ABAS_GOOGLE[chave] = aba
     return aba
 
@@ -296,7 +388,7 @@ def _acrescentar_sem_leitura(
 ) -> int:
     """Acrescenta, relê o intervalo gravado e só então confirma sucesso.
 
-    O nome foi mantido por compatibilidade, mas a V28.1.5.10 deliberadamente
+    O nome foi mantido por compatibilidade, mas a V28.1.5.11 deliberadamente
     faz uma leitura curta de verificação após cada append. Um HTTP 200 sem a
     linha correta na planilha não é considerado salvamento.
     """
@@ -324,6 +416,30 @@ def _acrescentar_sem_leitura(
     aba = _obter_aba_cacheada(secrets, titulo, colunas)
     worksheet_key = (cfg["spreadsheet_id"], cfg["client_email"], str(titulo))
     cabecalho_real = _CABECALHOS_ATUAIS.get(worksheet_key, list(colunas))
+
+    # Deduplicação remota por identificador. Isso evita repetir linhas que já
+    # foram anexadas pelo Google quando uma versão anterior acusou falso erro
+    # de conferência por causa da máscara de data. Lê apenas a coluna do ID,
+    # não a aba inteira.
+    if campos_chave and campos_chave[0] in cabecalho_real:
+        coluna_id = cabecalho_real.index(campos_chave[0]) + 1
+        ids_remotos = {
+            str(valor).strip()
+            for valor in list(aba.col_values(coluna_id))[1:]
+            if str(valor).strip()
+        }
+        filtradas: list[dict[str, Any]] = []
+        filtradas_chaves: list[tuple[str, ...]] = []
+        for registro, chave in zip(novas, novas_chaves):
+            if str(registro.get(campos_chave[0], "")).strip() in ids_remotos:
+                conhecidas.add(chave)
+                continue
+            filtradas.append(registro)
+            filtradas_chaves.append(chave)
+        novas, novas_chaves = filtradas, filtradas_chaves
+        if not novas:
+            return 0
+
     linhas = [[registro.get(coluna, "") for coluna in cabecalho_real] for registro in novas]
     resposta = aba.append_rows(linhas, value_input_option="RAW")
 
@@ -335,9 +451,9 @@ def _acrescentar_sem_leitura(
             or ""
         )
     valores_lidos: list[list[Any]] = []
-    if intervalo and "!" in intervalo and callable(getattr(aba, "get", None)):
+    if intervalo and "!" in intervalo:
         a1 = intervalo.split("!", 1)[1]
-        valores_lidos = [list(row) for row in aba.get(a1)]
+        valores_lidos = _ler_intervalo_sem_formatacao(aba, a1)
 
     # Fallback controlado para mocks ou respostas sem updatedRange: localiza cada
     # chave na planilha e lê apenas as linhas correspondentes.
@@ -359,7 +475,7 @@ def _acrescentar_sem_leitura(
                 raise RuntimeError(
                     f"O registro {alvo!r} não foi encontrado em {titulo!r} após o append."
                 )
-            valores_lidos.append(list(aba.row_values(linha_numero)))
+            valores_lidos.append(_ler_linha_sem_formatacao(aba, linha_numero, len(cabecalho_real)))
 
     divergencias: list[str] = []
     for indice, (esperado, valores) in enumerate(zip(novas, valores_lidos), start=1):
@@ -445,7 +561,7 @@ def salvar_cotacoes(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
         cfg["worksheet_catalogo"],
         COLUNAS_COTACOES,
         registros,
-        ["ID Coleta", "Mercado"],
+        ["ID Coleta"],
     )
 
 
@@ -462,13 +578,22 @@ def salvar_analises(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
         cfg["worksheet_historico"],
         COLUNAS_ANALISES,
         registros,
-        ["ID Análise", "Mercado"],
+        ["ID Análise"],
     )
 
 
 def _carregar_aba(secrets: Any, titulo: str, colunas: list[str]) -> pd.DataFrame:
     aba, cabecalho = _garantir_aba_para_leitura(secrets, titulo, colunas)
-    valores = aba.get_all_values()
+    valores = []
+    try:
+        getter_all = getattr(aba, "get_all_values", None)
+        if callable(getter_all):
+            try:
+                valores = getter_all(value_render_option="UNFORMATTED_VALUE")
+            except TypeError:
+                valores = getter_all()
+    except Exception:
+        valores = []
     if len(valores) <= 1:
         return pd.DataFrame(columns=cabecalho)
     largura = max(len(cabecalho), max(len(linha) for linha in valores[1:]))
@@ -561,7 +686,7 @@ def _ler_linha_por_id(
 ) -> tuple[int, list[Any]]:
     """Lê de volta exatamente a linha gravada; não confia só no HTTP 200."""
     if linha_sugerida and linha_sugerida >= 2:
-        valores = list(aba.row_values(linha_sugerida))
+        valores = _ler_linha_sem_formatacao(aba, linha_sugerida, len(cabecalho))
         if coluna_id in cabecalho:
             idx = cabecalho.index(coluna_id)
             if idx < len(valores) and str(valores[idx]).strip() == str(valor_id).strip():
@@ -574,7 +699,7 @@ def _ler_linha_por_id(
     for posicao in range(len(valores_id) - 1, 0, -1):
         if str(valores_id[posicao]).strip() == str(valor_id).strip():
             numero_linha = posicao + 1
-            return numero_linha, list(aba.row_values(numero_linha))
+            return numero_linha, _ler_linha_sem_formatacao(aba, numero_linha, len(cabecalho))
     raise RuntimeError(
         f"A API respondeu ao append, mas o ID {valor_id!r} não foi encontrado na aba após a gravação."
     )
@@ -590,7 +715,7 @@ def registrar_evento_lote(
 ) -> dict[str, Any]:
     """Grava e relê uma ação do lote antes de confirmar sucesso ao app.
 
-    A V28.1.5.10 apenas confiava no retorno do append. A partir da V28.1.5.10,
+    A V28.1.5.11 apenas confiava no retorno do append. A partir da V28.1.5.11,
     a linha é lida novamente e os identificadores e todas as cotações são
     comparados campo a campo. O formulário só pode ser limpo depois disso.
     """

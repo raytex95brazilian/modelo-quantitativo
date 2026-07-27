@@ -79,7 +79,7 @@ def reset(spreadsheet: FakeSpreadsheet):
     storage._abrir_planilha = lambda secrets: spreadsheet
 
 
-# Sem destino explícito, a V28.1.5.10 deve bloquear; não pode usar planilha legada oculta.
+# Sem destino explícito, a V28.1.5.11 deve bloquear; não pode usar planilha legada oculta.
 missing_destination = {
     "gcp_service_account": {"client_email": "teste@example.com", "private_key": "fake"},
 }
@@ -115,7 +115,7 @@ confirmation = storage.registrar_evento_lote(
     secrets,
     tipo_evento="UPSERT",
     jogo=game,
-    interface_version="V28.1.5.10",
+    interface_version="V28.1.5.11",
 )
 assert confirmation["Verificação"] == "GRAVADO E RELIDO"
 assert confirmation["Aba"] == "entrada_jogos"
@@ -131,11 +131,11 @@ try:
         secrets,
         tipo_evento="UPSERT",
         jogo=game,
-        interface_version="V28.1.5.10",
+        interface_version="V28.1.5.11",
     )
 except RuntimeError as exc:
     assert "Odd mandante" in str(exc)
 else:
     raise AssertionError("A divergência de cotação deveria ter bloqueado a confirmação.")
 
-print("TESTE DE DESTINO EXPLÍCITO E LEITURA PÓS-GRAVAÇÃO V28.1.5.10: OK")
+print("TESTE DE DESTINO EXPLÍCITO E LEITURA PÓS-GRAVAÇÃO V28.1.5.11: OK")
