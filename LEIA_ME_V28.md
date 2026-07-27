@@ -1,25 +1,20 @@
-# Tex Statistics V28.1.5.9
+# Tex Statistics V28.1.5.10
 
-Interface operacional sobre o motor preditivo V28.1.2 — Estado Isolado.
+Interface operacional sobre o motor V28.1.2 — Estado Isolado.
 
-## Decisão fechada
+## Persistência
 
-A cotação é informada manualmente uma única vez. O resultado do lote é final para aqueles valores: **OPERAR**, **NÃO SELECIONADA**, **DESCARTAR**, **AMOSTRA INSUFICIENTE**, **FORA DA FAIXA** ou **EXPERIMENTAL**.
+Cada partida é gravada na aba `entrada_jogos` antes de entrar no lote da tela. O app relê a linha e confere todas as cotações. Sem confirmação, o formulário não é apagado.
 
-Não existe orientação para aguardar mudança de cotação. Indicadores de cotação futura foram retirados da tela, das tabelas principais e da Análise para IA.
+Depois de **Analisar todo o lote**, as linhas de `catalogo_odds` e `historico_analises` também são gravadas com leitura de conferência.
 
-## Carteira semanal
+A planilha de destino deve ser declarada explicitamente nos Secrets; não existe fallback silencioso.
 
-- meta de cinco entradas;
-- no máximo uma seleção por partida;
-- faixa principal com EV conservador não negativo e unidade cheia;
-- complemento até o piso rígido de -15% com meia unidade;
-- Ambas Marcam permanece experimental e não entra na carteira validada.
+## Interface
 
-O backtest da política de seleção é o mesmo da V28.1.5.6, pois esta revisão altera a decisão e a comunicação operacional, não os cálculos preditivos nem o ranking histórico.
-
-## Autosave do lote
-
-O lote bruto é salvo no momento em que cada partida é adicionada, atualizada ou removida. A restauração usa a aba `lote_pendente` do Google Sheets e um backup local da instância. A análise salva automaticamente as cotações e probabilidades; o botão manual serve apenas para repetir uma tentativa que tenha falhado.
-
-A casa de apostas inicia como **PIXBET** e pode ser editada.
+- formulário em uma etapa;
+- seletores corretos por liga;
+- campos de cotação vazios;
+- casa padrão PIXBET;
+- Análise para IA visível na tela;
+- decisão fechada com as cotações informadas.

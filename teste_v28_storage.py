@@ -62,7 +62,7 @@ storage._abrir_planilha = lambda secrets: spreadsheet
 
 secrets = {
     "google_sheets": {"spreadsheet_id": "teste", "worksheet_auditoria": "auditoria_entradas"},
-    "gcp_service_account": {"client_email": "teste@example.com"},
+    "gcp_service_account": {"client_email": "teste@example.com", "private_key": "fake"},
 }
 
 record = {column: "" for column in COLUNAS_APOSTAS}
@@ -109,15 +109,15 @@ games = [
     }
 ]
 snapshot = storage.salvar_lote_pendente(
-    secrets, games, interface_version="V28.1.5.9"
+    secrets, games, interface_version="V28.1.5.10"
 )
 assert snapshot["Quantidade de partidas"] == 1
 restored = storage.carregar_lote_pendente(secrets)
 assert restored["Jogos"] == games
-assert restored["Versão da interface"] == "V28.1.5.9"
+assert restored["Versão da interface"] == "V28.1.5.10"
 
 # Atualizar o lote sobrescreve o snapshot atual em vez de depender da sessão.
-storage.salvar_lote_pendente(secrets, [], interface_version="V28.1.5.9")
+storage.salvar_lote_pendente(secrets, [], interface_version="V28.1.5.10")
 restored_empty = storage.carregar_lote_pendente(secrets)
 assert restored_empty["Jogos"] == []
 

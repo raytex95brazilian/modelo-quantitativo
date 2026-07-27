@@ -1,15 +1,11 @@
-# Estado atual — Tex Statistics V28.1.5.9
+# Estado atual — Tex Statistics V28.1.5.10
 
-- Interface: V28.1.5.9
+- Interface: V28.1.5.10
 - Motor preditivo: V28.1.2 — Estado Isolado
-- Modelo: V28.0
-- Formulário: etapa única e seletores dependentes por liga
+- Planilha: destino explícito obrigatório
+- Cadastro: append + leitura pós-gravação
+- Confirmação: aba, linha, evento e cotações lidas de volta
+- Falha: formulário preservado e partida não aceita
+- Lote: restaurado do log append-only `entrada_jogos`
+- Histórico após análise: `catalogo_odds` e `historico_analises` com verificação
 - Casa padrão: PIXBET, editável
-- Lote: autosave imediato na aba `lote_pendente` e em backup local
-- Restauração: automática após perda de sessão ou reboot
-- Exclusão total: somente com confirmação explícita
-- Análise: salvamento automático das cotações e probabilidades
-- Análise para IA: exibida diretamente na tela
-- Decisão: fechada com as cotações informadas
-- Carteira: meta de cinco seleções, no máximo uma por partida
-- Ambas Marcam: experimental e fora da carteira validada

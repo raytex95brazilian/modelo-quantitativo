@@ -32,10 +32,10 @@ _v28 = _load_required_module("tex_v28_core_2812")
 _operacional = _load_required_module("tex_operacional_core")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.1.5.9"
-EXPECTED_FINANCE_API = "28.1.5.9"
-INTERFACE_VERSION = "V28.1.5.9"
-APP_NAME = "Tex Statistics V28.1.5.9"
+EXPECTED_STORAGE_API = "28.1.5.10"
+EXPECTED_FINANCE_API = "28.1.5.10"
+INTERFACE_VERSION = "V28.1.5.10"
+APP_NAME = "Tex Statistics V28.1.5.10"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -44,7 +44,7 @@ ENGINE_VERSION = getattr(_v28, "ENGINE_VERSION", "V28.1.2-estado-isolado")
 _REQUIRED_V25 = ("LEAGUES", "normalize_zip")
 _REQUIRED_STORAGE = (
     "COLUNAS_ANALISES", "COLUNAS_COTACOES", "carregar_apostas",
-    "carregar_lote_pendente", "registrar_evento_lote",
+    "carregar_lote_pendente", "registrar_evento_lote", "diagnostico_google",
     "google_configurado", "identificadores_analises", "identificadores_apostas",
     "identificadores_cotacoes", "liquidar_aposta", "salvar_analises",
     "salvar_apostas", "salvar_cotacoes", "salvar_lote_pendente",
@@ -111,6 +111,7 @@ salvar_apostas = getattr(_storage, "salvar_apostas", None)
 salvar_cotacoes = getattr(_storage, "salvar_cotacoes", None)
 salvar_lote_pendente = getattr(_storage, "salvar_lote_pendente", None)
 registrar_evento_lote = getattr(_storage, "registrar_evento_lote", None)
+diagnostico_google = getattr(_storage, "diagnostico_google", None)
 url_planilha_configurada = getattr(_storage, "url_planilha_configurada", None)
 COLUNAS_APOSTAS = getattr(_finance, "COLUNAS_APOSTAS", [])
 atualizar_registro = getattr(_finance, "atualizar_registro", None)
@@ -174,7 +175,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.1.5.9, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "pelo mesmo pacote V28.1.5.10, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -387,21 +388,28 @@ def _persist_snapshot_best_effort(reason: str) -> None:
         )
 
 
-def _registrar_evento_obrigatorio(tipo_evento: str, jogo: dict | None = None) -> None:
-    """Confirma a gravação remota antes de o formulário ser limpo."""
+def _registrar_evento_obrigatorio(tipo_evento: str, jogo: dict | None = None) -> dict:
+    """Grava, relê e devolve o endereço exato da linha confirmada."""
     if not google_configurado(st.secrets):
-        return
+        detalhe = diagnostico_google(st.secrets) if callable(diagnostico_google) else {}
+        raise RuntimeError(
+            "A partida NÃO foi aceita porque não existe uma planilha de destino explicitamente configurada. "
+            + str(detalhe.get("erro") or "Informe spreadsheet_id ou spreadsheet_url nos Secrets.")
+        )
     try:
-        registrar_evento_lote(
+        confirmacao = registrar_evento_lote(
             st.secrets,
             tipo_evento=tipo_evento,
             jogo=jogo,
             interface_version=INTERFACE_VERSION,
         )
+        if str(confirmacao.get("Verificação", "")) != "GRAVADO E RELIDO":
+            raise RuntimeError("A leitura pós-gravação não foi confirmada.")
+        return dict(confirmacao)
     except Exception as exc:
         raise RuntimeError(
-            "A partida NÃO foi aceita porque a planilha não confirmou a gravação. "
-            "Os campos permanecem preenchidos; corrija a conexão e clique novamente. "
+            "A partida NÃO foi aceita porque a planilha não confirmou e não devolveu as cotações gravadas. "
+            "Os campos permanecem preenchidos; não digite a próxima partida. "
             f"Detalhe: {exc}"
         ) from exc
 
@@ -439,7 +447,7 @@ def upsert_game(game: dict) -> str:
             break
 
     # Primeiro grava uma linha imutável no Google. Só depois altera a sessão e limpa o formulário.
-    _registrar_evento_obrigatorio("UPSERT", candidate)
+    confirmacao = _registrar_evento_obrigatorio("UPSERT", candidate)
     if existing_index is None:
         games().append(candidate)
         action = "adicionada"
@@ -448,6 +456,7 @@ def upsert_game(game: dict) -> str:
         action = "atualizada"
     invalidate_analysis()
     _persist_snapshot_best_effort(f"partida {action}")
+    st.session_state.tex_last_sheet_confirmation = confirmacao
     return action
 
 
@@ -713,11 +722,19 @@ with st.sidebar:
             "A planilha não pôde ser sincronizada. O limite semanal está usando somente "
             "o histórico local desta instalação até uma nova sincronização bem-sucedida."
         )
+    google_diag = diagnostico_google(st.secrets) if callable(diagnostico_google) else {}
     if google_configurado(st.secrets):
         st.success("Planilha Google conectada")
-        st.link_button("Abrir planilha", url_planilha_configurada(st.secrets))
+        st.caption(
+            f"Destino obrigatório: ID final …{google_diag.get('spreadsheet_id_final', '')} | "
+            f"aba {google_diag.get('aba_eventos', 'entrada_jogos')}"
+        )
+        st.link_button("Abrir exatamente a planilha de gravação", url_planilha_configurada(st.secrets))
     else:
-        st.info("Análise funciona normalmente. A gravação Google está desativada.")
+        st.error(
+            "Gravação bloqueada: configure spreadsheet_id ou spreadsheet_url explicitamente nos Secrets. "
+            + str(google_diag.get("erro") or "")
+        )
 
 st.markdown(
     '<div class="rule-box"><b>Regra operacional:</b> a meta é de <b>cinco seleções por semana</b>, '
@@ -742,6 +759,20 @@ if st.session_state.get("tex_autosave_status"):
     st.caption("💾 " + str(st.session_state.get("tex_autosave_status")))
 if st.session_state.get("tex_autosave_warning"):
     st.warning(str(st.session_state.get("tex_autosave_warning")))
+last_confirmation = st.session_state.get("tex_last_sheet_confirmation")
+if isinstance(last_confirmation, dict) and last_confirmation:
+    st.success(
+        "Última gravação comprovada: "
+        f"aba {last_confirmation.get('Aba', '')}, linha {last_confirmation.get('Linha', '')}, "
+        f"ID {last_confirmation.get('ID Evento', '')}."
+    )
+    if last_confirmation.get("Planilha URL"):
+        st.link_button("Abrir a linha na planilha e conferir", str(last_confirmation.get("Planilha URL")))
+    st.json({
+        "Jogo": f"{last_confirmation.get('Mandante', '')} x {last_confirmation.get('Visitante', '')}",
+        "Casa": last_confirmation.get("Casa de apostas", ""),
+        "Cotações lidas de volta": last_confirmation.get("Cotações verificadas", {}),
+    }, expanded=False)
 if google_configurado(st.secrets):
     st.success("Persistência obrigatória ativa: cada partida é registrada imediatamente na aba entrada_jogos, antes da análise.")
 else:
@@ -1048,9 +1079,15 @@ def render_game_entry() -> None:
         st.session_state.tex_form_version = form_version + 1
         st.session_state.pop(selection_key, None)
         st.session_state.tex_flash = True
+        confirmacao = dict(st.session_state.get("tex_last_sheet_confirmation", {}))
+        odds_salvas = confirmacao.get("Cotações verificadas", {})
+        odds_texto = ", ".join(
+            f"{nome}={valor}" for nome, valor in odds_salvas.items() if str(valor).strip()
+        ) or "sem cotação"
         st.session_state.tex_flash_message = (
-            f"Partida {action}: {home} x {away}. A gravação durável na planilha foi confirmada; "
-            "a análise anterior foi invalidada e um novo formulário foi aberto."
+            f"Partida {action}: {home} x {away}. GRAVADA E RELIDA na aba "
+            f"{confirmacao.get('Aba', 'entrada_jogos')}, linha {confirmacao.get('Linha', '?')}. "
+            f"Cotações conferidas: {odds_texto}."
         )
         st.rerun()
 

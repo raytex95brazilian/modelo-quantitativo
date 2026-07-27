@@ -98,7 +98,7 @@ update_stub = types.ModuleType("tex_v25_atualizacao")
 sys.modules["tex_v25_atualizacao"] = update_stub
 
 app = importlib.import_module("app")
-assert app.INTERFACE_VERSION == "V28.1.5.9"
+assert app.INTERFACE_VERSION == "V28.1.5.10"
 assert app.EXPECTED_CORE_API == "28.1.2"
 assert app.max_entries == 5
 
@@ -129,7 +129,12 @@ with TemporaryDirectory() as temp_dir:
     remote_calls = []
     app.google_configurado = lambda secrets: True
     app.registrar_evento_lote = lambda secrets, tipo_evento, jogo=None, interface_version="": remote_calls.append((tipo_evento, dict(jogo or {}))) or {
-        "Registrado em": "2026-07-27T20:00:00-03:00"
+        "Registrado em": "2026-07-27T20:00:00-03:00",
+        "Verificação": "GRAVADO E RELIDO",
+        "Aba": "entrada_jogos",
+        "Linha": 2,
+        "ID Evento": "evento-teste",
+        "Cotações verificadas": {},
     }
     app.salvar_lote_pendente = lambda secrets, jogos, interface_version="": {
         "Salvo em": "2026-07-27T20:00:00-03:00"
@@ -179,10 +184,10 @@ assert abs(float(catalog[catalog["Grupo do mercado"].eq("1X2")].iloc[0]["Margem 
 config = json.loads(str(analysis.iloc[0]["Configuração JSON"]))
 assert config["api_nucleo"] == "28.1.2"
 assert config["percentual_unidade"] == 0.01
-assert catalog.iloc[0]["Versão da interface"] == "V28.1.5.9"
-assert analysis.iloc[0]["Versão da interface"] == "V28.1.5.9"
+assert catalog.iloc[0]["Versão da interface"] == "V28.1.5.10"
+assert analysis.iloc[0]["Versão da interface"] == "V28.1.5.10"
 summary_text = app.build_ai_summary(games, evaluations.sort_values(["MatchID", "StatusOrder"]).drop_duplicates("MatchID"), evaluations, diagnostics, matches)
 for forbidden in ("AGUARDAR PREÇO", "PREÇO FORTE", "ELEGÍVEL PARA META", "RESERVA", "mínima de admissibilidade da meta", "equilíbrio individual"):
     assert forbidden not in summary_text, forbidden
 
-print("TESTE DO APP SEM INTERFACE GRÁFICA V28.1.5.9: OK")
+print("TESTE DO APP SEM INTERFACE GRÁFICA V28.1.5.10: OK")

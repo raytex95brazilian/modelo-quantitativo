@@ -5,10 +5,11 @@ from zoneinfo import ZoneInfo
 from typing import Any, Iterable
 from uuid import uuid4
 import json
+import re
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.1.5.9"
+STORAGE_API_VERSION = "28.1.5.10"
 
 from tex_v28_finance import COLUNAS_APOSTAS, liquidar_registro
 
@@ -93,13 +94,54 @@ def _dict_seguro(obj: Any) -> dict[str, Any]:
         return {}
 
 
+def _extrair_id_planilha(valor: Any) -> str:
+    """Extrai um ID explícito de uma chave ou URL do Google Sheets.
+
+    Não existe fallback silencioso para outra planilha. Gravar em uma planilha
+    diferente daquela que o usuário está conferindo é pior do que bloquear.
+    """
+    texto = str(valor or "").strip()
+    if not texto:
+        return ""
+    match = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", texto)
+    if match:
+        return match.group(1)
+    if re.fullmatch(r"[A-Za-z0-9_-]{5,}", texto):
+        return texto
+    return ""
+
+
 def configuracao_google(secrets: Any) -> dict[str, Any]:
-    """Aceita tanto o formato antigo [google_sheets] quanto o formato novo [google_sheet]."""
+    """Aceita [google_sheets] ou [google_sheet], mas exige destino explícito.
+
+    Versões anteriores podiam usar PLANILHA_ANTIGA_ID como fallback. Isso
+    permitia uma gravação aparentemente bem-sucedida em outra planilha. A partir
+    da V28.1.5.10, o ID/URL precisa estar declarado nos Secrets.
+    """
     antigo = _dict_seguro(getattr(secrets, "get", lambda *_: {}) ("google_sheets", {}))
     novo = _dict_seguro(getattr(secrets, "get", lambda *_: {}) ("google_sheet", {}))
     cfg = antigo or novo
     conta = _dict_seguro(getattr(secrets, "get", lambda *_: {}) ("gcp_service_account", {}))
-    id_planilha = str(cfg.get("spreadsheet_id") or PLANILHA_ANTIGA_ID).strip()
+    destino = (
+        cfg.get("spreadsheet_id")
+        or cfg.get("spreadsheet_url")
+        or cfg.get("url_planilha")
+        or cfg.get("url")
+        or ""
+    )
+    id_planilha = _extrair_id_planilha(destino)
+    client_email = str(conta.get("client_email") or "").strip()
+    private_key = str(conta.get("private_key") or "").strip()
+    credenciais_ok = bool(client_email and private_key)
+    erro_configuracao = ""
+    if not id_planilha:
+        erro_configuracao = (
+            "Informe spreadsheet_id ou spreadsheet_url em [google_sheets] ou [google_sheet]."
+        )
+    elif not credenciais_ok:
+        erro_configuracao = (
+            "As credenciais [gcp_service_account] precisam conter client_email e private_key."
+        )
     return {
         "conta": conta,
         "spreadsheet_id": id_planilha,
@@ -108,8 +150,9 @@ def configuracao_google(secrets: Any) -> dict[str, Any]:
         "worksheet_historico": str(cfg.get("worksheet_historico") or ABA_ANALISES).strip(),
         "worksheet_lote_pendente": str(cfg.get("worksheet_lote_pendente") or ABA_LOTE_PENDENTE).strip(),
         "worksheet_eventos_lote": str(cfg.get("worksheet_eventos_lote") or ABA_EVENTOS_LOTE).strip(),
-        "client_email": str(conta.get("client_email") or "").strip(),
-        "configurado": bool(conta and id_planilha and conta.get("client_email")),
+        "client_email": client_email,
+        "configurado": bool(id_planilha and credenciais_ok),
+        "erro_configuracao": erro_configuracao,
     }
 
 
@@ -119,7 +162,24 @@ def google_configurado(secrets: Any) -> bool:
 
 def url_planilha_configurada(secrets: Any) -> str:
     cfg = configuracao_google(secrets)
+    if not cfg["spreadsheet_id"]:
+        return ""
     return f"https://docs.google.com/spreadsheets/d/{cfg['spreadsheet_id']}/edit"
+
+
+def diagnostico_google(secrets: Any) -> dict[str, Any]:
+    """Retorna o destino exato usado nas gravações, sem expor credenciais."""
+    cfg = configuracao_google(secrets)
+    return {
+        "configurado": bool(cfg["configurado"]),
+        "spreadsheet_id": str(cfg["spreadsheet_id"]),
+        "spreadsheet_id_final": str(cfg["spreadsheet_id"])[-8:] if cfg["spreadsheet_id"] else "",
+        "url": url_planilha_configurada(secrets),
+        "aba_eventos": str(cfg["worksheet_eventos_lote"]),
+        "aba_snapshot": str(cfg["worksheet_lote_pendente"]),
+        "client_email": str(cfg["client_email"]),
+        "erro": str(cfg.get("erro_configuracao") or ""),
+    }
 
 
 def _chave_conta(informacoes_conta: dict[str, Any]) -> tuple[str, str]:
@@ -234,17 +294,19 @@ def _acrescentar_sem_leitura(
     registros: Iterable[dict[str, Any]],
     campos_chave: list[str],
 ) -> int:
-    """Acrescenta linhas sem executar row_values/get_all_values antes da escrita.
+    """Acrescenta, relê o intervalo gravado e só então confirma sucesso.
 
-    A antiga implementação relia toda a aba para evitar duplicidade. No Streamlit,
-    cada clique reroda o programa e isso consumia rapidamente a quota de leituras.
-    A deduplicação durante o processo é feita em memória pelos identificadores únicos.
+    O nome foi mantido por compatibilidade, mas a V28.1.5.10 deliberadamente
+    faz uma leitura curta de verificação após cada append. Um HTTP 200 sem a
+    linha correta na planilha não é considerado salvamento.
     """
     normalizados = _normalizar(registros, colunas)
     if not normalizados:
         return 0
 
     cfg = configuracao_google(secrets)
+    if not cfg["configurado"]:
+        raise RuntimeError(cfg.get("erro_configuracao") or "Google Sheets não configurado.")
     cache_key = (cfg["spreadsheet_id"], cfg["client_email"], str(titulo))
     conhecidas = _CHAVES_GRAVADAS_NO_PROCESSO.setdefault(cache_key, set())
     novas: list[dict[str, Any]] = []
@@ -263,10 +325,75 @@ def _acrescentar_sem_leitura(
     worksheet_key = (cfg["spreadsheet_id"], cfg["client_email"], str(titulo))
     cabecalho_real = _CABECALHOS_ATUAIS.get(worksheet_key, list(colunas))
     linhas = [[registro.get(coluna, "") for coluna in cabecalho_real] for registro in novas]
-    aba.append_rows(linhas, value_input_option="USER_ENTERED")
+    resposta = aba.append_rows(linhas, value_input_option="RAW")
+
+    intervalo = ""
+    if isinstance(resposta, dict):
+        intervalo = str(
+            resposta.get("updates", {}).get("updatedRange")
+            or resposta.get("updatedRange")
+            or ""
+        )
+    valores_lidos: list[list[Any]] = []
+    if intervalo and "!" in intervalo and callable(getattr(aba, "get", None)):
+        a1 = intervalo.split("!", 1)[1]
+        valores_lidos = [list(row) for row in aba.get(a1)]
+
+    # Fallback controlado para mocks ou respostas sem updatedRange: localiza cada
+    # chave na planilha e lê apenas as linhas correspondentes.
+    if len(valores_lidos) != len(novas):
+        valores_lidos = []
+        campo_busca = campos_chave[0]
+        if campo_busca not in cabecalho_real:
+            raise RuntimeError(f"Coluna de confirmação ausente: {campo_busca!r}.")
+        idx_busca = cabecalho_real.index(campo_busca)
+        ids = list(aba.col_values(idx_busca + 1))
+        for registro in novas:
+            alvo = str(registro.get(campo_busca, "")).strip()
+            linha_numero = None
+            for posicao in range(len(ids) - 1, 0, -1):
+                if str(ids[posicao]).strip() == alvo:
+                    linha_numero = posicao + 1
+                    break
+            if linha_numero is None:
+                raise RuntimeError(
+                    f"O registro {alvo!r} não foi encontrado em {titulo!r} após o append."
+                )
+            valores_lidos.append(list(aba.row_values(linha_numero)))
+
+    divergencias: list[str] = []
+    for indice, (esperado, valores) in enumerate(zip(novas, valores_lidos), start=1):
+        valores = list(valores) + [""] * max(0, len(cabecalho_real) - len(valores))
+        real = dict(zip(cabecalho_real, valores))
+        for campo in campos_chave:
+            if not _celula_equivalente(esperado.get(campo, ""), real.get(campo, "")):
+                divergencias.append(
+                    f"linha {indice}, {campo}: enviado={esperado.get(campo, '')!r}; "
+                    f"lido={real.get(campo, '')!r}"
+                )
+        # Cotação e probabilidades são campos críticos para a auditoria. Quando
+        # existirem no esquema, também são comparadas numericamente.
+        for campo in (
+            "Cotação", "Probabilidade operacional %", "Probabilidade Poisson %",
+            "Probabilidade empírica %", "Probabilidade de mercado ajustada %",
+            "Valor esperado %", "Probabilidade conservadora %",
+            "Valor esperado conservador %",
+        ):
+            if campo in esperado and not _celula_equivalente(
+                esperado.get(campo, ""), real.get(campo, ""), numerico=True
+            ):
+                divergencias.append(
+                    f"linha {indice}, {campo}: enviado={esperado.get(campo, '')!r}; "
+                    f"lido={real.get(campo, '')!r}"
+                )
+    if divergencias:
+        raise RuntimeError(
+            f"A gravação em {titulo!r} não passou na leitura de conferência: "
+            + " | ".join(divergencias[:20])
+        )
+
     conhecidas.update(novas_chaves)
     return len(linhas)
-
 
 def _garantir_aba_para_leitura(secrets: Any, titulo: str, colunas: list[str]):
     """Leitura explícita usada apenas quando o usuário manda sincronizar o histórico."""
@@ -376,6 +503,83 @@ def _valor_float_ou_none(valor: Any) -> float | None:
         return None
 
 
+def _numero_linha_append(resposta: Any) -> int | None:
+    """Extrai a linha confirmada pela API Sheets a partir de updatedRange."""
+    if not isinstance(resposta, dict):
+        return None
+    intervalo = str(
+        resposta.get("updates", {}).get("updatedRange")
+        or resposta.get("updatedRange")
+        or ""
+    )
+    match = re.search(r"!(?:[^!]*?)(\d+):(?:[^!]*?)(\d+)$", intervalo)
+    if match and match.group(1) == match.group(2):
+        return int(match.group(1))
+    match = re.search(r"!(?:[A-Z]+)(\d+):(?:[A-Z]+)(\d+)$", intervalo)
+    if match and match.group(1) == match.group(2):
+        return int(match.group(1))
+    return None
+
+
+def _numero_equivalente(a: Any, b: Any) -> bool:
+    def conv(v: Any) -> float | None:
+        texto = str(v if v is not None else "").strip().replace(".", "").replace(",", ".")
+        # Se já veio no formato Python 1.77, a remoção acima produziria 177.
+        original = str(v if v is not None else "").strip()
+        if "," not in original and original.count(".") <= 1:
+            texto = original
+        if not texto:
+            return None
+        try:
+            return float(texto)
+        except (TypeError, ValueError):
+            return None
+    na, nb = conv(a), conv(b)
+    if na is None or nb is None:
+        return na is nb
+    return abs(na - nb) <= 1e-9
+
+
+def _celula_equivalente(esperado: Any, real: Any, *, numerico: bool = False) -> bool:
+    if esperado is None or (not isinstance(esperado, (dict, list, tuple)) and pd.isna(esperado)):
+        esperado = ""
+    if real is None:
+        real = ""
+    if numerico:
+        if str(esperado).strip() == "" and str(real).strip() == "":
+            return True
+        return _numero_equivalente(esperado, real)
+    return str(esperado).strip() == str(real).strip()
+
+
+def _ler_linha_por_id(
+    aba: Any,
+    cabecalho: list[str],
+    coluna_id: str,
+    valor_id: str,
+    linha_sugerida: int | None,
+) -> tuple[int, list[Any]]:
+    """Lê de volta exatamente a linha gravada; não confia só no HTTP 200."""
+    if linha_sugerida and linha_sugerida >= 2:
+        valores = list(aba.row_values(linha_sugerida))
+        if coluna_id in cabecalho:
+            idx = cabecalho.index(coluna_id)
+            if idx < len(valores) and str(valores[idx]).strip() == str(valor_id).strip():
+                return linha_sugerida, valores
+
+    if coluna_id not in cabecalho:
+        raise RuntimeError(f"A aba não contém a coluna de verificação {coluna_id!r}.")
+    coluna = cabecalho.index(coluna_id) + 1
+    valores_id = list(aba.col_values(coluna))
+    for posicao in range(len(valores_id) - 1, 0, -1):
+        if str(valores_id[posicao]).strip() == str(valor_id).strip():
+            numero_linha = posicao + 1
+            return numero_linha, list(aba.row_values(numero_linha))
+    raise RuntimeError(
+        f"A API respondeu ao append, mas o ID {valor_id!r} não foi encontrado na aba após a gravação."
+    )
+
+
 def registrar_evento_lote(
     secrets: Any,
     *,
@@ -384,10 +588,11 @@ def registrar_evento_lote(
     interface_version: str = "",
     lote_id: str = "principal",
 ) -> dict[str, Any]:
-    """Grava uma ação do lote em uma linha imutável da planilha.
+    """Grava e relê uma ação do lote antes de confirmar sucesso ao app.
 
-    O retorno só ocorre depois de o Google confirmar o append. Assim, o app
-    pode manter o formulário preenchido quando a persistência remota falhar.
+    A V28.1.5.10 apenas confiava no retorno do append. A partir da V28.1.5.10,
+    a linha é lida novamente e os identificadores e todas as cotações são
+    comparados campo a campo. O formulário só pode ser limpo depois disso.
     """
     tipo = str(tipo_evento or "").strip().upper()
     if tipo not in {"UPSERT", "DELETE", "CLEAR"}:
@@ -395,6 +600,13 @@ def registrar_evento_lote(
     dados = dict(jogo or {})
     if tipo in {"UPSERT", "DELETE"} and not str(dados.get("ID", "")).strip():
         raise ValueError("O evento do lote exige o ID da partida.")
+
+    cfg = configuracao_google(secrets)
+    if not cfg["configurado"]:
+        raise RuntimeError(
+            cfg.get("erro_configuracao")
+            or "O Google Sheets não está configurado com um spreadsheet_id explícito."
+        )
 
     registrado_em = datetime.now(ZoneInfo("America/Fortaleza")).replace(microsecond=0).isoformat()
     registro = {
@@ -418,20 +630,67 @@ def registrar_evento_lote(
         "Odd ambas marcam — Sim": dados.get("Odd ambas marcam — Sim", ""),
         "Odd ambas marcam — Não": dados.get("Odd ambas marcam — Não", ""),
         "Versão da interface": str(interface_version),
-        "Origem": "Autosave durável Tex Statistics",
+        "Origem": "Autosave verificado Tex Statistics",
     }
-    cfg = configuracao_google(secrets)
-    quantidade = _acrescentar_sem_leitura(
-        secrets,
-        cfg["worksheet_eventos_lote"],
-        COLUNAS_EVENTOS_LOTE,
-        [registro],
-        ["ID Evento"],
-    )
-    if quantidade != 1:
-        raise RuntimeError("O Google Sheets não confirmou a gravação do evento do lote.")
-    return registro
+    normalizado = _normalizar([registro], COLUNAS_EVENTOS_LOTE)[0]
+    aba = _obter_aba_cacheada(secrets, cfg["worksheet_eventos_lote"], COLUNAS_EVENTOS_LOTE)
+    chave_aba = (cfg["spreadsheet_id"], cfg["client_email"], cfg["worksheet_eventos_lote"])
+    cabecalho = _CABECALHOS_ATUAIS.get(chave_aba, list(COLUNAS_EVENTOS_LOTE))
+    linha = [normalizado.get(coluna, "") for coluna in cabecalho]
 
+    resposta = aba.append_rows([linha], value_input_option="RAW")
+    linha_api = _numero_linha_append(resposta)
+    numero_linha, valores_reais = _ler_linha_por_id(
+        aba, cabecalho, "ID Evento", registro["ID Evento"], linha_api
+    )
+    valores_reais += [""] * max(0, len(cabecalho) - len(valores_reais))
+    real = dict(zip(cabecalho, valores_reais))
+
+    campos_texto = [
+        "ID Evento", "ID do lote", "Tipo de evento", "ID da partida", "Data", "Hora",
+        "Código da liga", "Liga", "Mandante", "Visitante", "Casa de apostas",
+        "Versão da interface",
+    ]
+    campos_numericos = [
+        "Odd mandante", "Odd empate", "Odd visitante", "Odd mais de 2,5",
+        "Odd menos de 2,5", "Odd ambas marcam — Sim", "Odd ambas marcam — Não",
+    ]
+    divergencias: list[str] = []
+    for campo in campos_texto:
+        if not _celula_equivalente(normalizado.get(campo, ""), real.get(campo, "")):
+            divergencias.append(
+                f"{campo}: enviado={normalizado.get(campo, '')!r}; lido={real.get(campo, '')!r}"
+            )
+    for campo in campos_numericos:
+        if not _celula_equivalente(
+            normalizado.get(campo, ""), real.get(campo, ""), numerico=True
+        ):
+            divergencias.append(
+                f"{campo}: enviado={normalizado.get(campo, '')!r}; lido={real.get(campo, '')!r}"
+            )
+    if divergencias:
+        raise RuntimeError(
+            "A linha apareceu na planilha, mas a leitura de conferência encontrou diferenças: "
+            + " | ".join(divergencias)
+        )
+
+    url_base = url_planilha_configurada(secrets)
+    worksheet_id = getattr(aba, "id", None)
+    url_linha = (
+        f"{url_base}#gid={worksheet_id}&range=A{numero_linha}"
+        if worksheet_id is not None else url_base
+    )
+    return {
+        **registro,
+        "Planilha ID": cfg["spreadsheet_id"],
+        "Planilha URL": url_linha,
+        "Aba": cfg["worksheet_eventos_lote"],
+        "Linha": numero_linha,
+        "Cotações verificadas": {
+            campo: real.get(campo, "") for campo in campos_numericos
+        },
+        "Verificação": "GRAVADO E RELIDO",
+    }
 
 def _jogo_de_evento(registro: dict[str, Any]) -> dict[str, Any]:
     return {
