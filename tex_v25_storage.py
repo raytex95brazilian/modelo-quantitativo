@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, Iterable
+from uuid import uuid4
 import json
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.1.5.7"
+STORAGE_API_VERSION = "28.1.5.9"
 
 from tex_v28_finance import COLUNAS_APOSTAS, liquidar_registro
 
@@ -18,6 +19,8 @@ PLANILHA_ANTIGA_URL = f"https://docs.google.com/spreadsheets/d/{PLANILHA_ANTIGA_
 ABA_COTACOES = "catalogo_odds"
 ABA_ANALISES = "historico_analises"
 ABA_AUDITORIA = "auditoria_entradas"
+ABA_LOTE_PENDENTE = "lote_pendente"
+ABA_EVENTOS_LOTE = "entrada_jogos"
 
 # Cache em memória do processo do Streamlit. Evita reabrir a planilha e reler
 # metadados a cada clique/rerun, que era a causa do erro 429 de leitura.
@@ -39,6 +42,23 @@ COLUNAS_COTACOES = [
     "Pontos do mandante", "Pontos do visitante", "Pontos por jogo do mandante",
     "Pontos por jogo do visitante",
     "Versão da interface", "Versão da API do núcleo", "Versão do modelo",
+]
+
+COLUNAS_LOTE_PENDENTE = [
+    "ID do lote", "Salvo em", "Quantidade de partidas", "Lote JSON",
+    "Versão da interface", "Origem",
+]
+
+# Log durável e append-only. Cada inclusão, alteração, remoção ou limpeza gera
+# uma nova linha. A restauração do lote não depende de uma única célula JSON.
+COLUNAS_EVENTOS_LOTE = [
+    "ID Evento", "ID do lote", "Tipo de evento", "Registrado em",
+    "ID da partida", "Data", "Hora", "Código da liga", "Liga",
+    "Mandante", "Visitante", "Casa de apostas",
+    "Odd mandante", "Odd empate", "Odd visitante",
+    "Odd mais de 2,5", "Odd menos de 2,5",
+    "Odd ambas marcam — Sim", "Odd ambas marcam — Não",
+    "Versão da interface", "Origem",
 ]
 
 COLUNAS_ANALISES = [
@@ -86,6 +106,8 @@ def configuracao_google(secrets: Any) -> dict[str, Any]:
         "worksheet_catalogo": str(cfg.get("worksheet_catalogo") or ABA_COTACOES).strip(),
         "worksheet_auditoria": str(cfg.get("worksheet_auditoria") or ABA_AUDITORIA).strip(),
         "worksheet_historico": str(cfg.get("worksheet_historico") or ABA_ANALISES).strip(),
+        "worksheet_lote_pendente": str(cfg.get("worksheet_lote_pendente") or ABA_LOTE_PENDENTE).strip(),
+        "worksheet_eventos_lote": str(cfg.get("worksheet_eventos_lote") or ABA_EVENTOS_LOTE).strip(),
         "client_email": str(conta.get("client_email") or "").strip(),
         "configurado": bool(conta and id_planilha and conta.get("client_email")),
     }
@@ -342,6 +364,218 @@ def carregar_analises(secrets: Any) -> pd.DataFrame:
     cfg = configuracao_google(secrets)
     return _carregar_aba(secrets, cfg["worksheet_historico"], COLUNAS_ANALISES)
 
+
+
+def _valor_float_ou_none(valor: Any) -> float | None:
+    texto = str(valor or "").strip().replace(",", ".")
+    if not texto:
+        return None
+    try:
+        return float(texto)
+    except (TypeError, ValueError):
+        return None
+
+
+def registrar_evento_lote(
+    secrets: Any,
+    *,
+    tipo_evento: str,
+    jogo: dict[str, Any] | None = None,
+    interface_version: str = "",
+    lote_id: str = "principal",
+) -> dict[str, Any]:
+    """Grava uma ação do lote em uma linha imutável da planilha.
+
+    O retorno só ocorre depois de o Google confirmar o append. Assim, o app
+    pode manter o formulário preenchido quando a persistência remota falhar.
+    """
+    tipo = str(tipo_evento or "").strip().upper()
+    if tipo not in {"UPSERT", "DELETE", "CLEAR"}:
+        raise ValueError(f"Tipo de evento do lote inválido: {tipo_evento!r}")
+    dados = dict(jogo or {})
+    if tipo in {"UPSERT", "DELETE"} and not str(dados.get("ID", "")).strip():
+        raise ValueError("O evento do lote exige o ID da partida.")
+
+    registrado_em = datetime.now(ZoneInfo("America/Fortaleza")).replace(microsecond=0).isoformat()
+    registro = {
+        "ID Evento": f"{registrado_em}-{uuid4().hex}",
+        "ID do lote": str(lote_id or "principal"),
+        "Tipo de evento": tipo,
+        "Registrado em": registrado_em,
+        "ID da partida": str(dados.get("ID", "") or ""),
+        "Data": str(dados.get("Data", "") or ""),
+        "Hora": str(dados.get("Hora", "") or ""),
+        "Código da liga": str(dados.get("Código da liga", "") or ""),
+        "Liga": str(dados.get("Liga", "") or ""),
+        "Mandante": str(dados.get("Mandante", "") or ""),
+        "Visitante": str(dados.get("Visitante", "") or ""),
+        "Casa de apostas": str(dados.get("Casa de apostas", "") or "PIXBET"),
+        "Odd mandante": dados.get("Odd mandante", ""),
+        "Odd empate": dados.get("Odd empate", ""),
+        "Odd visitante": dados.get("Odd visitante", ""),
+        "Odd mais de 2,5": dados.get("Odd mais de 2,5", ""),
+        "Odd menos de 2,5": dados.get("Odd menos de 2,5", ""),
+        "Odd ambas marcam — Sim": dados.get("Odd ambas marcam — Sim", ""),
+        "Odd ambas marcam — Não": dados.get("Odd ambas marcam — Não", ""),
+        "Versão da interface": str(interface_version),
+        "Origem": "Autosave durável Tex Statistics",
+    }
+    cfg = configuracao_google(secrets)
+    quantidade = _acrescentar_sem_leitura(
+        secrets,
+        cfg["worksheet_eventos_lote"],
+        COLUNAS_EVENTOS_LOTE,
+        [registro],
+        ["ID Evento"],
+    )
+    if quantidade != 1:
+        raise RuntimeError("O Google Sheets não confirmou a gravação do evento do lote.")
+    return registro
+
+
+def _jogo_de_evento(registro: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ID": str(registro.get("ID da partida", "") or ""),
+        "Data": str(registro.get("Data", "") or ""),
+        "Hora": str(registro.get("Hora", "") or ""),
+        "Código da liga": str(registro.get("Código da liga", "") or ""),
+        "Liga": str(registro.get("Liga", "") or ""),
+        "Mandante": str(registro.get("Mandante", "") or ""),
+        "Visitante": str(registro.get("Visitante", "") or ""),
+        "Casa de apostas": str(registro.get("Casa de apostas", "") or "PIXBET"),
+        "Odd mandante": _valor_float_ou_none(registro.get("Odd mandante")),
+        "Odd empate": _valor_float_ou_none(registro.get("Odd empate")),
+        "Odd visitante": _valor_float_ou_none(registro.get("Odd visitante")),
+        "Odd mais de 2,5": _valor_float_ou_none(registro.get("Odd mais de 2,5")),
+        "Odd menos de 2,5": _valor_float_ou_none(registro.get("Odd menos de 2,5")),
+        "Odd ambas marcam — Sim": _valor_float_ou_none(registro.get("Odd ambas marcam — Sim")),
+        "Odd ambas marcam — Não": _valor_float_ou_none(registro.get("Odd ambas marcam — Não")),
+    }
+
+
+def carregar_lote_por_eventos(secrets: Any, *, lote_id: str = "principal") -> dict[str, Any]:
+    """Reconstrói o lote a partir do histórico append-only."""
+    cfg = configuracao_google(secrets)
+    frame = _carregar_aba(secrets, cfg["worksheet_eventos_lote"], COLUNAS_EVENTOS_LOTE)
+    if frame.empty:
+        return {"ID do lote": str(lote_id), "Salvo em": "", "Jogos": [], "Eventos encontrados": 0}
+
+    estado: dict[str, dict[str, Any]] = {}
+    ordem: list[str] = []
+    eventos_encontrados = 0
+    salvo_em = ""
+    versao = ""
+    for registro in frame.to_dict(orient="records"):
+        if str(registro.get("ID do lote", "principal") or "principal").strip() != str(lote_id):
+            continue
+        tipo = str(registro.get("Tipo de evento", "") or "").strip().upper()
+        if tipo not in {"UPSERT", "DELETE", "CLEAR"}:
+            continue
+        eventos_encontrados += 1
+        salvo_em = str(registro.get("Registrado em", "") or salvo_em)
+        versao = str(registro.get("Versão da interface", "") or versao)
+        if tipo == "CLEAR":
+            estado.clear()
+            ordem.clear()
+            continue
+        partida_id = str(registro.get("ID da partida", "") or "").strip()
+        if not partida_id:
+            continue
+        if tipo == "DELETE":
+            estado.pop(partida_id, None)
+            ordem = [item for item in ordem if item != partida_id]
+            continue
+        jogo = _jogo_de_evento(registro)
+        if partida_id not in estado:
+            ordem.append(partida_id)
+        estado[partida_id] = jogo
+
+    return {
+        "ID do lote": str(lote_id),
+        "Salvo em": salvo_em,
+        "Versão da interface": versao,
+        "Jogos": [estado[item] for item in ordem if item in estado],
+        "Eventos encontrados": eventos_encontrados,
+        "Origem": "entrada_jogos",
+    }
+
+
+def salvar_lote_pendente(
+    secrets: Any,
+    jogos: Iterable[dict[str, Any]],
+    *,
+    interface_version: str = "",
+    lote_id: str = "principal",
+) -> dict[str, Any]:
+    """Persiste o lote bruto imediatamente em uma aba própria do Google Sheets.
+
+    A aba mantém um único snapshot atual em A2:F2. Isso evita depender do
+    ``st.session_state`` e permite restaurar o lote após rerun, queda da sessão
+    ou reinicialização do Streamlit.
+    """
+    cfg = configuracao_google(secrets)
+    jogos_normalizados = [dict(item) for item in jogos]
+    payload = json.dumps(jogos_normalizados, ensure_ascii=False, separators=(",", ":"))
+    # Uma célula do Google Sheets suporta aproximadamente 50 mil caracteres.
+    if len(payload) > 45000:
+        raise ValueError(
+            "O lote ficou grande demais para o snapshot automático da planilha. "
+            "Divida-o em lotes menores antes de continuar."
+        )
+    salvo_em = datetime.now(ZoneInfo("America/Fortaleza")).replace(microsecond=0).isoformat()
+    registro = {
+        "ID do lote": str(lote_id or "principal"),
+        "Salvo em": salvo_em,
+        "Quantidade de partidas": len(jogos_normalizados),
+        "Lote JSON": payload,
+        "Versão da interface": str(interface_version),
+        "Origem": "Autosave Tex Statistics",
+    }
+    aba = _obter_aba_cacheada(secrets, cfg["worksheet_lote_pendente"], COLUNAS_LOTE_PENDENTE)
+    chave = (cfg["spreadsheet_id"], cfg["client_email"], cfg["worksheet_lote_pendente"])
+    cabecalho = _CABECALHOS_ATUAIS.get(chave, list(COLUNAS_LOTE_PENDENTE))
+    linha = [registro.get(coluna, "") for coluna in cabecalho]
+    ultima = _letra_coluna(len(cabecalho))
+    aba.update(f"A2:{ultima}2", [linha], value_input_option="RAW")
+    return registro
+
+
+def carregar_lote_pendente(secrets: Any, *, lote_id: str = "principal") -> dict[str, Any]:
+    """Carrega o lote durável; prioriza o log append-only e usa o snapshot como fallback."""
+    eventos = carregar_lote_por_eventos(secrets, lote_id=lote_id)
+    if int(eventos.get("Eventos encontrados", 0) or 0) > 0:
+        return eventos
+
+    cfg = configuracao_google(secrets)
+    aba = _obter_aba_cacheada(secrets, cfg["worksheet_lote_pendente"], COLUNAS_LOTE_PENDENTE)
+    chave = (cfg["spreadsheet_id"], cfg["client_email"], cfg["worksheet_lote_pendente"])
+    cabecalho = _CABECALHOS_ATUAIS.get(chave) or aba.row_values(1)
+    valores = aba.row_values(2)
+    if not valores:
+        return {"ID do lote": str(lote_id), "Salvo em": "", "Jogos": [], "Eventos encontrados": 0}
+    valores = valores + [""] * max(0, len(cabecalho) - len(valores))
+    registro = {coluna: valores[i] if i < len(valores) else "" for i, coluna in enumerate(cabecalho)}
+    if str(registro.get("ID do lote", "principal")).strip() not in {"", str(lote_id)}:
+        return {"ID do lote": str(lote_id), "Salvo em": "", "Jogos": [], "Eventos encontrados": 0}
+    bruto = str(registro.get("Lote JSON", "") or "").strip()
+    if not bruto:
+        jogos: list[dict[str, Any]] = []
+    else:
+        try:
+            parsed = json.loads(bruto)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("O snapshot do lote na planilha está corrompido.") from exc
+        if not isinstance(parsed, list):
+            raise RuntimeError("O snapshot do lote na planilha não contém uma lista de partidas.")
+        jogos = [dict(item) for item in parsed if isinstance(item, dict)]
+    return {
+        "ID do lote": str(registro.get("ID do lote", lote_id) or lote_id),
+        "Salvo em": str(registro.get("Salvo em", "") or ""),
+        "Versão da interface": str(registro.get("Versão da interface", "") or ""),
+        "Jogos": jogos,
+        "Eventos encontrados": 0,
+        "Origem": "lote_pendente",
+    }
 
 
 def salvar_apostas(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:

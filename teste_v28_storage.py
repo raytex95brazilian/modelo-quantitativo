@@ -10,7 +10,10 @@ class FakeWorksheet:
         self.rows = []
 
     def row_values(self, row):
-        return list(self.header) if row == 1 else []
+        if row == 1:
+            return list(self.header)
+        index = row - 2
+        return list(self.rows[index]) if 0 <= index < len(self.rows) else []
 
     def append_row(self, values, value_input_option=None):
         if not self.header:
@@ -89,4 +92,33 @@ updated = storage.liquidar_aposta(secrets, "TEX-123", 2, 1, "Teste em lote")
 assert updated["Resultado da aposta"] == "GANHA"
 assert worksheet.rows[0][worksheet.header.index("Situação da liquidação")] == "LIQUIDADA"
 assert float(worksheet.rows[0][worksheet.header.index("Lucro ou prejuízo (R$)")]) == 10.0
-print("TESTE DE ARMAZENAMENTO, MIGRAÇÃO E LIQUIDAÇÃO EM LOTE: OK")
+# O lote bruto é salvo imediatamente e pode ser restaurado após perda da sessão.
+games = [
+    {
+        "ID": "mx-1",
+        "Data": "2026-07-30",
+        "Hora": "21:00",
+        "Código da liga": "MEX",
+        "Liga": "México - Liga MX",
+        "Mandante": "Club America",
+        "Visitante": "Tigres UANL",
+        "Casa de apostas": "PIXBET",
+        "Odd mandante": 2.10,
+        "Odd empate": 3.20,
+        "Odd visitante": 3.40,
+    }
+]
+snapshot = storage.salvar_lote_pendente(
+    secrets, games, interface_version="V28.1.5.9"
+)
+assert snapshot["Quantidade de partidas"] == 1
+restored = storage.carregar_lote_pendente(secrets)
+assert restored["Jogos"] == games
+assert restored["Versão da interface"] == "V28.1.5.9"
+
+# Atualizar o lote sobrescreve o snapshot atual em vez de depender da sessão.
+storage.salvar_lote_pendente(secrets, [], interface_version="V28.1.5.9")
+restored_empty = storage.carregar_lote_pendente(secrets)
+assert restored_empty["Jogos"] == []
+
+print("TESTE DE ARMAZENAMENTO, AUTOSAVE, RESTAURAÇÃO E LIQUIDAÇÃO: OK")

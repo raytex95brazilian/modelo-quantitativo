@@ -1,4 +1,4 @@
-# Metodologia e backtest — V28.1.5.7
+# Metodologia e backtest — V28.1.5.9
 
 ## Motor
 
@@ -14,4 +14,4 @@ A decisão é fechada no momento da análise com as odds digitadas pelo usuário
 
 ## Evidência retrospectiva
 
-A revisão V28.1.5.7 não modifica o ranking ou o backtest da política V28.1.5.6. Os arquivos retrospectivos permanecem no diretório `backtest/`. Resultados históricos não garantem desempenho futuro e dependem das cotações efetivamente utilizadas.
+A revisão V28.1.5.9 não modifica o ranking ou o backtest da política V28.1.5.6. Os arquivos retrospectivos permanecem no diretório `backtest/`. Resultados históricos não garantem desempenho futuro e dependem das cotações efetivamente utilizadas.

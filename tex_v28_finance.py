@@ -11,7 +11,7 @@ import os
 import numpy as np
 import pandas as pd
 
-FINANCE_API_VERSION = "28.1.5.7"
+FINANCE_API_VERSION = "28.1.5.9"
 
 FUSO = ZoneInfo("America/Fortaleza")
 

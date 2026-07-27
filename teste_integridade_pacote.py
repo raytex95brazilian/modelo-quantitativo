@@ -44,11 +44,11 @@ ast.parse(core_source)
 assert '_v28 = _load_required_module("tex_v28_core_2812")' in app_source
 assert "import tex_v28_core as _v28" not in app_source
 assert 'EXPECTED_CORE_API = "28.1.2"' in app_source
-assert 'INTERFACE_VERSION = "V28.1.5.7"' in app_source
+assert 'INTERFACE_VERSION = "V28.1.5.9"' in app_source
 assert 'Partida e cotações — etapa única' in app_source
 assert 'CONFIRMAR CONFRONTO' not in app_source
 assert 'Etapa 1 de 2' not in app_source
-assert 'value="Pixbet"' not in app_source
+assert 'value="PIXBET"' in app_source
 assert '\n                value=0.0,' not in app_source
 assert 'st.markdown("### Análise para IA")' in app_source
 assert 'st.code(ai_summary, language=None, wrap_lines=True)' in app_source
@@ -56,6 +56,14 @@ assert '@_fragment' in app_source
 assert 'with st.form("tex_operational_config_form"' in app_source
 assert 'with st.form(f"game_form_{form_version}"' in app_source
 assert '"weekly_target": 5' in app_source
+assert 'salvar_lote_pendente' in app_source
+assert 'carregar_lote_pendente' in app_source
+assert 'registrar_evento_lote' in app_source
+assert '_registrar_evento_obrigatorio("UPSERT", candidate)' in app_source
+assert '_confirmar_lote_remoto_antes_da_analise()' in app_source
+assert 'REPETIR SALVAMENTO NA PLANILHA' in app_source
+assert 'APAGAR TODO O LOTE' in app_source
+assert 'BAIXAR BACKUP DO LOTE' in app_source
 for forbidden in (
     "ODDS_VALIDITY_MINUTES",
     "Cotação capturada em",
@@ -80,7 +88,10 @@ assert core.CORE_API_VERSION == "28.1.2"
 assert core.V28_CFG.max_entries == 5
 assert core.V28_CFG.strong_price_ev == 0.0
 assert core.V28_CFG.fallback_min_ev == -0.15
-assert storage.STORAGE_API_VERSION == "28.1.5.7"
+assert storage.STORAGE_API_VERSION == "28.1.5.9"
+assert "Lote JSON" in storage.COLUNAS_LOTE_PENDENTE
+assert "ID Evento" in storage.COLUNAS_EVENTOS_LOTE
+assert "Tipo de evento" in storage.COLUNAS_EVENTOS_LOTE
 
 for name, columns in {
     "cotações": storage.COLUNAS_COTACOES,
@@ -136,4 +147,4 @@ for relative, path in distributed_files.items():
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert manifest_entries[relative] == digest, f"SHA-256 divergente: {relative}"
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.1.5.7: OK")
+print("TESTE DE INTEGRIDADE DO PACOTE V28.1.5.9: OK")

@@ -192,5 +192,5 @@ blocked_match_rows = match_blocked_evaluations[
 assert blocked_match_rows["Status"].eq("NÃO SELECIONADA").all()
 assert blocked_match_rows["Reason"].str.contains("já possui uma aposta", regex=False).all()
 
-print("TESTE V28.1.5.7 — ESTADO, ISOLAMENTO, COTAÇÕES E META SEMANAL: OK")
+print("TESTE V28.1.5.9 — ESTADO, ISOLAMENTO, COTAÇÕES E META SEMANAL: OK")
 print(evaluations[evaluations["Market"].eq("1X2")][["InputID", "Home", "Away", "Side", "Odd", "MarketProbability"]].to_string(index=False))

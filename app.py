@@ -32,10 +32,10 @@ _v28 = _load_required_module("tex_v28_core_2812")
 _operacional = _load_required_module("tex_operacional_core")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.1.5.7"
-EXPECTED_FINANCE_API = "28.1.5.7"
-INTERFACE_VERSION = "V28.1.5.7"
-APP_NAME = "Tex Statistics V28.1.5.7"
+EXPECTED_STORAGE_API = "28.1.5.9"
+EXPECTED_FINANCE_API = "28.1.5.9"
+INTERFACE_VERSION = "V28.1.5.9"
+APP_NAME = "Tex Statistics V28.1.5.9"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -44,9 +44,11 @@ ENGINE_VERSION = getattr(_v28, "ENGINE_VERSION", "V28.1.2-estado-isolado")
 _REQUIRED_V25 = ("LEAGUES", "normalize_zip")
 _REQUIRED_STORAGE = (
     "COLUNAS_ANALISES", "COLUNAS_COTACOES", "carregar_apostas",
+    "carregar_lote_pendente", "registrar_evento_lote",
     "google_configurado", "identificadores_analises", "identificadores_apostas",
     "identificadores_cotacoes", "liquidar_aposta", "salvar_analises",
-    "salvar_apostas", "salvar_cotacoes", "url_planilha_configurada",
+    "salvar_apostas", "salvar_cotacoes", "salvar_lote_pendente",
+    "url_planilha_configurada",
 )
 _REQUIRED_FINANCE = (
     "COLUNAS_APOSTAS", "atualizar_registro", "carregar_ledger_local",
@@ -98,6 +100,7 @@ normalize_zip = getattr(_v25, "normalize_zip", None)
 COLUNAS_ANALISES = getattr(_storage, "COLUNAS_ANALISES", [])
 COLUNAS_COTACOES = getattr(_storage, "COLUNAS_COTACOES", [])
 carregar_apostas = getattr(_storage, "carregar_apostas", None)
+carregar_lote_pendente = getattr(_storage, "carregar_lote_pendente", None)
 google_configurado = getattr(_storage, "google_configurado", None)
 identificadores_analises = getattr(_storage, "identificadores_analises", None)
 identificadores_apostas = getattr(_storage, "identificadores_apostas", None)
@@ -106,6 +109,8 @@ liquidar_aposta = getattr(_storage, "liquidar_aposta", None)
 salvar_analises = getattr(_storage, "salvar_analises", None)
 salvar_apostas = getattr(_storage, "salvar_apostas", None)
 salvar_cotacoes = getattr(_storage, "salvar_cotacoes", None)
+salvar_lote_pendente = getattr(_storage, "salvar_lote_pendente", None)
+registrar_evento_lote = getattr(_storage, "registrar_evento_lote", None)
 url_planilha_configurada = getattr(_storage, "url_planilha_configurada", None)
 COLUNAS_APOSTAS = getattr(_finance, "COLUNAS_APOSTAS", [])
 atualizar_registro = getattr(_finance, "atualizar_registro", None)
@@ -158,6 +163,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_ZIP = ROOT / "data" / "TEX_V22_DADOS_24_LIGAS.zip"
 MODEL_DIR = ROOT / "model"
 LOCAL_LEDGER_PATH = ROOT / "data" / "tex_v28_apostas.csv"
+LOCAL_PENDING_LOT_PATH = ROOT / "data" / "tex_v28_lote_pendente.json"
 CONSERVATIVE_BACKTEST_PATH = ROOT / "backtest" / "V28_1_5_7_META_5_RESUMO.json"
 FUSO = ZoneInfo("America/Fortaleza")
 
@@ -168,7 +174,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.1.5.7, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "pelo mesmo pacote V28.1.5.9, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -269,10 +275,151 @@ RESULT_STATE_KEYS = (
 )
 
 
+def _snapshot_time(snapshot: dict) -> datetime:
+    raw = str(snapshot.get("Salvo em", "") or snapshot.get("saved_at", "") or "").strip()
+    if not raw:
+        return datetime.min.replace(tzinfo=FUSO)
+    try:
+        parsed = datetime.fromisoformat(raw)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=FUSO)
+    except Exception:
+        return datetime.min.replace(tzinfo=FUSO)
+
+
+def _load_local_pending_lot() -> dict:
+    if not LOCAL_PENDING_LOT_PATH.is_file():
+        return {"Salvo em": "", "Jogos": []}
+    try:
+        payload = json.loads(LOCAL_PENDING_LOT_PATH.read_text(encoding="utf-8"))
+        jogos = payload.get("Jogos", []) if isinstance(payload, dict) else []
+        return {
+            "Salvo em": str(payload.get("Salvo em", "") if isinstance(payload, dict) else ""),
+            "Jogos": [dict(item) for item in jogos if isinstance(item, dict)],
+        }
+    except Exception as exc:
+        st.session_state.tex_autosave_warning = f"Backup local do lote não pôde ser lido: {exc}"
+        return {"Salvo em": "", "Jogos": []}
+
+
+def _save_local_pending_lot(jogos: list[dict]) -> dict:
+    LOCAL_PENDING_LOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    snapshot = {
+        "Salvo em": now_br().replace(microsecond=0).isoformat(),
+        "Versão da interface": INTERFACE_VERSION,
+        "Jogos": [dict(item) for item in jogos],
+    }
+    temporary = LOCAL_PENDING_LOT_PATH.with_suffix(".tmp")
+    temporary.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(LOCAL_PENDING_LOT_PATH)
+    return snapshot
+
+
+def _restore_pending_lot() -> list[dict]:
+    """Restaura da planilha como fonte principal; local é apenas contingência."""
+    local = _load_local_pending_lot()
+    if google_configurado(st.secrets):
+        try:
+            remote = carregar_lote_pendente(st.secrets)
+            remote_authoritative = bool(
+                remote.get("Salvo em")
+                or int(remote.get("Eventos encontrados", 0) or 0) > 0
+                or remote.get("Jogos")
+            )
+            if remote_authoritative:
+                restored = [dict(item) for item in remote.get("Jogos", []) if isinstance(item, dict)]
+                _save_local_pending_lot(restored)
+                st.session_state.tex_autosave_notice = (
+                    f"Lote restaurado da planilha: {len(restored)} partida(s). "
+                    "Fonte durável: aba entrada_jogos."
+                )
+                return restored
+        except Exception as exc:
+            st.session_state.tex_autosave_warning = (
+                "Não foi possível restaurar o lote da planilha. O backup local foi usado apenas como contingência: "
+                f"{exc}"
+            )
+
+    restored = [dict(item) for item in local.get("Jogos", []) if isinstance(item, dict)]
+    if restored:
+        st.session_state.tex_autosave_notice = (
+            f"Lote restaurado do backup local: {len(restored)} partida(s). "
+            "Sincronize com a planilha antes de continuar."
+        )
+    return restored
+
+
 def games() -> list[dict]:
     if "tex_games" not in st.session_state:
-        st.session_state.tex_games = []
+        st.session_state.tex_games = _restore_pending_lot()
     return st.session_state.tex_games
+
+
+def _persist_snapshot_best_effort(reason: str) -> None:
+    """Mantém cópias redundantes; o log entrada_jogos é a fonte durável principal."""
+    current = [dict(item) for item in games()]
+    local = _save_local_pending_lot(current)
+    if google_configurado(st.secrets):
+        try:
+            remote = salvar_lote_pendente(
+                st.secrets, current, interface_version=INTERFACE_VERSION
+            )
+            st.session_state.tex_autosave_status = (
+                f"Persistência confirmada: {len(current)} partida(s) na aba entrada_jogos; "
+                f"snapshot atualizado — {reason} — {remote.get('Salvo em', local.get('Salvo em', ''))}."
+            )
+            st.session_state.pop("tex_autosave_warning", None)
+        except Exception as exc:
+            # O evento append-only já foi confirmado; falha do snapshot não perde a partida.
+            st.session_state.tex_autosave_status = (
+                f"Persistência confirmada na aba entrada_jogos: {len(current)} partida(s) — {reason}."
+            )
+            st.session_state.tex_autosave_warning = (
+                "A partida foi salva no histórico durável, mas a cópia-resumo lote_pendente não foi atualizada: "
+                f"{exc}"
+            )
+    else:
+        st.session_state.tex_autosave_status = (
+            f"Backup local atualizado: {len(current)} partida(s) — {reason}."
+        )
+        st.session_state.tex_autosave_warning = (
+            "Google Sheets não está configurado. Sem a aba entrada_jogos não existe garantia de restauração "
+            "após reinício do servidor."
+        )
+
+
+def _registrar_evento_obrigatorio(tipo_evento: str, jogo: dict | None = None) -> None:
+    """Confirma a gravação remota antes de o formulário ser limpo."""
+    if not google_configurado(st.secrets):
+        return
+    try:
+        registrar_evento_lote(
+            st.secrets,
+            tipo_evento=tipo_evento,
+            jogo=jogo,
+            interface_version=INTERFACE_VERSION,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "A partida NÃO foi aceita porque a planilha não confirmou a gravação. "
+            "Os campos permanecem preenchidos; corrija a conexão e clique novamente. "
+            f"Detalhe: {exc}"
+        ) from exc
+
+
+def _normalizar_lote_para_comparacao(items: list[dict]) -> str:
+    return json.dumps([dict(item) for item in items], ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _confirmar_lote_remoto_antes_da_analise() -> None:
+    if not google_configurado(st.secrets):
+        return
+    remote = carregar_lote_pendente(st.secrets)
+    jogos_remotos = [dict(item) for item in remote.get("Jogos", []) if isinstance(item, dict)]
+    if _normalizar_lote_para_comparacao(jogos_remotos) != _normalizar_lote_para_comparacao(games()):
+        raise RuntimeError(
+            "O lote exibido não coincide com o lote durável da planilha. "
+            "A análise foi bloqueada para evitar perda ou mistura de partidas. Recarregue a página."
+        )
 
 
 def invalidate_analysis() -> None:
@@ -282,17 +429,42 @@ def invalidate_analysis() -> None:
 
 def upsert_game(game: dict) -> str:
     key = (game["Data"], game["Código da liga"], game["Mandante"], game["Visitante"])
+    existing_index: int | None = None
+    candidate = dict(game)
     for index, current in enumerate(games()):
         current_key = (current["Data"], current["Código da liga"], current["Mandante"], current["Visitante"])
         if key == current_key:
-            snapshot = dict(game)
-            snapshot["ID"] = current["ID"]
-            games()[index] = snapshot
-            invalidate_analysis()
-            return "atualizada"
-    games().append(dict(game))
+            existing_index = index
+            candidate["ID"] = current["ID"]
+            break
+
+    # Primeiro grava uma linha imutável no Google. Só depois altera a sessão e limpa o formulário.
+    _registrar_evento_obrigatorio("UPSERT", candidate)
+    if existing_index is None:
+        games().append(candidate)
+        action = "adicionada"
+    else:
+        games()[existing_index] = candidate
+        action = "atualizada"
     invalidate_analysis()
-    return "adicionada"
+    _persist_snapshot_best_effort(f"partida {action}")
+    return action
+
+
+def remove_game(index: int) -> dict:
+    target = dict(games()[index])
+    _registrar_evento_obrigatorio("DELETE", target)
+    games().pop(index)
+    invalidate_analysis()
+    _persist_snapshot_best_effort("partida removida")
+    return target
+
+
+def clear_games() -> None:
+    _registrar_evento_obrigatorio("CLEAR", None)
+    st.session_state.tex_games = []
+    invalidate_analysis()
+    _persist_snapshot_best_effort("lote apagado pelo usuário")
 
 
 def games_frame() -> pd.DataFrame:
@@ -555,12 +727,25 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Restaura o lote antes de desenhar a interface e antes de exibir o estado do autosave.
+_ = games()
+
 st.subheader("1. Adicionar partidas")
 league_names = list(LEAGUES.values())
 name_to_code = {name: code for code, name in LEAGUES.items()}
 
 if st.session_state.pop("tex_flash", None):
     st.success(st.session_state.pop("tex_flash_message", "Partida salva."))
+if st.session_state.get("tex_autosave_notice"):
+    st.info(str(st.session_state.pop("tex_autosave_notice")))
+if st.session_state.get("tex_autosave_status"):
+    st.caption("💾 " + str(st.session_state.get("tex_autosave_status")))
+if st.session_state.get("tex_autosave_warning"):
+    st.warning(str(st.session_state.get("tex_autosave_warning")))
+if google_configurado(st.secrets):
+    st.success("Persistência obrigatória ativa: cada partida é registrada imediatamente na aba entrada_jogos, antes da análise.")
+else:
+    st.error("Persistência durável indisponível: configure o Google Sheets antes de inserir um lote importante.")
 
 
 @_fragment
@@ -671,14 +856,14 @@ def render_game_entry() -> None:
             )
             bookmaker = row_top[2].text_input(
                 "Casa de apostas",
-                value="",
-                placeholder="Digite a casa de apostas",
+                value="PIXBET",
+                placeholder="Edite somente se usar outra casa",
                 key=f"bookmaker_{form_version}",
             )
 
             st.markdown("**Mercados e cotações**")
             st.caption(
-                "Os campos começam vazios. Marque somente os mercados que deseja avaliar."
+                "As cotações começam vazias. A casa padrão é PIXBET e pode ser editada."
             )
 
             use_1x2 = st.checkbox(
@@ -846,7 +1031,7 @@ def render_game_entry() -> None:
             "Liga": league_name,
             "Mandante": home,
             "Visitante": away,
-            "Casa de apostas": bookmaker.strip() or "Não informada",
+            "Casa de apostas": bookmaker.strip() or "PIXBET",
             "Odd mandante": float(odd_h) if use_1x2 else None,
             "Odd empate": float(odd_d) if use_1x2 else None,
             "Odd visitante": float(odd_a) if use_1x2 else None,
@@ -855,13 +1040,17 @@ def render_game_entry() -> None:
             "Odd ambas marcam — Sim": float(odd_by) if use_btts else None,
             "Odd ambas marcam — Não": float(odd_bn) if use_btts else None,
         }
-        action = upsert_game(game)
+        try:
+            action = upsert_game(game)
+        except RuntimeError as exc:
+            st.error(str(exc))
+            return
         st.session_state.tex_form_version = form_version + 1
         st.session_state.pop(selection_key, None)
         st.session_state.tex_flash = True
         st.session_state.tex_flash_message = (
-            f"Partida {action}: {home} x {away}. A análise anterior foi invalidada e "
-            "o novo formulário foi aberto completamente vazio."
+            f"Partida {action}: {home} x {away}. A gravação durável na planilha foi confirmada; "
+            "a análise anterior foi invalidada e um novo formulário foi aberto."
         )
         st.rerun()
 
@@ -893,20 +1082,51 @@ else:
         hide_index=True,
         use_container_width=True,
     )
-    remove_col, clear_col = st.columns([3, 1])
+    remove_col, backup_col = st.columns([3, 1])
     labels = [f"{index + 1}. {item['Mandante']} x {item['Visitante']} — {item['Liga']}" for index, item in enumerate(games())]
     remove_label = remove_col.selectbox("Remover partida", ["Nenhuma"] + labels)
     if remove_col.button("REMOVER SELECIONADA", use_container_width=True) and remove_label != "Nenhuma":
         index = labels.index(remove_label)
-        games().pop(index)
-        invalidate_analysis()
-        st.rerun()
-    if clear_col.button("LIMPAR LOTE", use_container_width=True):
-        st.session_state.tex_games = []
-        invalidate_analysis()
-        st.rerun()
+        try:
+            remove_game(index)
+        except RuntimeError as exc:
+            st.error(str(exc))
+        else:
+            st.rerun()
+    backup_col.download_button(
+        "BAIXAR BACKUP DO LOTE",
+        games_frame().to_csv(index=False).encode("utf-8-sig"),
+        "lote_pendente_tex_statistics.csv",
+        "text/csv",
+        use_container_width=True,
+    )
+    with st.expander("Apagar todo o lote", expanded=False):
+        confirm_clear = st.checkbox(
+            "Confirmo que desejo apagar todas as partidas do lote e atualizar o autosave.",
+            value=False,
+            key="tex_confirm_clear_lot",
+        )
+        if st.button(
+            "APAGAR TODO O LOTE",
+            disabled=not confirm_clear,
+            use_container_width=True,
+        ):
+            try:
+                clear_games()
+            except RuntimeError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state.tex_form_version = int(st.session_state.get("tex_form_version", 0)) + 1
+                st.session_state.tex_flash = True
+                st.session_state.tex_flash_message = "Lote apagado após confirmação explícita."
+                st.rerun()
 
     if st.button("ANALISAR TODO O LOTE", type="primary", use_container_width=True):
+        try:
+            _confirmar_lote_remoto_antes_da_analise()
+        except Exception as exc:
+            st.error(f"Análise bloqueada: {exc}")
+            st.stop()
         current_games = games_frame()
         entries, readings, evaluations, diagnostics = analyze_games(
             current_games,
@@ -936,6 +1156,25 @@ else:
             registered_week_counts,
             registered_match_ids,
         )
+        if google_configurado(st.secrets):
+            try:
+                catalog_records = make_catalog_records(evaluations, bankroll)
+                analysis_records = make_analysis_records(evaluations, unit_percent / 100.0)
+                # Grava diretamente, sem reler abas inteiras. A releitura anterior podia
+                # estourar a quota do Google e impedir qualquer salvamento. A deduplicação
+                # da sessão usa os IDs determinísticos no cache do módulo de armazenamento.
+                saved_odds = salvar_cotacoes(st.secrets, catalog_records)
+                saved_analysis = salvar_analises(st.secrets, analysis_records)
+                st.session_state.tex_analysis_autosave = (
+                    f"Análise salva automaticamente na planilha: {saved_odds} cotação(ões) e "
+                    f"{saved_analysis} probabilidade(s) novas."
+                )
+                st.session_state.pop("tex_analysis_autosave_error", None)
+            except Exception as exc:
+                st.session_state.tex_analysis_autosave_error = (
+                    "A análise permaneceu na tela, mas o salvamento automático na planilha falhou: "
+                    f"{exc}. Use o botão de repetir salvamento abaixo."
+                )
 
 current_fingerprint = lot_fingerprint(
     games_frame(),
@@ -955,6 +1194,10 @@ readings = st.session_state.get("tex_readings", pd.DataFrame())
 evaluations = st.session_state.get("tex_evaluations", pd.DataFrame())
 diagnostics = st.session_state.get("tex_diagnostics", pd.DataFrame())
 ai_summary = st.session_state.get("tex_ai_summary", "")
+if st.session_state.get("tex_analysis_autosave"):
+    st.success(str(st.session_state.pop("tex_analysis_autosave")))
+if st.session_state.get("tex_analysis_autosave_error"):
+    st.error(str(st.session_state.get("tex_analysis_autosave_error")))
 
 
 def pct(value: float) -> str:
@@ -1294,24 +1537,18 @@ if not readings.empty or not diagnostics.empty:
     )
 
     st.subheader("4. Salvar cotações e probabilidades")
-    st.caption("O clique grava as cotações e todas as probabilidades avaliadas. Analisar não grava automaticamente.")
-    if st.button("SALVAR COTAÇÕES E PROBABILIDADES", type="primary", use_container_width=True):
+    st.caption("A análise já tenta salvar automaticamente. Use este botão apenas para repetir ou confirmar a gravação.")
+    if st.button("REPETIR SALVAMENTO NA PLANILHA", type="primary", use_container_width=True):
         if google_configurado(st.secrets):
             try:
                 catalog_records = make_catalog_records(evaluations, bankroll)
                 analysis_records = make_analysis_records(evaluations, unit_percent / 100.0)
-                existing_catalog = identificadores_cotacoes(st.secrets)
-                existing_analysis = identificadores_analises(st.secrets)
-                catalog_records = [
-                    record for record in catalog_records
-                    if str(record["ID Coleta"]) not in existing_catalog
-                ]
-                analysis_records = [
-                    record for record in analysis_records
-                    if str(record["ID Análise"]) not in existing_analysis
-                ]
+                # Grava diretamente, sem reler abas inteiras. A releitura anterior podia
+                # estourar a quota do Google e impedir qualquer salvamento. A deduplicação
+                # da sessão usa os IDs determinísticos no cache do módulo de armazenamento.
                 saved_odds = salvar_cotacoes(st.secrets, catalog_records)
                 saved_analysis = salvar_analises(st.secrets, analysis_records)
+                st.session_state.pop("tex_analysis_autosave_error", None)
                 st.success(
                     f"Gravação concluída: {saved_odds} novo(s) registro(s) de cotações e "
                     f"{saved_analysis} novo(s) registro(s) de probabilidades. Duplicidades foram ignoradas."

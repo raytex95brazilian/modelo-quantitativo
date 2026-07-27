@@ -41,9 +41,9 @@ for field in (
 # Todos os campos de entrada manual começam vazios.
 assert 'game_date = row_top[0].date_input(\n                "Data",\n                value=None,' in form_body
 assert 'game_time = row_top[1].time_input(\n                "Horário",\n                value=None,' in form_body
-assert 'bookmaker = row_top[2].text_input(\n                "Casa de apostas",\n                value="",' in form_body
+assert 'bookmaker = row_top[2].text_input(\n                "Casa de apostas",\n                value="PIXBET",' in form_body
 assert form_body.count('value=None,') >= 9  # data, horário e sete cotações
-assert 'value="Pixbet"' not in form_body
+assert 'value="PIXBET"' in form_body
 assert 'value=0.0' not in form_body
 
 # A análise para IA aparece na própria tela e o download é opcional.
@@ -59,4 +59,4 @@ assert 'with st.form("tex_operational_config_form"' in sidebar
 assert 'APLICAR CONFIGURAÇÃO' in sidebar
 
 assert 'streamlit>=1.37,<2.0' in requirements
-print("TESTE DE USABILIDADE E ESTABILIDADE V28.1.5.7: OK")
+print("TESTE DE USABILIDADE E ESTABILIDADE V28.1.5.9: OK")
