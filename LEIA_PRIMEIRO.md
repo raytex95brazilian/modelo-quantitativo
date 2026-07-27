@@ -1,24 +1,27 @@
-# Tex Statistics V28.1.5.5 — etapa única e campos vazios
+# Tex Statistics V28.1.5.7 — decisão fechada na cotação informada
+
+## Identificação
+
+- **Interface:** Tex Statistics V28.1.5.7
+- **Motor preditivo:** V28.1.2 — Estado Isolado
+- **Modelo:** V28.0
+- **Política operacional:** meta semanal de cinco seleções, no máximo uma por partida.
+
+## Regra de uso
+
+A análise é concluída com as cotações digitadas no lote. O aplicativo não cria estado de espera, não pede acompanhamento posterior e não pressupõe que o usuário voltará para atualizar odds.
+
+As decisões visíveis são:
+
+- **OPERAR:** seleção incluída na carteira com a cotação informada;
+- **NÃO SELECIONADA:** seleção avaliada, mas não incluída na carteira final;
+- **DESCARTAR:** cotação informada não atende ao piso operacional;
+- **AMOSTRA INSUFICIENTE:** evidência histórica inadequada;
+- **FORA DA FAIXA:** cotação efetiva fora da faixa testada;
+- **EXPERIMENTAL:** Ambas Marcam, fora da carteira validada.
+
+Os cálculos internos continuam usando a cotação informada, o desconto operacional de 2%, a probabilidade conservadora e o ranking semanal. Foram removidos da interface e do resumo para IA os estados e indicadores que sugeriam aguardar ou acompanhar uma cotação futura.
 
 ## Deploy
 
-1. Extraia o ZIP.
-2. Envie o conteúdo interno desta pasta para a raiz do repositório GitHub.
-3. Não envie apenas o ZIP e não crie uma pasta adicional acima de `app.py`.
-4. Preserve os Secrets do Streamlit Cloud.
-5. Após o commit, execute **Manage app → Reboot app**.
-
-## Versões
-
-- Interface: **Tex Statistics V28.1.5.5**
-- Motor preditivo: **V28.1.2 — Estado Isolado**
-- API do núcleo: **28.1.2**
-
-## Correções desta revisão
-
-- inclusão de partidas em uma única etapa, sem botão intermediário de confirmação;
-- liga e equipes atualizadas por fragmento independente;
-- data, horário, casa de apostas e todas as cotações começam vazios;
-- as cotações permanecem em formulário e não são apagadas ao trocar liga ou equipe;
-- seção **Análise para IA** exibida diretamente na tela, com botão de copiar do bloco;
-- download do texto mantido apenas como opção.
+Envie todo o conteúdo desta pasta para a raiz do repositório conectado ao Streamlit, preserve os Secrets e execute **Manage app → Reboot app**.

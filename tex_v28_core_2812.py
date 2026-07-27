@@ -53,14 +53,27 @@ MARKET_DEFINITIONS = {
 @dataclass(frozen=True)
 class V28Config:
     unit_fraction: float = 0.01
-    max_entries: int = 5
+    weekly_target: int = 5
     min_odd: float = 1.20
     max_odd: float = 3.00
     price_haircut: float = 0.02
-    minimum_conservative_ev: float = 0.0
-    near_conservative_ev: float = -0.03
+    strong_price_ev: float = 0.0
+    weekly_portfolio_ev_floor: float = 0.0
+    fallback_min_ev: float = -0.15
+    near_conservative_ev: float = -0.15
+    fallback_stake_fraction: float = 0.50
     minimum_profile_sample: int = 100
     wilson_z: float = 1.2815515655446004
+
+    @property
+    def max_entries(self) -> int:
+        """Compatibilidade de leitura com scripts anteriores."""
+        return self.weekly_target
+
+    @property
+    def minimum_conservative_ev(self) -> float:
+        """Compatibilidade de leitura; a faixa principal continua em EV >= 0%."""
+        return self.strong_price_ev
 
 
 V28_CFG = V28Config()
@@ -366,7 +379,11 @@ def _evaluate_group(
         model_expected_value = probability * effective_odd - 1.0
         conservative_expected_value = conservative_probability * effective_odd - 1.0
         required_odd = 1.0 / max((1.0 - cfg.price_haircut) * conservative_probability, 1e-9)
+        required_odd_weekly_band = (1.0 + cfg.fallback_min_ev) / max(
+            (1.0 - cfg.price_haircut) * conservative_probability, 1e-9
+        )
         odd_gap = odd - required_odd
+        odd_gap_weekly_band = odd - required_odd_weekly_band
         in_odd_range = cfg.min_odd <= effective_odd <= cfg.max_odd
         sufficient_profile = (
             profile_sample >= cfg.minimum_profile_sample
@@ -385,21 +402,43 @@ def _evaluate_group(
         elif not sufficient_profile:
             status = "AMOSTRA INSUFICIENTE"
             reason = (
-                f"Casos semelhantes insuficientes ou instáveis: {profile_sample} registros; "
-                f"confiança {profile['Confidence']}."
+                f"Amostra histórica da faixa insuficiente ou instável: {profile_sample} registros; "
+                f"confiança estatística {profile['Confidence']}."
             )
-        elif conservative_expected_value >= cfg.minimum_conservative_ev:
-            status = "QUALIFICADA"
+        elif conservative_expected_value >= cfg.strong_price_ev:
+            status = "CANDIDATA PRINCIPAL"
             reason = (
-                "A cotação supera o preço mínimo calculado com probabilidade conservadora, "
-                "casos semelhantes, estabilidade e desconto operacional de 2%."
+                "A cotação informada atende ao critério principal da análise atual após o desconto operacional de 2%."
             )
-        elif conservative_expected_value >= cfg.near_conservative_ev:
-            status = "AGUARDAR PREÇO"
-            reason = "Leitura próxima do ponto de equilíbrio conservador; precisa de cotação maior para entrar."
+        elif conservative_expected_value >= cfg.fallback_min_ev:
+            status = "CANDIDATA DE COMPLEMENTO"
+            reason = (
+                "A cotação informada atende ao piso rígido do complemento semanal e só pode ser selecionada "
+                "por ranking, com meia unidade."
+            )
         else:
             status = "DESCARTAR"
-            reason = "A cotação atual não remunera a probabilidade conservadora estimada."
+            reason = "A cotação informada não atende ao piso operacional desta análise."
+
+        model_sports_difference = probability - raw_probability
+        model_market_difference = probability - market_probability
+        maximum_component_disagreement = max(
+            abs(model_sports_difference), abs(model_market_difference)
+        )
+        if maximum_component_disagreement >= 0.20:
+            disagreement_level = "ALTO"
+            disagreement_reason = (
+                "Há desacordo alto entre a probabilidade final, o componente esportivo e/ou o mercado. "
+                "A leitura deve ser interpretada com cautela."
+            )
+        elif maximum_component_disagreement >= 0.12:
+            disagreement_level = "MODERADO"
+            disagreement_reason = (
+                "Há desacordo moderado entre os componentes; confira as probabilidades antes de operar."
+            )
+        else:
+            disagreement_level = "NORMAL"
+            disagreement_reason = "Os componentes estão dentro da faixa normal de divergência."
 
         home_sample = int(sports.get("HomeSample", 0) or 0)
         away_sample = int(sports.get("AwaySample", 0) or 0)
@@ -429,8 +468,14 @@ def _evaluate_group(
             "ConservativeExpectedValue": conservative_expected_value,
             "ExpectedValue": conservative_expected_value,
             "RequiredOddForOperation": required_odd,
+            "RequiredOddForWeeklyBand": required_odd_weekly_band,
             "OddGapToOperation": odd_gap,
-            "ModelMarketDifference": probability - market_probability,
+            "OddGapToWeeklyBand": odd_gap_weekly_band,
+            "ModelMarketDifference": model_market_difference,
+            "ModelSportsDifference": model_sports_difference,
+            "MaximumComponentDisagreement": maximum_component_disagreement,
+            "DisagreementLevel": disagreement_level,
+            "DisagreementReason": disagreement_reason,
             "ProfileSample": profile_sample, "ProfileWins": profile_wins,
             "EmpiricalHitRate": float(profile["HitRate"]),
             "HomeSample": home_sample, "AwaySample": away_sample,
@@ -441,8 +486,8 @@ def _evaluate_group(
             "CalibrationGap": profile["CalibrationGap"], "Brier": profile["Brier"],
             "SampleConfidence": str(profile["Confidence"]),
             "SampleConfidenceReason": (
-                f"{profile_sample} previsões fora da amostra; desvio de calibração "
-                f"{float(profile['CalibrationGap']):.1%}; limite conservador dos casos semelhantes "
+                f"{profile_sample} previsões fora da amostra na faixa; desvio de calibração "
+                f"{float(profile['CalibrationGap']):.1%}; limite conservador da faixa histórica "
                 f"{similar_cases_lower:.1%}." if profile_sample > 0 and pd.notna(profile["CalibrationGap"])
                 else "Mercado sem perfil financeiro fora da amostra."
             ),
@@ -450,7 +495,9 @@ def _evaluate_group(
             "SportsProfileLevel": "AMOSTRA DAS EQUIPES",
             "Confidence": str(profile["Confidence"]),
             "Status": status, "StatusBase": status,
-            "Stake": unit_value if status == "QUALIFICADA" else 0.0,
+            "Stake": 0.0,
+            "StakeMultiplier": 0.0,
+            "PortfolioTier": "",
             "Score": conservative_expected_value,
             "Reason": reason,
             "LambdaHome": float(sports["LambdaHome"]), "LambdaAway": float(sports["LambdaAway"]),
@@ -467,16 +514,18 @@ def analyze_games(
     model: V28Model,
     bankroll: float,
     unit_fraction: float = V28_CFG.unit_fraction,
-    max_entries: int = V28_CFG.max_entries,
+    max_entries: int = V28_CFG.weekly_target,
     cfg: V28Config = V28_CFG,
     sports_cfg: V25Config = CFG,
     existing_week_counts: dict[str, int] | None = None,
     existing_match_ids: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Analisa todos os mercados e monta uma carteira com limite semanal.
+    """Analisa todos os mercados e monta a carteira semanal por ranking.
 
-    O número informado é apenas um máximo. Entram somente preços aprovados pelo
-    filtro conservador, e no máximo uma seleção por partida.
+    A política operacional busca cinco seleções por semana, no máximo uma por
+    partida. A decisão é fechada com as cotações informadas no lote: primeiro usa
+    EV conservador não negativo e, se faltarem jogos, completa por ranking até o
+    piso rígido de -15%, com meia unidade. Não existe estado de espera por cotação.
     """
     if games.empty:
         empty = pd.DataFrame()
@@ -489,9 +538,8 @@ def analyze_games(
     try:
         target = int(max_entries)
     except (TypeError, ValueError) as exc:
-        raise ValueError("O máximo semanal deve ser um número inteiro entre 1 e 5.") from exc
-    if not 1 <= target <= 5:
-        raise ValueError("O máximo semanal deve estar entre 1 e 5 entradas.")
+        raise ValueError("A meta semanal deve ser um número inteiro igual ou superior a 5.") from exc
+    target = max(5, target)
     registered_by_week: dict[str, int] = {}
     for week, count in (existing_week_counts or {}).items():
         parsed_count = int(count)
@@ -537,7 +585,7 @@ def analyze_games(
                 item["Bookmaker"] = clean_text(row.get("Casa de apostas")) or "Não informada"
             diagnostics.append({
                 "Jogo": f"{home} x {away}", "Liga": LEAGUES[code], "Situação": "ANALISADO",
-                "Detalhe": f"{len(evaluations)-start} seleções avaliadas; carteira validada usa 1X2 e gols, uma seleção por jogo."
+                "Detalhe": f"{len(evaluations)-start} seleções avaliadas; meta semanal de {target}, usando 1X2 e gols, uma seleção por jogo."
             })
         except Exception as exc:
             diagnostics.append({
@@ -551,63 +599,103 @@ def analyze_games(
         empty = pd.DataFrame()
         return empty, empty, empty, diagnostics_frame
 
-    # Primeiro, melhor preço qualificado por partida; depois, respeita o máximo semanal.
-    qualified = all_evaluations[
+    # Política semanal: uma seleção por partida e meta mínima de cinco entradas.
+    # Faixa principal: EV conservador não negativo, com uma unidade.
+    # Complemento: somente quando faltam jogos para a meta, piso rígido de -15% e meia unidade.
+    eligible = all_evaluations[
         all_evaluations["ValidatedMarket"].eq(True)
-        & all_evaluations["StatusBase"].eq("QUALIFICADA")
+        & all_evaluations["StatusBase"].isin(["CANDIDATA PRINCIPAL", "CANDIDATA DE COMPLEMENTO"])
         & ~all_evaluations["MatchID"].astype(str).isin(registered_matches)
+        & all_evaluations["ProfileSample"].ge(cfg.minimum_profile_sample)
+        & all_evaluations["SampleConfidence"].isin(["MODERADA", "FORTE"])
+        & all_evaluations["EffectiveOdd"].between(cfg.min_odd, cfg.max_odd)
     ].copy()
     best_per_match = (
-        qualified.sort_values(["MatchID", "ExpectedValue", "DecisionProbability"], ascending=[True, False, False])
-        .drop_duplicates("MatchID")
+        eligible.sort_values(
+            ["MatchID", "ConservativeExpectedValue", "DecisionProbability"],
+            ascending=[True, False, False],
+        ).drop_duplicates("MatchID")
     )
+
     weekly_entries: list[pd.DataFrame] = []
-    ordered_candidates = best_per_match.sort_values(
-        ["WeekID", "ExpectedValue", "DecisionProbability"],
-        ascending=[True, False, False],
-    )
-    for week_id, candidates in ordered_candidates.groupby("WeekID", sort=True):
-        remaining = max(0, target - registered_by_week.get(str(week_id), 0))
-        if remaining:
-            weekly_entries.append(candidates.head(remaining).copy())
+    for week_id, candidates in best_per_match.groupby("WeekID", sort=True):
+        already_registered = registered_by_week.get(str(week_id), 0)
+        needed = max(0, target - already_registered)
+        if needed <= 0:
+            continue
+        ordered = candidates.sort_values(
+            ["ConservativeExpectedValue", "DecisionProbability", "Reliability"],
+            ascending=[False, False, False],
+        )
+        principal = ordered[
+            ordered["ConservativeExpectedValue"].ge(cfg.strong_price_ev)
+        ].head(needed).copy()
+        if not principal.empty:
+            principal["PortfolioTier"] = "EV CONSERVADOR NÃO NEGATIVO"
+            principal["StakeMultiplier"] = 1.0
+        remaining = needed - len(principal)
+        selected = principal
+        if remaining > 0:
+            used_matches = set(principal.get("MatchID", pd.Series(dtype=str)).astype(str))
+            complement = ordered[
+                ~ordered["MatchID"].astype(str).isin(used_matches)
+                & ordered["ConservativeExpectedValue"].ge(cfg.fallback_min_ev)
+            ].head(remaining).copy()
+            if not complement.empty:
+                complement["PortfolioTier"] = "COMPLEMENTO DE META — MEIA UNIDADE"
+                complement["StakeMultiplier"] = cfg.fallback_stake_fraction
+                selected = pd.concat([principal, complement], ignore_index=False)
+        if not selected.empty:
+            weekly_entries.append(selected)
+
     entries = (
         pd.concat(weekly_entries, ignore_index=False)
         if weekly_entries else best_per_match.iloc[0:0].copy()
     )
     if not entries.empty:
-        entries["Rank"] = entries.groupby("WeekID")["ExpectedValue"].rank(method="first", ascending=False).astype(int)
+        entries["Rank"] = entries.groupby("WeekID")["ConservativeExpectedValue"].rank(
+            method="first", ascending=False
+        ).astype(int)
         entries["Status"] = "OPERAR"
-        entries["Stake"] = unit_value
-        entries["Reason"] = "Selecionada pelo maior valor esperado conservador entre preços qualificados; uma seleção por partida."
+        entries["Stake"] = unit_value * entries["StakeMultiplier"].astype(float)
+        entries["Reason"] = np.where(
+            entries["PortfolioTier"].eq("EV CONSERVADOR NÃO NEGATIVO"),
+            "Selecionada entre as prioridades da semana com EV conservador não negativo; uma seleção por partida.",
+            "Selecionada apenas para completar a meta semanal, dentro do piso rígido de -15%; exposição reduzida para meia unidade.",
+        )
 
     selected_keys = set(zip(entries.get("MatchID", []), entries.get("Side", [])))
+    selected_tiers = {
+        (str(row.MatchID), str(row.Side)): (str(row.PortfolioTier), float(row.StakeMultiplier))
+        for row in entries.itertuples(index=False)
+    } if not entries.empty else {}
     for idx, row in all_evaluations.iterrows():
-        key = (row["MatchID"], row["Side"])
+        key = (str(row["MatchID"]), str(row["Side"]))
         if key in selected_keys:
+            tier, multiplier = selected_tiers[key]
             all_evaluations.at[idx, "Status"] = "OPERAR"
-            all_evaluations.at[idx, "Stake"] = unit_value
-            all_evaluations.at[idx, "Reason"] = "Selecionada pelo maior valor esperado conservador entre preços qualificados."
-        elif row["StatusBase"] == "QUALIFICADA":
-            all_evaluations.at[idx, "Status"] = "RESERVA"
+            all_evaluations.at[idx, "PortfolioTier"] = tier
+            all_evaluations.at[idx, "StakeMultiplier"] = multiplier
+            all_evaluations.at[idx, "Stake"] = unit_value * multiplier
+            all_evaluations.at[idx, "Reason"] = (
+                "Selecionada com EV conservador não negativo."
+                if tier == "EV CONSERVADOR NÃO NEGATIVO"
+                else "Selecionada para completar a meta semanal, dentro do piso rígido de -15%, com meia unidade."
+            )
+        elif row["StatusBase"] in {"CANDIDATA PRINCIPAL", "CANDIDATA DE COMPLEMENTO"}:
+            all_evaluations.at[idx, "Status"] = "NÃO SELECIONADA"
             all_evaluations.at[idx, "Stake"] = 0.0
-            already_registered = registered_by_week.get(str(row["WeekID"]), 0)
             if str(row["MatchID"]) in registered_matches:
-                all_evaluations.at[idx, "Reason"] = (
-                    "Preço qualificado, mas esta partida já possui uma aposta registrada."
-                )
-            elif already_registered >= target:
-                all_evaluations.at[idx, "Reason"] = (
-                    f"Preço qualificado, mas o máximo semanal de {target} já foi atingido "
-                    f"por {already_registered} aposta(s) registrada(s)."
-                )
+                all_evaluations.at[idx, "Reason"] = "Esta partida já possui uma aposta registrada; nenhuma nova entrada foi criada."
+            elif registered_by_week.get(str(row["WeekID"]), 0) >= target:
+                all_evaluations.at[idx, "Reason"] = f"A meta semanal de {target} já foi atingida; esta seleção não entrou na carteira."
             else:
-                all_evaluations.at[idx, "Reason"] = (
-                    "Preço qualificado, mas ficou atrás de outra seleção do mesmo jogo ou do máximo semanal."
-                )
+                all_evaluations.at[idx, "Reason"] = "Não entrou na carteira final por ficar atrás de outra seleção da mesma partida ou do ranking semanal."
 
     # Uma leitura experimental nunca deve ocultar um mercado financeiramente validado.
-    order = {"OPERAR": 0, "RESERVA": 1, "QUALIFICADA": 1, "AGUARDAR PREÇO": 2,
-             "DESCARTAR": 3, "AMOSTRA INSUFICIENTE": 4, "FORA DA FAIXA": 5, "EXPERIMENTAL": 6}
+    order = {"OPERAR": 0, "NÃO SELECIONADA": 1, "CANDIDATA PRINCIPAL": 2,
+             "CANDIDATA DE COMPLEMENTO": 3, "DESCARTAR": 5,
+             "AMOSTRA INSUFICIENTE": 6, "FORA DA FAIXA": 7, "EXPERIMENTAL": 8}
     all_evaluations["StatusOrder"] = all_evaluations["Status"].map(order).fillna(9)
     readings = (
         all_evaluations.sort_values(["MatchID","StatusOrder","ExpectedValue","DecisionProbability"], ascending=[True,True,False,False])
@@ -622,20 +710,34 @@ def display_frame(frame: pd.DataFrame) -> pd.DataFrame:
     cols = [
         "Rank", "Status", "DateParsed", "Time", "League", "Home", "Away", "MarketName", "Selection",
         "Odd", "EffectiveOdd", "DecisionProbability", "ConservativeProbability", "MarketProbability",
-        "RawSportsProbability", "ExpectedValue", "RequiredOddForOperation", "OddGapToOperation",
-        "ProfileSample", "EmpiricalHitRate", "SampleConfidence", "Reliability", "Stake", "Reason",
+        "RawSportsProbability", "ExpectedValue",
+        "ProfileSample", "EmpiricalHitRate", "SampleConfidence", "Reliability",
+        "DisagreementLevel", "MaximumComponentDisagreement", "PortfolioTier",
+        "StakeMultiplier", "Stake", "Reason",
     ]
     out = frame[[column for column in cols if column in frame.columns]].copy()
+    for percentage_column in (
+        "DecisionProbability", "ConservativeProbability", "MarketProbability",
+        "RawSportsProbability", "ExpectedValue", "EmpiricalHitRate", "Reliability",
+        "MaximumComponentDisagreement",
+    ):
+        if percentage_column in out:
+            out[percentage_column] = pd.to_numeric(out[percentage_column], errors="coerce") * 100.0
     rename = {
         "Rank": "Posição", "Status": "Situação", "DateParsed": "Data", "Time": "Hora",
         "League": "Liga", "Home": "Mandante", "Away": "Visitante", "MarketName": "Mercado",
         "Selection": "Seleção", "Odd": "Cotação informada", "EffectiveOdd": "Cotação após desconto de 2%",
         "DecisionProbability": "Probabilidade do modelo", "ConservativeProbability": "Probabilidade conservadora",
         "MarketProbability": "Mercado sem margem", "RawSportsProbability": "Probabilidade esportiva",
-        "ExpectedValue": "Valor esperado conservador", "RequiredOddForOperation": "Cotação mínima",
-        "OddGapToOperation": "Diferença da cotação", "ProfileSample": "Casos semelhantes",
-        "EmpiricalHitRate": "Acerto dos casos semelhantes", "SampleConfidence": "Confiança da amostra",
-        "Reliability": "Estabilidade", "Stake": "Entrada fixa", "Reason": "Motivo",
+        "ExpectedValue": "Valor esperado conservador",
+        "ProfileSample": "Amostra histórica da faixa",
+        "EmpiricalHitRate": "Acerto histórico da faixa", "SampleConfidence": "Confiança estatística da amostra",
+        "Reliability": "Estabilidade da calibração",
+        "DisagreementLevel": "Nível de desacordo",
+        "MaximumComponentDisagreement": "Maior desacordo entre componentes",
+        "PortfolioTier": "Faixa da carteira",
+        "StakeMultiplier": "Multiplicador da unidade",
+        "Stake": "Entrada fixa", "Reason": "Motivo",
     }
     return out.rename(columns=rename)
 
@@ -650,8 +752,8 @@ def build_ai_summary(
     lines = [
         f"RESUMO PARA ANÁLISE — {APP_NAME}",
         "Arquitetura: mercado sem margem, modelo dinâmico de gols e árvores regularizadas, com avaliação fora da amostra.",
-        "Protocolo: desconto operacional de 2% na cotação, probabilidade conservadora baseada em casos semelhantes e no máximo uma seleção por jogo.",
-        "A quantidade semanal é um limite máximo, nunca uma obrigação de preencher apostas.",
+        "Protocolo: desconto operacional de 2% na cotação, probabilidade conservadora baseada na faixa histórica e no máximo uma seleção por jogo.",
+        "Política semanal: meta de cinco seleções; EV conservador não negativo usa uma unidade e complementos até o piso rígido de -15% usam meia unidade.",
         "Ambas marcam é exibido como análise complementar e não entra automaticamente na carteira validada por ausência de histórico completo de cotações.",
         f"Partidas: {len(games)} | leituras principais: {len(readings)} | seleções avaliadas: {len(evaluations)}",
         "",
@@ -667,11 +769,19 @@ def build_ai_summary(
             f"JOGO: {home} x {away} | {game.get('Liga', '')} | "
             f"{match_date.strftime('%d/%m/%Y')} {game.get('Hora', '')}"
         )
-        if context.get("Available"):
+        if context.get("Available") and context.get("Consolidated"):
             lines.append(
-                f"Classificação: {home} {context['HomePosition']}º, {context['HomePoints']} pontos, "
-                f"{context['HomePPG']:.2f} ponto(s) por jogo | {away} {context['AwayPosition']}º, "
-                f"{context['AwayPoints']} pontos, {context['AwayPPG']:.2f} ponto(s) por jogo."
+                f"Classificação consolidada: {home} {context['HomePosition']}º, {context['HomePoints']} pontos em "
+                f"{context['HomeGames']} jogos, {context['HomePPG']:.2f} ponto(s) por jogo | "
+                f"{away} {context['AwayPosition']}º, {context['AwayPoints']} pontos em "
+                f"{context['AwayGames']} jogos, {context['AwayPPG']:.2f} ponto(s) por jogo."
+            )
+        elif context.get("Available"):
+            lines.append(
+                f"Classificação ainda não consolidada: {home} {context['HomePoints']} ponto(s) em "
+                f"{context['HomeGames']} jogo(s), {context['HomePPG']:.2f} ponto(s) por jogo | "
+                f"{away} {context['AwayPoints']} ponto(s) em {context['AwayGames']} jogo(s), "
+                f"{context['AwayPPG']:.2f} ponto(s) por jogo. Posições ordinais não utilizadas."
             )
         reading = readings[readings["InputID"].astype(str).eq(input_id)] if not readings.empty else pd.DataFrame()
         if not reading.empty:
@@ -682,12 +792,22 @@ def build_ai_summary(
                 f"{row['DecisionProbability']:.1%} | probabilidade conservadora "
                 f"{row['ConservativeProbability']:.1%} | mercado {row['MarketProbability']:.1%} | "
                 f"probabilidade esportiva {row['RawSportsProbability']:.1%} | valor esperado conservador "
-                f"{row['ExpectedValue']:.1%} | cotação mínima {row['RequiredOddForOperation']:.2f}."
+                f"{row['ExpectedValue']:.1%}."
             )
             lines.append(
-                f"Casos semelhantes: {int(row['ProfileSample'])}; acerto {row['EmpiricalHitRate']:.1%}; "
-                f"confiança {row['SampleConfidence']}; estabilidade {row['Reliability']:.1%}."
+                f"Amostra histórica da faixa: {int(row['ProfileSample'])}; acerto histórico {row['EmpiricalHitRate']:.1%}; "
+                f"confiança estatística {row['SampleConfidence']}; estabilidade {row['Reliability']:.1%}."
             )
+            lines.append(
+                f"Desacordo entre componentes: {row['DisagreementLevel']} — maior diferença "
+                f"{row['MaximumComponentDisagreement']:.1%}; modelo–mercado {row['ModelMarketDifference']:+.1%}; "
+                f"modelo–esportivo {row['ModelSportsDifference']:+.1%}."
+            )
+            if row.get('Status') == 'OPERAR':
+                lines.append(
+                    f"Faixa da carteira: {row.get('PortfolioTier', '')}; multiplicador da unidade "
+                    f"{float(row.get('StakeMultiplier', 1.0)):.2f}."
+                )
         game_evaluations = (
             evaluations[evaluations["InputID"].astype(str).eq(input_id)]
             if not evaluations.empty else pd.DataFrame()
@@ -697,8 +817,9 @@ def build_ai_summary(
                 f"- {item['Selection']}: {item['Status']}; cotação {item['Odd']:.2f}; "
                 f"probabilidade do modelo {item['DecisionProbability']:.1%}; probabilidade conservadora "
                 f"{item['ConservativeProbability']:.1%}; valor esperado conservador "
-                f"{item['ExpectedValue']:.1%}; cotação mínima {item['RequiredOddForOperation']:.2f}; "
-                f"casos semelhantes {int(item['ProfileSample'])}."
+                f"{item['ExpectedValue']:.1%}; "
+                f"amostra histórica da faixa {int(item['ProfileSample'])}; "
+                f"desacordo {item['DisagreementLevel']} ({item['MaximumComponentDisagreement']:.1%})."
             )
         lines.append("")
     if not diagnostics.empty:

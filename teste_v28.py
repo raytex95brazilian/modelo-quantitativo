@@ -18,6 +18,8 @@ assert len(evaluations)==21
 assert (evaluations['Market']=='BTTS').sum()==6
 assert evaluations[evaluations['Market']=='BTTS']['Status'].eq('EXPERIMENTAL').all()
 assert entries['MatchID'].nunique()==len(entries)
-assert entries['ExpectedValue'].ge(0).all()
+assert entries['MatchID'].nunique()==len(entries)
+assert entries['StakeMultiplier'].isin([0.5, 1.0]).all()
+assert entries['Status'].eq('OPERAR').all()
 print('TESTE V28 OK')
 print(entries[['Home','Away','Selection','Odd','DecisionProbability','ExpectedValue','Status']].to_string(index=False))

@@ -7,7 +7,7 @@ import json
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.1.5.1"
+STORAGE_API_VERSION = "28.1.5.7"
 
 from tex_v28_finance import COLUNAS_APOSTAS, liquidar_registro
 
@@ -58,7 +58,7 @@ COLUNAS_ANALISES = [
     "Seleção vencedora", "Lucro em unidades", "Observações",
     "Versão da interface", "Versão da API do núcleo", "Probabilidade conservadora %",
     "Valor esperado do modelo %", "Valor esperado conservador %",
-    "Limite conservador dos casos semelhantes %", "Código do mercado", "Código da seleção",
+    "Limite conservador da faixa histórica %", "Código do mercado", "Código da seleção",
 ]
 
 

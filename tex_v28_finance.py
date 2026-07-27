@@ -11,7 +11,7 @@ import os
 import numpy as np
 import pandas as pd
 
-FINANCE_API_VERSION = "28.1.5.1"
+FINANCE_API_VERSION = "28.1.5.7"
 
 FUSO = ZoneInfo("America/Fortaleza")
 
@@ -20,8 +20,8 @@ COLUNAS_APOSTAS = [
     "Liga", "Código da liga", "Data do jogo", "Hora do jogo", "Jogo", "Mandante", "Visitante",
     "Grupo do mercado", "Mercado", "Código da seleção", "Seleção", "Casa de apostas",
     "Cotação", "Cotação após desconto", "Probabilidade do modelo %",
-    "Probabilidade conservadora %", "Valor esperado conservador %", "Casos semelhantes",
-    "Confiança da amostra", "Estabilidade %", "Entrada (R$)", "Banca de referência (R$)",
+    "Probabilidade conservadora %", "Valor esperado conservador %", "Amostra histórica da faixa",
+    "Confiança estatística da amostra", "Estabilidade da calibração %", "Entrada (R$)", "Banca de referência (R$)",
     "Situação da liquidação", "Gols do mandante", "Gols do visitante", "Resultado da aposta",
     "Retorno bruto (R$)", "Lucro ou prejuízo (R$)", "Liquidado em", "Observações",
 ]
@@ -119,13 +119,18 @@ def criar_registros_apostas(
                 "Probabilidade do modelo %": float(row.DecisionProbability) * 100.0,
                 "Probabilidade conservadora %": float(row.ConservativeProbability) * 100.0,
                 "Valor esperado conservador %": float(row.ExpectedValue) * 100.0,
-                "Casos semelhantes": int(row.ProfileSample),
-                "Confiança da amostra": row.SampleConfidence,
-                "Estabilidade %": float(row.Reliability) * 100.0,
+                "Amostra histórica da faixa": int(row.ProfileSample),
+                "Confiança estatística da amostra": row.SampleConfidence,
+                "Estabilidade da calibração %": float(row.Reliability) * 100.0,
                 "Entrada (R$)": float(row.Stake),
                 "Banca de referência (R$)": float(bankroll),
                 "Situação da liquidação": SITUACAO_PENDENTE,
                 "Resultado da aposta": "PENDENTE",
+                "Observações": (
+                    f"Faixa da carteira: {getattr(row, 'PortfolioTier', '')}; "
+                    f"multiplicador da unidade: {float(getattr(row, 'StakeMultiplier', 1.0)):.2f}; "
+                    f"desacordo: {getattr(row, 'DisagreementLevel', 'NORMAL')}."
+                ),
             }
         )
         records.append(record)
@@ -209,6 +214,14 @@ def normalizar_ledger(frame: pd.DataFrame | None) -> pd.DataFrame:
     if frame is None or frame.empty:
         return pd.DataFrame(columns=COLUNAS_APOSTAS)
     result = frame.copy()
+    legacy_aliases = {
+        "Casos semelhantes": "Amostra histórica da faixa",
+        "Confiança da amostra": "Confiança estatística da amostra",
+        "Estabilidade %": "Estabilidade da calibração %",
+    }
+    for old_name, new_name in legacy_aliases.items():
+        if new_name not in result.columns and old_name in result.columns:
+            result[new_name] = result[old_name]
     for column in COLUNAS_APOSTAS:
         if column not in result.columns:
             result[column] = ""

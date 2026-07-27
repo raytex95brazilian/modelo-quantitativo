@@ -11,6 +11,7 @@ from tex_v28_finance import (
     identificadores_partidas_registradas,
     liquidar_registro,
     mesclar_registros,
+    normalizar_ledger,
     reconciliar_ledgers,
     resumo_financeiro,
     salvar_ledger_local,
@@ -38,6 +39,22 @@ entries = pd.DataFrame([
 records = criar_registros_apostas(entries, 1000.0, "V28.1.5", "28.1.2", "V28.0")
 assert len(records) == 1
 assert records[0]["ID Aposta"] == records[0]["ID Análise"]
+
+legacy = pd.DataFrame([{
+    **records[0],
+    "Casos semelhantes": 321,
+    "Confiança da amostra": "MODERADA",
+    "Estabilidade %": 88.0,
+}]).drop(columns=[
+    "Amostra histórica da faixa",
+    "Confiança estatística da amostra",
+    "Estabilidade da calibração %",
+], errors="ignore")
+normalized_legacy = normalizar_ledger(legacy)
+assert int(normalized_legacy.iloc[0]["Amostra histórica da faixa"]) == 321
+assert normalized_legacy.iloc[0]["Confiança estatística da amostra"] == "MODERADA"
+assert float(normalized_legacy.iloc[0]["Estabilidade da calibração %"]) == 88.0
+
 ledger, added = mesclar_registros(None, records)
 assert added == 1
 assert contagens_semanais(ledger) == {"2026-30": 1}

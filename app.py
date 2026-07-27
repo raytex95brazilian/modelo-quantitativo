@@ -32,10 +32,10 @@ _v28 = _load_required_module("tex_v28_core_2812")
 _operacional = _load_required_module("tex_operacional_core")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.1.5.1"
-EXPECTED_FINANCE_API = "28.1.5.1"
-INTERFACE_VERSION = "V28.1.5.5"
-APP_NAME = "Tex Statistics V28.1.5.5"
+EXPECTED_STORAGE_API = "28.1.5.7"
+EXPECTED_FINANCE_API = "28.1.5.7"
+INTERFACE_VERSION = "V28.1.5.7"
+APP_NAME = "Tex Statistics V28.1.5.7"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -158,7 +158,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_ZIP = ROOT / "data" / "TEX_V22_DADOS_24_LIGAS.zip"
 MODEL_DIR = ROOT / "model"
 LOCAL_LEDGER_PATH = ROOT / "data" / "tex_v28_apostas.csv"
-CONSERVATIVE_BACKTEST_PATH = ROOT / "backtest" / "V28_1_5_FILTRO_CONSERVADOR_RESUMO.json"
+CONSERVATIVE_BACKTEST_PATH = ROOT / "backtest" / "V28_1_5_7_META_5_RESUMO.json"
 FUSO = ZoneInfo("America/Fortaleza")
 
 st.set_page_config(page_title=APP_NAME, page_icon="⚽", layout="wide", initial_sidebar_state="expanded")
@@ -168,7 +168,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.1.5.5, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "pelo mesmo pacote V28.1.5.7, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -206,7 +206,7 @@ def apply_style() -> None:
         '<div class="tex-head"><h1>Tex Statistics</h1>'
         f'<p><b>Interface:</b> {APP_NAME}<br>'
         f'<b>Motor preditivo:</b> {CORE_DISPLAY_NAME}<br>'
-        'Análise completa por partida, probabilidade conservadora, carteira limitada e controle financeiro com liquidação.</p></div>',
+        'Análise completa por partida, ranking semanal com meta mínima de cinco entradas e controle financeiro com liquidação.</p></div>',
         unsafe_allow_html=True,
     )
 
@@ -361,7 +361,10 @@ def make_analysis_records(evaluations: pd.DataFrame, unit_fraction: float) -> li
             "desconto_cotacao": float(row.PriceHaircut),
             "modelo": MODEL_VERSION,
             "api_nucleo": EXPECTED_CORE_API,
-            "filtro": "probabilidade conservadora e casos semelhantes",
+            "meta_minima_semanal": 5,
+            "piso_ev_principal": 0.0,
+            "piso_ev_complemento": -0.15,
+            "filtro": "ranking semanal: EV conservador não negativo com unidade cheia; complemento até -15% com meia unidade",
         }
         record = {column: "" for column in COLUNAS_ANALISES}
         record.update(
@@ -394,7 +397,7 @@ def make_analysis_records(evaluations: pd.DataFrame, unit_fraction: float) -> li
                 "Amostra fora": int(row.AwaySample),
                 "Estabilidade": float(row.Reliability),
                 "Situação": row.Status,
-                "Entrada %": unit_fraction * 100.0 if row.Status == "OPERAR" else 0.0,
+                "Entrada %": unit_fraction * float(getattr(row, "StakeMultiplier", 1.0)) * 100.0 if row.Status == "OPERAR" else 0.0,
                 "Versão do modelo": MODEL_VERSION,
                 "Configuração JSON": json.dumps(configuration, ensure_ascii=False, sort_keys=True),
                 "Probabilidade mínima exigida %": float(row.BreakEvenProbability) * 100.0,
@@ -409,15 +412,19 @@ def make_analysis_records(evaluations: pd.DataFrame, unit_fraction: float) -> li
                 "Pontos por jogo do mandante": getattr(row, "HomePPG", ""),
                 "Pontos por jogo do visitante": getattr(row, "AwayPPG", ""),
                 "Observações": (
-                    f"Confiança: {row.SampleConfidence}. Estabilidade: {float(row.Reliability):.1%}. "
-                    f"Cotação mínima conservadora: {float(row.RequiredOddForOperation):.2f}."
+                    f"Confiança estatística da amostra: {row.SampleConfidence}. Estabilidade: {float(row.Reliability):.1%}. "
+                    f"Cotação informada: {float(row.Odd):.2f}; cotação após desconto: {float(row.EffectiveOdd):.2f}. "
+                    f"Desacordo: {getattr(row, 'DisagreementLevel', 'NORMAL')} "
+                    f"({float(getattr(row, 'MaximumComponentDisagreement', 0.0)):.1%}). "
+                    f"Faixa da carteira: {getattr(row, 'PortfolioTier', '')}; "
+                    f"multiplicador da unidade: {float(getattr(row, 'StakeMultiplier', 0.0)):.2f}."
                 ),
                 "Versão da interface": INTERFACE_VERSION,
                 "Versão da API do núcleo": EXPECTED_CORE_API,
                 "Probabilidade conservadora %": float(row.ConservativeProbability) * 100.0,
                 "Valor esperado do modelo %": float(row.ModelExpectedValue) * 100.0,
                 "Valor esperado conservador %": float(row.ConservativeExpectedValue) * 100.0,
-                "Limite conservador dos casos semelhantes %": float(row.SimilarCasesLowerProbability) * 100.0,
+                "Limite conservador da faixa histórica %": float(row.SimilarCasesLowerProbability) * 100.0,
                 "Código do mercado": row.Market,
                 "Código da seleção": row.Side,
             }
@@ -467,7 +474,7 @@ if "tex_operational_config" not in st.session_state:
     st.session_state.tex_operational_config = {
         "bankroll": 1000.0,
         "unit_percent": 1.0,
-        "max_entries": 5,
+        "weekly_target": 5,
     }
 
 with st.sidebar:
@@ -487,13 +494,8 @@ with st.sidebar:
             value=float(current_operational_config.get("unit_percent", 1.0)),
             step=0.1,
         )
-        pending_max_entries = st.number_input(
-            "Máximo de entradas por semana",
-            min_value=1,
-            max_value=5,
-            value=int(current_operational_config.get("max_entries", 5)),
-            step=1,
-        )
+        st.info("Meta mínima semanal fixa: 5 entradas")
+        pending_weekly_target = 5
         operational_config_submitted = st.form_submit_button(
             "APLICAR CONFIGURAÇÃO",
             use_container_width=True,
@@ -503,7 +505,7 @@ with st.sidebar:
         updated_operational_config = {
             "bankroll": float(pending_bankroll),
             "unit_percent": float(pending_unit_percent),
-            "max_entries": int(pending_max_entries),
+            "weekly_target": int(pending_weekly_target),
         }
         if updated_operational_config != current_operational_config:
             st.session_state.tex_operational_config = updated_operational_config
@@ -513,7 +515,8 @@ with st.sidebar:
 
     bankroll = float(current_operational_config["bankroll"])
     unit_percent = float(current_operational_config["unit_percent"])
-    max_entries = int(current_operational_config["max_entries"])
+    weekly_target = 5
+    max_entries = weekly_target  # compatibilidade com o contrato do núcleo isolado
 
     st.divider()
     st.caption(f"Fonte: {source}")
@@ -521,14 +524,15 @@ with st.sidebar:
     st.caption(f"Ligas: {len(LEAGUES)}")
     if backtest_summary:
         st.caption(
-            "Recalculo retrospectivo do filtro conservador 2022–2025: "
+            "Política semanal retrospectiva 2022–2025: "
             f"{int(backtest_summary.get('entries', 0))} entradas | "
             f"{float(backtest_summary.get('average_entries_per_week', 0.0)):.2f} por semana | "
-            f"retorno de {float(backtest_summary.get('roi', 0.0)):+.2%}."
+            f"{int(backtest_summary.get('weeks_with_target', 0))}/{int(backtest_summary.get('weeks', 0))} semanas com cinco entradas."
         )
         st.caption(
-            "Verificação operacional retrospectiva; não é novo teste final independente "
-            "nem garantia de resultado futuro."
+            f"Cenário histórico com melhor cotação após desconto: retorno {float(backtest_summary.get('best_price_roi_per_staked_unit', 0.0)):+.2%}. "
+            f"Cenário histórico com cotação média após desconto: retorno {float(backtest_summary.get('average_price_roi_per_staked_unit', 0.0)):+.2%}. "
+            "O resultado da análise depende das cotações digitadas no lote."
         )
     if registered_week_counts:
         st.caption(f"Apostas já registradas por semana: {registered_week_counts}")
@@ -544,9 +548,10 @@ with st.sidebar:
         st.info("Análise funciona normalmente. A gravação Google está desativada.")
 
 st.markdown(
-    '<div class="rule-box"><b>Regra operacional:</b> cada jogo recebe uma leitura principal. '
-    'A indicação <b>OPERAR</b> só aparece quando a cotação supera o preço mínimo conservador, '
-    'a amostra é suficiente e a estabilidade é aceitável. O máximo semanal não obriga o aplicativo a preencher apostas.</div>',
+    '<div class="rule-box"><b>Regra operacional:</b> a meta é de <b>cinco seleções por semana</b>, '
+    'sempre com no máximo uma seleção por partida. Entradas com EV conservador não negativo usam uma unidade; '
+    'se faltarem seleções, o ranking admite complemento somente até o piso rígido de −15%, com meia unidade. '
+    'Se não houver cinco partidas admissíveis, o app não força uma escolha pior. Mercados experimentais não entram na carteira.</div>',
     unsafe_allow_html=True,
 )
 
@@ -742,7 +747,7 @@ def render_game_entry() -> None:
 
             use_btts = st.checkbox(
                 "Ambas marcam — análise complementar",
-                value=True,
+                value=False,
                 key=f"use_btts_{form_version}",
             )
             a, b = st.columns(2)
@@ -967,7 +972,9 @@ def evaluation_table(frame: pd.DataFrame) -> pd.DataFrame:
         "Status", "MarketName", "Selection", "Odd", "EffectiveOdd", "MarketProbability",
         "RawSportsProbability", "DecisionProbability", "ConservativeProbability",
         "EmpiricalHitRate", "ProfileSample", "SampleConfidence", "Reliability",
-        "RequiredOddForOperation", "OddGapToOperation", "ModelExpectedValue",
+        "ModelMarketDifference", "ModelSportsDifference", "MaximumComponentDisagreement",
+        "DisagreementLevel", "PortfolioTier", "StakeMultiplier",
+        "ModelExpectedValue",
         "ConservativeExpectedValue", "Reason",
     ]
     out = frame[[column for column in columns if column in frame.columns]].copy()
@@ -975,6 +982,7 @@ def evaluation_table(frame: pd.DataFrame) -> pd.DataFrame:
         "MarketProbability", "RawSportsProbability", "DecisionProbability",
         "ConservativeProbability", "EmpiricalHitRate", "Reliability",
         "ModelExpectedValue", "ConservativeExpectedValue",
+        "ModelMarketDifference", "ModelSportsDifference", "MaximumComponentDisagreement",
     )
     for column in percentage_columns:
         if column in out:
@@ -990,12 +998,16 @@ def evaluation_table(frame: pd.DataFrame) -> pd.DataFrame:
             "RawSportsProbability": "Probabilidade esportiva",
             "DecisionProbability": "Probabilidade do modelo",
             "ConservativeProbability": "Probabilidade conservadora",
-            "EmpiricalHitRate": "Acerto dos casos semelhantes",
-            "ProfileSample": "Casos semelhantes",
-            "SampleConfidence": "Confiança da amostra",
-            "Reliability": "Estabilidade",
-            "RequiredOddForOperation": "Cotação mínima conservadora",
-            "OddGapToOperation": "Diferença da cotação",
+            "EmpiricalHitRate": "Acerto histórico da faixa",
+            "ProfileSample": "Amostra histórica da faixa",
+            "SampleConfidence": "Confiança estatística da amostra",
+            "Reliability": "Estabilidade da calibração",
+            "ModelMarketDifference": "Diferença modelo–mercado",
+            "ModelSportsDifference": "Diferença modelo–esportivo",
+            "MaximumComponentDisagreement": "Maior desacordo entre componentes",
+            "DisagreementLevel": "Nível de desacordo",
+            "PortfolioTier": "Faixa da carteira",
+            "StakeMultiplier": "Multiplicador da unidade",
             "ModelExpectedValue": "Valor esperado do modelo",
             "ConservativeExpectedValue": "Valor esperado conservador",
             "Reason": "Motivo",
@@ -1009,27 +1021,45 @@ if not readings.empty or not diagnostics.empty:
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Partidas analisadas", analyzed_games)
     m2.metric("Entradas V28", len(entries))
-    m3.metric("Máximo semanal", int(max_entries))
+    m3.metric("Meta mínima semanal", int(weekly_target))
     m4.metric("Leituras principais", len(readings))
     m5.metric("Mercados avaliados", len(evaluations))
 
     if entries.empty and not readings.empty:
         st.warning(
-            f"Nenhuma cotação atingiu os critérios conservadores neste lote. As {len(readings)} leituras e os preços necessários aparecem abaixo."
+            f"Nenhuma seleção foi formada neste lote. As {len(readings)} leituras e o ranking semanal aparecem abaixo."
         )
     elif not entries.empty:
         week_counts = entries.groupby("WeekID").size().to_dict() if "WeekID" in entries else {}
-        st.success(f"{len(entries)} entrada(s) na carteira. Distribuição semanal: {week_counts}.")
+        principal_count = int(entries["PortfolioTier"].eq("EV CONSERVADOR NÃO NEGATIVO").sum()) if "PortfolioTier" in entries else 0
+        complement_count = int(entries["PortfolioTier"].eq("COMPLEMENTO DE META — MEIA UNIDADE").sum()) if "PortfolioTier" in entries else 0
+        message = (
+            f"{len(entries)} entrada(s) na carteira: {principal_count} com EV conservador não negativo e "
+            f"{complement_count} complemento(s) de meia unidade. Distribuição semanal: {week_counts}."
+        )
+        if complement_count:
+            st.warning(message)
+        else:
+            st.success(message)
 
-    st.markdown("### Carteira validada")
+    st.markdown("### Carteira semanal ranqueada")
     if entries.empty:
-        closest = readings.sort_values("OddGapToOperation", ascending=False).head(int(max_entries)).copy()
-        st.warning(f"Nenhuma entrada atingiu os critérios conservadores, respeitando o máximo de {int(max_entries)}. Veja abaixo quanto falta na cotação.")
+        closest = readings.sort_values(["ExpectedValue", "DecisionProbability"], ascending=[False, False]).head(int(weekly_target)).copy()
+        st.warning(f"A meta mínima semanal de {int(weekly_target)} ainda não foi preenchida neste lote. Veja as prioridades abaixo.")
         if not closest.empty:
             st.dataframe(evaluation_table(closest), hide_index=True, use_container_width=True)
     else:
         qualified_weeks = entries.groupby("WeekID").size().to_dict() if "WeekID" in entries else {}
-        st.success(f"Carteira formada: {len(entries)} entrada(s). Quantidade por semana: {qualified_weeks}.")
+        principal_count = int(entries["PortfolioTier"].eq("EV CONSERVADOR NÃO NEGATIVO").sum()) if "PortfolioTier" in entries else 0
+        complement_count = int(entries["PortfolioTier"].eq("COMPLEMENTO DE META — MEIA UNIDADE").sum()) if "PortfolioTier" in entries else 0
+        portfolio_message = (
+            f"Carteira formada: {len(entries)} entrada(s), sendo {principal_count} principal(is) e "
+            f"{complement_count} complemento(s) de meia unidade. Quantidade por semana: {qualified_weeks}."
+        )
+        if complement_count:
+            st.warning(portfolio_message)
+        else:
+            st.success(portfolio_message)
         st.dataframe(
             display_frame(entries),
             hide_index=True,
@@ -1039,13 +1069,26 @@ if not readings.empty or not diagnostics.empty:
                 "Mercado sem margem": st.column_config.NumberColumn(format="%.1f%%"),
                 "Probabilidade esportiva": st.column_config.NumberColumn(format="%.1f%%"),
                 "Valor esperado conservador": st.column_config.NumberColumn(format="%.1f%%"),
-                "Acerto dos casos semelhantes": st.column_config.NumberColumn(format="%.1f%%"),
-                "Estabilidade": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                "Acerto histórico da faixa": st.column_config.NumberColumn(format="%.1f%%"),
+                "Estabilidade da calibração": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
                 "Entrada fixa": st.column_config.NumberColumn(format="R$ %.2f"),
             },
         )
-    if len(games()) < int(max_entries):
-        st.info(f"O lote contém {len(games())} partida(s); com uma seleção por jogo, o máximo físico é {len(games())}. O aplicativo não completa artificialmente o limite de {int(max_entries)} entradas.")
+    if not evaluations.empty and "WeekID" in evaluations:
+        for week_id in sorted(evaluations["WeekID"].dropna().astype(str).unique()):
+            existing_count = int(registered_week_counts.get(week_id, 0))
+            current_count = int((entries["WeekID"].astype(str).eq(week_id)).sum()) if not entries.empty else 0
+            missing_for_target = max(0, int(weekly_target) - existing_count - current_count)
+            if missing_for_target > 0:
+                st.info(
+                    f"Semana {week_id}: faltam {missing_for_target} entrada(s) para a meta mínima de {weekly_target}. "
+                    "Adicione e analise mais partidas das 24 ligas para completar a carteira."
+                )
+            else:
+                st.success(
+                    f"Semana {week_id}: meta mínima de {weekly_target} entrada(s) atingida "
+                    f"({existing_count} já registrada(s) + {current_count} neste lote)."
+                )
 
     st.markdown("### Análise de cada partida")
     for game_index, game in enumerate(games(), start=1):
@@ -1070,7 +1113,7 @@ if not readings.empty or not diagnostics.empty:
             )
 
             st.markdown("**Classificação do campeonato antes da partida**")
-            if context.get("Available"):
+            if context.get("Available") and context.get("Consolidated"):
                 c1, c2 = st.columns(2)
                 c1.metric(
                     str(game["Mandante"]),
@@ -1093,6 +1136,25 @@ if not readings.empty or not diagnostics.empty:
                             "Gols sofridos por jogo": st.column_config.NumberColumn(format="%.2f"),
                         },
                     )
+            elif context.get("Available"):
+                st.info(
+                    "Classificação ainda não consolidada: a temporada está na amostra inicial. "
+                    "Os números abaixo são informativos e nenhuma posição ordinal é usada na interpretação."
+                )
+                c1, c2 = st.columns(2)
+                c1.metric(
+                    str(game["Mandante"]),
+                    f"{context['HomePoints']} ponto(s)",
+                    f"{context['HomeGames']} jogo(s) | {context['HomePPG']:.2f} ponto(s) por jogo",
+                )
+                c2.metric(
+                    str(game["Visitante"]),
+                    f"{context['AwayPoints']} ponto(s)",
+                    f"{context['AwayGames']} jogo(s) | {context['AwayPPG']:.2f} ponto(s) por jogo",
+                )
+                provisional_table = context["Table"].drop(columns=["Posição"], errors="ignore")
+                with st.expander(f"Ver dados provisórios — temporada {context['Season']}"):
+                    st.dataframe(provisional_table, hide_index=True, use_container_width=True)
             else:
                 st.info(
                     f"A classificação da temporada {context.get('Season', '')} ainda não pôde ser reconstruída "
@@ -1105,14 +1167,21 @@ if not readings.empty or not diagnostics.empty:
 
             row = game_reading.iloc[0]
             status = str(row["Status"])
+            portfolio_tier = str(row.get("PortfolioTier", "")).strip()
+            tier_suffix = f" — {portfolio_tier}" if status == "OPERAR" and portfolio_tier else ""
             headline = (
-                f"{status}: {row['Selection']} | cotação {float(row['Odd']):.2f} | "
+                f"{status}{tier_suffix}: {row['Selection']} | cotação {float(row['Odd']):.2f} | "
                 f"probabilidade conservadora {pct(row['ConservativeProbability'])}"
             )
-            if status == "OPERAR":
+            if status == "OPERAR" and portfolio_tier == "EV CONSERVADOR NÃO NEGATIVO":
                 st.success(headline)
-            elif status in ("AGUARDAR PREÇO", "RESERVA", "QUALIFICADA"):
+            elif status == "OPERAR":
                 st.warning(headline)
+                st.caption(
+                    "Complemento da meta semanal: meia unidade e exposição reduzida, definido com a cotação já informada nesta análise."
+                )
+            elif status == "NÃO SELECIONADA":
+                st.info(headline)
             else:
                 st.info(headline)
 
@@ -1122,17 +1191,31 @@ if not readings.empty or not diagnostics.empty:
             p3.metric("Probabilidade do modelo", pct(row["DecisionProbability"]))
             p4.metric("Probabilidade conservadora", pct(row["ConservativeProbability"]))
 
+            disagreement_level = str(row.get("DisagreementLevel", "NORMAL"))
+            disagreement_pp = float(row.get("MaximumComponentDisagreement", 0.0)) * 100.0
+            if disagreement_level == "ALTO":
+                st.warning(
+                    f"Desacordo alto entre componentes: {disagreement_pp:.1f} pontos percentuais. "
+                    f"Modelo–mercado {float(row.get('ModelMarketDifference', 0.0))*100:+.1f} p.p.; "
+                    f"modelo–esportivo {float(row.get('ModelSportsDifference', 0.0))*100:+.1f} p.p."
+                )
+            elif disagreement_level == "MODERADO":
+                st.caption(
+                    f"Desacordo moderado entre componentes: {disagreement_pp:.1f} p.p. "
+                    "Consulte todos os mercados antes da decisão."
+                )
+
             a1, a2, a3, a4 = st.columns(4)
-            a1.metric("Casos semelhantes", int(row["ProfileSample"]))
-            a2.metric("Confiança da amostra", str(row["SampleConfidence"]))
-            a3.metric("Estabilidade", pct(row["Reliability"]))
-            a4.metric("Acerto dos casos semelhantes", pct(row["EmpiricalHitRate"]))
+            a1.metric("Amostra histórica da faixa", int(row["ProfileSample"]))
+            a2.metric("Confiança estatística da amostra", str(row["SampleConfidence"]))
+            a3.metric("Estabilidade da calibração", pct(row["Reliability"]))
+            a4.metric("Acerto histórico da faixa", pct(row["EmpiricalHitRate"]))
 
             o1, o2, o3, o4 = st.columns(4)
-            o1.metric("Cotação atual", f"{float(row['Odd']):.2f}")
-            o2.metric("Cotação mínima conservadora", f"{float(row['RequiredOddForOperation']):.2f}")
-            o3.metric("Diferença da cotação", f"{float(row['OddGapToOperation']):+.2f}")
-            o4.metric("Valor esperado conservador", pct(row["ExpectedValue"]))
+            o1.metric("Cotação informada", f"{float(row['Odd']):.2f}")
+            o2.metric("Cotação após desconto de 2%", f"{float(row['EffectiveOdd']):.2f}")
+            o3.metric("Valor esperado conservador", pct(row["ExpectedValue"]))
+            o4.metric("Decisão final", status)
 
             g1, g2, g3 = st.columns(3)
             g1.metric(f"Gols projetados — {game['Mandante']}", f"{float(row['LambdaHome']):.2f}")
@@ -1155,24 +1238,22 @@ if not readings.empty or not diagnostics.empty:
                         "Mercado sem margem": st.column_config.NumberColumn(format="%.1f%%"),
                         "Probabilidade esportiva": st.column_config.NumberColumn(format="%.1f%%"),
                         "Probabilidade do modelo": st.column_config.NumberColumn(format="%.1f%%"),
-                        "Acerto dos casos semelhantes": st.column_config.NumberColumn(format="%.1f%%"),
-                        "Estabilidade": st.column_config.NumberColumn(format="%.1f%%"),
+                        "Acerto histórico da faixa": st.column_config.NumberColumn(format="%.1f%%"),
+                        "Estabilidade da calibração": st.column_config.NumberColumn(format="%.1f%%"),
                         "Valor esperado conservador": st.column_config.NumberColumn(format="%.1f%%"),
                         "Cotação atual": st.column_config.NumberColumn(format="%.2f"),
                         "Cotação após desconto de 2%": st.column_config.NumberColumn(format="%.2f"),
-                        "Cotação mínima conservadora": st.column_config.NumberColumn(format="%.2f"),
-                        "Diferença da cotação": st.column_config.NumberColumn(format="%+.2f"),
                     },
                 )
 
     st.markdown("### Carteira e auditoria")
     tab_entries, tab_all, tab_errors = st.tabs(
-        ["Carteira validada", "Todos os mercados", "Diagnóstico"]
+        ["Carteira semanal", "Todos os mercados", "Diagnóstico"]
     )
     with tab_entries:
         if entries.empty:
-            closest = readings.sort_values("OddGapToOperation", ascending=False).head(5).copy()
-            st.info("Nenhuma entrada qualificada neste lote. Abaixo estão as leituras mais próximas da cotação mínima conservadora.")
+            closest = readings.sort_values(["ExpectedValue", "DecisionProbability"], ascending=[False, False]).head(5).copy()
+            st.info("Nenhuma seleção entrou na carteira com as cotações informadas. Abaixo estão as melhores leituras do lote, sem indicação de acompanhamento posterior.")
             st.dataframe(evaluation_table(closest), hide_index=True, use_container_width=True)
         else:
             st.dataframe(
@@ -1183,8 +1264,8 @@ if not readings.empty or not diagnostics.empty:
                     "Probabilidade do modelo": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
                     "Probabilidade conservadora": st.column_config.NumberColumn(format="%.1f%%"),
                     "Mercado sem margem": st.column_config.NumberColumn(format="%.1f%%"),
-                    "Acerto dos casos semelhantes": st.column_config.NumberColumn(format="%.1f%%"),
-                    "Estabilidade": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                    "Acerto histórico da faixa": st.column_config.NumberColumn(format="%.1f%%"),
+                    "Estabilidade da calibração": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
                     "Entrada fixa": st.column_config.NumberColumn(format="R$ %.2f"),
                 },
             )

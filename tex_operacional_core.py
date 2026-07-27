@@ -309,7 +309,7 @@ def decision_reason(
     if probability < min_probability:
         failures.append(f"probabilidade abaixo de {min_probability:.0%}")
     if expected_value < min_ev:
-        failures.append(f"margem de preço abaixo de {min_ev:.0%}")
+        failures.append(f"valor esperado abaixo de {min_ev:.0%}")
     if profile_sample < cfg.min_profile_sample:
         failures.append("amostra histórica insuficiente")
     if reliability < cfg.min_reliability:
@@ -317,9 +317,9 @@ def decision_reason(
     if disagreement < -cfg.max_negative_model_disagreement:
         failures.append("modelo esportivo contradiz fortemente o mercado")
     if status == "OPERAR":
-        return "Preço, probabilidade e amostra ultrapassaram as regras fixas."
+        return "A cotação informada, a probabilidade e a amostra atenderam às regras fixas."
     if status == "OBSERVAR":
-        return "Leitura estatística útil, mas ainda sem preço suficiente para entrada."
+        return "A cotação informada não atende às regras de entrada desta análise."
     return "; ".join(failures) if failures else "Não atingiu a classificação operacional."
 
 
@@ -597,7 +597,7 @@ def analyze_games(
         readings.loc[
             readings["Status"].eq("OPERAR") & ~readings["MatchID"].isin(retained),
             ["Status", "Stake", "Reason"],
-        ] = ["RESERVA", 0.0, "Preço aprovado, mas ficou fora do limite de entradas do lote."]
+        ] = ["NÃO SELECIONADA", 0.0, "Ficou fora da carteira final do lote."]
 
     return entries.reset_index(drop=True), readings, all_evaluations, diagnostics_frame
 
@@ -648,9 +648,9 @@ def display_frame(frame: pd.DataFrame) -> pd.DataFrame:
         "BreakEvenProbability": "Probabilidade mínima da odd",
         "ExpectedValue": "Margem estimada",
         "Confidence": "Confiança da leitura",
-        "ProfileSample": "Amostra histórica",
-        "EmpiricalHitRate": "Acerto empírico da faixa",
-        "SampleConfidence": "Confiança da amostra",
+        "ProfileSample": "Amostra histórica da faixa",
+        "EmpiricalHitRate": "Acerto histórico da faixa",
+        "SampleConfidence": "Confiança estatística da amostra",
         "Reliability": "Estabilidade da calibração",
         "RequiredOddForOperation": "Odd mínima para operar",
         "OddGapToOperation": "Diferença para odd mínima",
@@ -724,11 +724,21 @@ def standings_context(matches: list[dict[str, Any]], code: str, match_date: date
     if home_row.empty or away_row.empty:
         return context
     h = home_row.iloc[0]; a = away_row.iloc[0]
+    home_games = int(h["Jogos"])
+    away_games = int(a["Jogos"])
+    minimum_games = min(home_games, away_games)
+    consolidated = minimum_games >= 3
     context.update({
         "Available": True,
+        "Consolidated": consolidated,
+        "ConsolidationReason": (
+            "As duas equipes possuem ao menos três jogos anteriores na temporada."
+            if consolidated
+            else "A temporada ainda possui amostra inicial; posições não devem ser interpretadas como classificação consolidada."
+        ),
         "HomePosition": int(h["Posição"]), "AwayPosition": int(a["Posição"]),
         "HomePoints": int(h["Pontos"]), "AwayPoints": int(a["Pontos"]),
-        "HomeGames": int(h["Jogos"]), "AwayGames": int(a["Jogos"]),
+        "HomeGames": home_games, "AwayGames": away_games,
         "HomePPG": float(h["Pontos por jogo"]), "AwayPPG": float(a["Pontos por jogo"]),
         "HomeGFPG": float(h["Gols por jogo"]), "AwayGFPG": float(a["Gols por jogo"]),
         "HomeGAPG": float(h["Gols sofridos por jogo"]), "AwayGAPG": float(a["Gols sofridos por jogo"]),
@@ -835,6 +845,7 @@ def enrich_with_standings(
             contexts[input_id] = {"Available": False}
     mapping = {
         "StandingsAvailable": "Available",
+        "StandingsConsolidated": "Consolidated",
         "Season": "Season",
         "HomePosition": "HomePosition",
         "AwayPosition": "AwayPosition",
@@ -851,4 +862,9 @@ def enrich_with_standings(
     }
     for target, source in mapping.items():
         out[target] = out["InputID"].astype(str).map(lambda key: contexts.get(key, {}).get(source, np.nan))
+    if "StandingsConsolidated" in out:
+        provisional = ~out["StandingsConsolidated"].fillna(False).astype(bool)
+        for column in ("HomePosition", "AwayPosition"):
+            if column in out:
+                out.loc[provisional, column] = np.nan
     return out

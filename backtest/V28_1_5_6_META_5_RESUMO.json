@@ -1,0 +1,97 @@
+{
+  "metodo": "Ranking semanal das previsões fora da amostra: meta de cinco seleções, uma por partida, faixa principal com EV conservador >= 0% e complemento até -15% com meia unidade quando necessário.",
+  "advertencia": "Recalculo operacional retrospectivo sobre previsões OOS congeladas. O resultado depende do preço; a verificação por preço médio é materialmente mais fraca que por melhor preço.",
+  "target_per_week": 5,
+  "portfolio_floor": 0.0,
+  "fallback_floor": -0.15,
+  "fallback_stake_fraction": 0.5,
+  "entries": 1123,
+  "weeks": 225,
+  "weeks_with_target": 224,
+  "average_entries_per_week": 4.9911111111111115,
+  "hit_rate": 0.5565449688334817,
+  "best_price_roi_per_staked_unit": 0.12742218148487627,
+  "best_price_profit_units": 139.01760000000002,
+  "best_price_max_drawdown_units": 24.072699999999998,
+  "average_price_roi_per_staked_unit": 0.02892756071805703,
+  "average_price_profit_units": 27.394400000000005,
+  "average_price_max_drawdown_units": 33.441500000000005,
+  "principal_entries_best_price": 1059,
+  "complement_entries_best_price": 64,
+  "best_price_yearly": [
+    {
+      "Season": 2022,
+      "entries": 329,
+      "wins": 180,
+      "hit_rate": 0.547112462006079,
+      "profit_units": 44.7374,
+      "stake_units": 317.5,
+      "roi_per_staked_unit": 0.1409051968503937
+    },
+    {
+      "Season": 2023,
+      "entries": 248,
+      "wins": 148,
+      "hit_rate": 0.5967741935483871,
+      "profit_units": 39.2935,
+      "stake_units": 244.0,
+      "roi_per_staked_unit": 0.16103893442622952
+    },
+    {
+      "Season": 2024,
+      "entries": 262,
+      "wins": 147,
+      "hit_rate": 0.5610687022900763,
+      "profit_units": 38.1923,
+      "stake_units": 253.0,
+      "roi_per_staked_unit": 0.15095770750988144
+    },
+    {
+      "Season": 2025,
+      "entries": 284,
+      "wins": 150,
+      "hit_rate": 0.528169014084507,
+      "profit_units": 16.7944,
+      "stake_units": 276.5,
+      "roi_per_staked_unit": 0.06073924050632911
+    }
+  ],
+  "average_price_yearly": [
+    {
+      "Season": 2022,
+      "entries": 333,
+      "wins": 157,
+      "hit_rate": 0.47147147147147145,
+      "profit_units": -17.248499999999996,
+      "stake_units": 283.0,
+      "roi_per_staked_unit": -0.06094876325088338
+    },
+    {
+      "Season": 2023,
+      "entries": 253,
+      "wins": 151,
+      "hit_rate": 0.5968379446640316,
+      "profit_units": 14.866599999999998,
+      "stake_units": 220.5,
+      "roi_per_staked_unit": 0.06742222222222222
+    },
+    {
+      "Season": 2024,
+      "entries": 253,
+      "wins": 146,
+      "hit_rate": 0.5770750988142292,
+      "profit_units": 23.7009,
+      "stake_units": 221.5,
+      "roi_per_staked_unit": 0.1070018058690745
+    },
+    {
+      "Season": 2025,
+      "entries": 283,
+      "wins": 152,
+      "hit_rate": 0.5371024734982333,
+      "profit_units": 6.0754,
+      "stake_units": 222.0,
+      "roi_per_staked_unit": 0.027366666666666668
+    }
+  ]
+}
