@@ -1,12 +1,21 @@
-# Tex Statistics V28.1.5.11 — cotação numérica e verificação real da planilha
+# Tex Statistics V28.1.5.12 — autosave real antes da análise
 
-- **Interface:** Tex Statistics V28.1.5.11
+- **Interface:** Tex Statistics V28.1.5.12
 - **Motor preditivo:** V28.1.2 — Estado Isolado
 - **Casa padrão:** PIXBET, editável
 
-## Antes do deploy
+## Comportamento corrigido
 
-Nos Secrets do Streamlit, informe explicitamente o destino:
+Ao clicar em **ADICIONAR OU ATUALIZAR PARTIDA**, o app agora confirma duas gravações antes de limpar o formulário:
+
+1. uma linha `UPSERT` na aba `entrada_jogos`, contendo o jogo e todas as odds;
+2. uma linha por seleção na aba `catalogo_odds`, contendo as cotações digitadas, ainda antes da análise.
+
+Ao clicar posteriormente em **ANALISAR TODO O LOTE**, as linhas já existentes em `catalogo_odds` são atualizadas pelo mesmo `ID Coleta` com probabilidades, margem, classificação e contexto. Não são criadas duplicatas.
+
+Lotes restaurados de versões anteriores são migrados automaticamente: suas odds são inseridas/atualizadas em `catalogo_odds` ao abrir esta versão, sem exigir uma nova análise.
+
+## Secrets
 
 ```toml
 [google_sheets]
@@ -20,16 +29,10 @@ worksheet_auditoria = "auditoria_entradas"
 
 Também é aceito `spreadsheet_url` no lugar de `spreadsheet_id`.
 
-A V28.1.5.11 não usa mais nenhuma planilha antiga como fallback. Sem destino explícito, o cadastro é bloqueado.
+## Teste após o deploy
 
-## Teste obrigatório após o deploy
-
-1. Abra o botão **Abrir exatamente a planilha de gravação**.
-2. Cadastre somente uma partida de teste.
-3. O app deve informar `GRAVADA E RELIDA`, a aba `entrada_jogos`, o número da linha e as cotações conferidas.
-4. Abra a linha indicada antes de cadastrar um lote grande.
-
-
-## Correção 1.5.11
-
-A leitura e a exibição das odds ignoram formatações antigas de data. As colunas numéricas são normalizadas automaticamente ao abrir a planilha.
+1. Cadastre uma única partida.
+2. Antes de clicar em analisar, abra `entrada_jogos` e `catalogo_odds`.
+3. Confirme o jogo em `entrada_jogos` e todas as seleções/cotações em `catalogo_odds`.
+4. Atualize a página do app e confirme que o lote permanece.
+5. Só então cadastre um lote grande.

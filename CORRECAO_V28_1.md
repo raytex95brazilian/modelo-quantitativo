@@ -1,6 +1,6 @@
-# Estado atual — Tex Statistics V28.1.5.11
+# Estado atual — Tex Statistics V28.1.5.12
 
-- Interface: V28.1.5.11
+- Interface: V28.1.5.12
 - Motor preditivo: V28.1.2 — Estado Isolado
 - Planilha: destino explícito obrigatório
 - Cadastro: append + leitura pós-gravação

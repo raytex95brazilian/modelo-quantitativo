@@ -94,24 +94,24 @@ def game(game_id: str, home: str, away: str):
 
 first = game("g-1", "Club America", "Tigres UANL")
 second = game("g-2", "Monterrey", "Pachuca")
-storage.registrar_evento_lote(secrets, tipo_evento="UPSERT", jogo=first, interface_version="V28.1.5.11")
-storage.registrar_evento_lote(secrets, tipo_evento="UPSERT", jogo=second, interface_version="V28.1.5.11")
+storage.registrar_evento_lote(secrets, tipo_evento="UPSERT", jogo=first, interface_version="V28.1.5.12")
+storage.registrar_evento_lote(secrets, tipo_evento="UPSERT", jogo=second, interface_version="V28.1.5.12")
 restored = storage.carregar_lote_pendente(secrets)
 assert [item["ID"] for item in restored["Jogos"]] == ["g-1", "g-2"]
 assert restored["Jogos"][0]["Casa de apostas"] == "PIXBET"
 
 updated = dict(first)
 updated["Odd mandante"] = 2.25
-storage.registrar_evento_lote(secrets, tipo_evento="UPSERT", jogo=updated, interface_version="V28.1.5.11")
+storage.registrar_evento_lote(secrets, tipo_evento="UPSERT", jogo=updated, interface_version="V28.1.5.12")
 restored = storage.carregar_lote_pendente(secrets)
 assert len(restored["Jogos"]) == 2
 assert restored["Jogos"][0]["Odd mandante"] == 2.25
 
-storage.registrar_evento_lote(secrets, tipo_evento="DELETE", jogo=first, interface_version="V28.1.5.11")
+storage.registrar_evento_lote(secrets, tipo_evento="DELETE", jogo=first, interface_version="V28.1.5.12")
 restored = storage.carregar_lote_pendente(secrets)
 assert [item["ID"] for item in restored["Jogos"]] == ["g-2"]
 
-storage.registrar_evento_lote(secrets, tipo_evento="CLEAR", interface_version="V28.1.5.11")
+storage.registrar_evento_lote(secrets, tipo_evento="CLEAR", interface_version="V28.1.5.12")
 restored = storage.carregar_lote_pendente(secrets)
 assert restored["Jogos"] == []
 assert restored["Eventos encontrados"] == 5
@@ -121,4 +121,4 @@ assert len(sheet.rows) == 5
 assert [row[sheet.header.index("Tipo de evento")] for row in sheet.rows] == [
     "UPSERT", "UPSERT", "UPSERT", "DELETE", "CLEAR"
 ]
-print("TESTE DE PERSISTÊNCIA DURÁVEL APPEND-ONLY V28.1.5.11: OK")
+print("TESTE DE PERSISTÊNCIA DURÁVEL APPEND-ONLY V28.1.5.12: OK")

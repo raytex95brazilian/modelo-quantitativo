@@ -133,10 +133,9 @@ spreadsheet = FakeSpreadsheet()
 reset(spreadsheet)
 saved = storage.salvar_cotacoes(secrets, records)
 assert saved == 2
-# Repetir após uma confirmação anterior não pode duplicar registros já
-# existentes na aba, inclusive os gravados por uma versão que falhou depois do append.
+# Repetir deve atualizar as mesmas linhas, sem duplicá-las.
 storage._CHAVES_GRAVADAS_NO_PROCESSO.clear()
-assert storage.salvar_cotacoes(secrets, records) == 0
+assert storage.salvar_cotacoes(secrets, records) == 2
 assert len(spreadsheet.sheet.rows) == 2
 
 # A máscara visual antiga produziria datas, mas a conferência precisa usar o
@@ -153,4 +152,4 @@ assert float(loaded.iloc[1]["Cotação"]) == 1.80
 cot_letter = storage._letra_coluna(storage.COLUNAS_COTACOES.index("Cotação") + 1)
 assert any(item["range"].startswith(f"{cot_letter}2:") for item in spreadsheet.sheet.formats)
 
-print("TESTE DE COTAÇÃO FORMATADA COMO DATA V28.1.5.11: OK")
+print("TESTE DE COTAÇÃO FORMATADA COMO DATA V28.1.5.12: OK")

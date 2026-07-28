@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from pathlib import Path
-from uuid import uuid4
 from zoneinfo import ZoneInfo
+import hashlib
 import json
 
 import pandas as pd
@@ -32,10 +32,10 @@ _v28 = _load_required_module("tex_v28_core_2812")
 _operacional = _load_required_module("tex_operacional_core")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.1.5.11"
-EXPECTED_FINANCE_API = "28.1.5.11"
-INTERFACE_VERSION = "V28.1.5.11"
-APP_NAME = "Tex Statistics V28.1.5.11"
+EXPECTED_STORAGE_API = "28.1.5.12"
+EXPECTED_FINANCE_API = "28.1.5.12"
+INTERFACE_VERSION = "V28.1.5.12"
+APP_NAME = "Tex Statistics V28.1.5.12"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -44,6 +44,7 @@ ENGINE_VERSION = getattr(_v28, "ENGINE_VERSION", "V28.1.2-estado-isolado")
 _REQUIRED_V25 = ("LEAGUES", "normalize_zip")
 _REQUIRED_STORAGE = (
     "COLUNAS_ANALISES", "COLUNAS_COTACOES", "carregar_apostas",
+    "criar_registros_cotacoes_digitadas",
     "carregar_lote_pendente", "registrar_evento_lote", "diagnostico_google",
     "google_configurado", "identificadores_analises", "identificadores_apostas",
     "identificadores_cotacoes", "liquidar_aposta", "salvar_analises",
@@ -100,6 +101,7 @@ normalize_zip = getattr(_v25, "normalize_zip", None)
 COLUNAS_ANALISES = getattr(_storage, "COLUNAS_ANALISES", [])
 COLUNAS_COTACOES = getattr(_storage, "COLUNAS_COTACOES", [])
 carregar_apostas = getattr(_storage, "carregar_apostas", None)
+criar_registros_cotacoes_digitadas = getattr(_storage, "criar_registros_cotacoes_digitadas", None)
 carregar_lote_pendente = getattr(_storage, "carregar_lote_pendente", None)
 google_configurado = getattr(_storage, "google_configurado", None)
 identificadores_analises = getattr(_storage, "identificadores_analises", None)
@@ -175,7 +177,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.1.5.11, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "pelo mesmo pacote V28.1.5.12, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -254,8 +256,6 @@ def load_conservative_backtest_summary() -> dict:
     if not CONSERVATIVE_BACKTEST_PATH.is_file():
         return {}
     try:
-        import json
-
         return json.loads(CONSERVATIVE_BACKTEST_PATH.read_text(encoding="utf-8"))
     except Exception:
         return {}
@@ -435,7 +435,12 @@ def invalidate_analysis() -> None:
         st.session_state.pop(key, None)
 
 
-def upsert_game(game: dict) -> str:
+def _stable_game_id(game_date: str, league_code: str, home: str, away: str) -> str:
+    payload = "|".join([str(game_date), str(league_code), str(home), str(away)]).strip().lower()
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def upsert_game(game: dict, bankroll_value: float) -> str:
     key = (game["Data"], game["Código da liga"], game["Mandante"], game["Visitante"])
     existing_index: int | None = None
     candidate = dict(game)
@@ -446,8 +451,34 @@ def upsert_game(game: dict) -> str:
             candidate["ID"] = current["ID"]
             break
 
-    # Primeiro grava uma linha imutável no Google. Só depois altera a sessão e limpa o formulário.
+    # 1) Registra o jogo bruto no log durável.
     confirmacao = _registrar_evento_obrigatorio("UPSERT", candidate)
+
+    # 2) Grava imediatamente cada cotação na aba catalogo_odds, antes de qualquer análise.
+    #    Ao analisar, as mesmas linhas são atualizadas por ID com probabilidades e contexto.
+    try:
+        registros_digitados = criar_registros_cotacoes_digitadas(
+            candidate,
+            bankroll=float(bankroll_value),
+            interface_version=INTERFACE_VERSION,
+            core_api_version=EXPECTED_CORE_API,
+            model_version=MODEL_VERSION,
+            core_name=CORE_NAME,
+            app_name=APP_NAME,
+        )
+        cotacoes_confirmadas = salvar_cotacoes(st.secrets, registros_digitados)
+        if cotacoes_confirmadas != len(registros_digitados):
+            raise RuntimeError(
+                f"esperadas {len(registros_digitados)} cotação(ões), confirmadas {cotacoes_confirmadas}."
+            )
+    except Exception as exc:
+        raise RuntimeError(
+            "O jogo foi preservado na aba entrada_jogos, mas as cotações ainda não foram "
+            "confirmadas em catalogo_odds. Os campos permanecem preenchidos; clique novamente "
+            f"após corrigir a conexão. Detalhe: {exc}"
+        ) from exc
+
+    # Só depois das duas confirmações altera a sessão e limpa o formulário.
     if existing_index is None:
         games().append(candidate)
         action = "adicionada"
@@ -456,6 +487,7 @@ def upsert_game(game: dict) -> str:
         action = "atualizada"
     invalidate_analysis()
     _persist_snapshot_best_effort(f"partida {action}")
+    confirmacao["Cotações no catálogo"] = int(cotacoes_confirmadas)
     st.session_state.tex_last_sheet_confirmation = confirmacao
     return action
 
@@ -747,12 +779,44 @@ st.markdown(
 # Restaura o lote antes de desenhar a interface e antes de exibir o estado do autosave.
 _ = games()
 
+# Migração automática: lotes criados nas versões anteriores podem existir apenas em
+# entrada_jogos. Ao abrir a V28.1.5.12, todas as odds desse lote são copiadas/atualizadas
+# em catalogo_odds imediatamente, sem exigir o clique em ANALISAR TODO O LOTE.
+if games() and google_configurado(st.secrets) and not st.session_state.get("tex_catalog_backfill_done"):
+    try:
+        backfill_records: list[dict] = []
+        for pending_game in games():
+            backfill_records.extend(
+                criar_registros_cotacoes_digitadas(
+                    dict(pending_game),
+                    bankroll=float(bankroll),
+                    interface_version=INTERFACE_VERSION,
+                    core_api_version=EXPECTED_CORE_API,
+                    model_version=MODEL_VERSION,
+                    core_name=CORE_NAME,
+                    app_name=APP_NAME,
+                )
+            )
+        backfilled = salvar_cotacoes(st.secrets, backfill_records)
+        st.session_state.tex_catalog_backfill_done = True
+        st.session_state.tex_catalog_backfill_notice = (
+            f"Catálogo pré-análise sincronizado: {backfilled} cotação(ões) do lote atual "
+            "confirmada(s) em catalogo_odds."
+        )
+    except Exception as exc:
+        st.session_state.tex_autosave_warning = (
+            "O lote foi restaurado, mas as cotações pré-análise ainda não foram confirmadas "
+            f"em catalogo_odds: {exc}"
+        )
+
 st.subheader("1. Adicionar partidas")
 league_names = list(LEAGUES.values())
 name_to_code = {name: code for code, name in LEAGUES.items()}
 
 if st.session_state.pop("tex_flash", None):
     st.success(st.session_state.pop("tex_flash_message", "Partida salva."))
+if st.session_state.get("tex_catalog_backfill_notice"):
+    st.success(str(st.session_state.pop("tex_catalog_backfill_notice")))
 if st.session_state.get("tex_autosave_notice"):
     st.info(str(st.session_state.pop("tex_autosave_notice")))
 if st.session_state.get("tex_autosave_status"):
@@ -774,7 +838,7 @@ if isinstance(last_confirmation, dict) and last_confirmation:
         "Cotações lidas de volta": last_confirmation.get("Cotações verificadas", {}),
     }, expanded=False)
 if google_configurado(st.secrets):
-    st.success("Persistência obrigatória ativa: cada partida é registrada imediatamente na aba entrada_jogos, antes da análise.")
+    st.success("Persistência obrigatória ativa: cada partida e cada cotação são gravadas imediatamente em entrada_jogos e catalogo_odds, antes da análise.")
 else:
     st.error("Persistência durável indisponível: configure o Google Sheets antes de inserir um lote importante.")
 
@@ -1055,7 +1119,7 @@ def render_game_entry() -> None:
         home = str(selected_match["Mandante"])
         away = str(selected_match["Visitante"])
         game = {
-            "ID": uuid4().hex[:12],
+            "ID": _stable_game_id(game_date.isoformat(), code, home, away),
             "Data": game_date.isoformat(),
             "Hora": game_time.strftime("%H:%M"),
             "Código da liga": code,
@@ -1072,7 +1136,7 @@ def render_game_entry() -> None:
             "Odd ambas marcam — Não": float(odd_bn) if use_btts else None,
         }
         try:
-            action = upsert_game(game)
+            action = upsert_game(game, bankroll)
         except RuntimeError as exc:
             st.error(str(exc))
             return
@@ -1086,8 +1150,9 @@ def render_game_entry() -> None:
         ) or "sem cotação"
         st.session_state.tex_flash_message = (
             f"Partida {action}: {home} x {away}. GRAVADA E RELIDA na aba "
-            f"{confirmacao.get('Aba', 'entrada_jogos')}, linha {confirmacao.get('Linha', '?')}. "
-            f"Cotações conferidas: {odds_texto}."
+            f"{confirmacao.get('Aba', 'entrada_jogos')}, linha {confirmacao.get('Linha', '?')}; "
+            f"{confirmacao.get('Cotações no catálogo', 0)} cotação(ões) gravada(s) imediatamente "
+            f"em catalogo_odds. Cotações conferidas: {odds_texto}."
         )
         st.rerun()
 

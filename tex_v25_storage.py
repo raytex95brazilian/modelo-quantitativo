@@ -3,19 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, Iterable
+from types import SimpleNamespace
 from uuid import uuid4
 import json
 import re
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.1.5.11"
+STORAGE_API_VERSION = "28.1.5.12"
 
-from tex_v28_finance import COLUNAS_APOSTAS, liquidar_registro
-
-# Planilha histórica que já era usada pelas versões anteriores.
-PLANILHA_ANTIGA_ID = "1exfvkvNC_7W-0Nk51ZOue5Do7LtR9sS-8x5R0Gf_zMo"
-PLANILHA_ANTIGA_URL = f"https://docs.google.com/spreadsheets/d/{PLANILHA_ANTIGA_ID}/edit"
+from tex_v28_finance import COLUNAS_APOSTAS, identificador_registro, liquidar_registro
 
 ABA_COTACOES = "catalogo_odds"
 ABA_ANALISES = "historico_analises"
@@ -137,7 +134,7 @@ def _extrair_id_planilha(valor: Any) -> str:
 def configuracao_google(secrets: Any) -> dict[str, Any]:
     """Aceita [google_sheets] ou [google_sheet], mas exige destino explícito.
 
-    Versões anteriores podiam usar PLANILHA_ANTIGA_ID como fallback. Isso
+    Versões anteriores podiam usar um ID de planilha embutido como fallback. Isso
     permitia uma gravação aparentemente bem-sucedida em outra planilha. A partir
     da V28.1.5.11, o ID/URL precisa estar declarado nos Secrets.
     """
@@ -388,7 +385,7 @@ def _acrescentar_sem_leitura(
 ) -> int:
     """Acrescenta, relê o intervalo gravado e só então confirma sucesso.
 
-    O nome foi mantido por compatibilidade, mas a V28.1.5.11 deliberadamente
+    O nome foi mantido por compatibilidade. A verificação pós-gravação usa
     faz uma leitura curta de verificação após cada append. Um HTTP 200 sem a
     linha correta na planilha não é considerado salvamento.
     """
@@ -554,15 +551,172 @@ def identificadores_apostas(secrets: Any) -> set[str]:
         secrets, cfg["worksheet_auditoria"], COLUNAS_APOSTAS, "ID Aposta"
     )
 
-def salvar_cotacoes(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
+def criar_registros_cotacoes_digitadas(
+    jogo: dict[str, Any],
+    *,
+    bankroll: float,
+    interface_version: str,
+    core_api_version: str,
+    model_version: str,
+    core_name: str,
+    app_name: str,
+) -> list[dict[str, Any]]:
+    """Converte as odds digitadas em linhas auditáveis antes da análise.
+
+    Os IDs são os mesmos usados pelo motor após a análise. Assim, ``salvar_cotacoes``
+    atualiza as linhas existentes com probabilidades e classificação em vez de criar
+    duplicatas.
+    """
+    home = str(jogo.get("Mandante", "") or "")
+    away = str(jogo.get("Visitante", "") or "")
+    bookmaker = str(jogo.get("Casa de apostas", "") or "PIXBET")
+    markets = [
+        (
+            "1X2", "Resultado final 1X2",
+            [("H", home, jogo.get("Odd mandante")),
+             ("D", "Empate", jogo.get("Odd empate")),
+             ("A", away, jogo.get("Odd visitante"))],
+        ),
+        (
+            "OU25", "Total de gols 2,5",
+            [("O25", "Mais de 2,5 gols", jogo.get("Odd mais de 2,5")),
+             ("U25", "Menos de 2,5 gols", jogo.get("Odd menos de 2,5"))],
+        ),
+        (
+            "BTTS", "Ambas marcam",
+            [("BTTS_Y", "Ambas marcam — Sim", jogo.get("Odd ambas marcam — Sim")),
+             ("BTTS_N", "Ambas marcam — Não", jogo.get("Odd ambas marcam — Não"))],
+        ),
+    ]
+    registered = agora_brasilia()
+    records: list[dict[str, Any]] = []
+    for market_code, market_name, selections in markets:
+        valid = [(side, selection, _valor_float_ou_none(odd)) for side, selection, odd in selections]
+        valid = [(side, selection, odd) for side, selection, odd in valid if odd is not None]
+        if not valid:
+            continue
+        total_implied = sum(1.0 / float(odd) for _, _, odd in valid)
+        market_complete = len(valid) == len(selections)
+        for side, selection, odd in valid:
+            row = SimpleNamespace(
+                MatchID=(
+                    f"{str(jogo.get('Código da liga', '') or '')}|"
+                    f"{str(jogo.get('Data', '') or '')}|{home}|{away}"
+                ),
+                Market=market_code,
+                Side=side,
+                Odd=float(odd),
+                Bookmaker=bookmaker,
+            )
+            record = {column: "" for column in COLUNAS_COTACOES}
+            record.update({
+                "ID Coleta": identificador_registro(row),
+                "Registrado em": registered,
+                "Casa de apostas": bookmaker,
+                "Liga": str(jogo.get("Liga", "") or ""),
+                "Jogo": f"{home} x {away}",
+                "Mandante": home,
+                "Visitante": away,
+                "Data do jogo": (
+                    pd.to_datetime(str(jogo.get("Data", "") or ""), errors="coerce").strftime("%d/%m/%Y")
+                    if not pd.isna(pd.to_datetime(str(jogo.get("Data", "") or ""), errors="coerce"))
+                    else str(jogo.get("Data", "") or "")
+                ),
+                "Hora do jogo": str(jogo.get("Hora", "") or ""),
+                "Mercado": market_name,
+                "Seleção": selection,
+                "Cotação": float(odd),
+                "Grupo do mercado": market_code,
+                "Mercado completo": "Sim" if market_complete else "Não",
+                "Probabilidade implícita bruta %": 100.0 / float(odd),
+                "Margem do mercado %": (total_implied - 1.0) * 100.0 if market_complete else "",
+                "Probabilidade ajustada sem margem %": (
+                    ((1.0 / float(odd)) / total_implied) * 100.0 if market_complete and total_implied > 0 else ""
+                ),
+                "Banca no momento": float(bankroll),
+                "Perfil": str(core_name),
+                "Origem": str(app_name),
+                "Observação": (
+                    "Cotação digitada e confirmada antes da análise. "
+                    "Probabilidades e contexto serão atualizados na mesma linha após ANALISAR TODO O LOTE."
+                ),
+                "Versão da interface": str(interface_version),
+                "Versão da API do núcleo": str(core_api_version),
+                "Versão do modelo": str(model_version),
+            })
+            records.append(record)
+    return records
+
+
+def _salvar_cotacoes_upsert(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
+    """Insere novas cotações e atualiza as já existentes pelo ID Coleta."""
+    normalizados = _normalizar(registros, COLUNAS_COTACOES)
+    if not normalizados:
+        return 0
     cfg = configuracao_google(secrets)
-    return _acrescentar_sem_leitura(
-        secrets,
-        cfg["worksheet_catalogo"],
-        COLUNAS_COTACOES,
-        registros,
-        ["ID Coleta"],
-    )
+    if not cfg["configurado"]:
+        raise RuntimeError(cfg.get("erro_configuracao") or "Google Sheets não configurado.")
+    titulo = cfg["worksheet_catalogo"]
+    aba = _obter_aba_cacheada(secrets, titulo, COLUNAS_COTACOES)
+    worksheet_key = (cfg["spreadsheet_id"], cfg["client_email"], str(titulo))
+    header = _CABECALHOS_ATUAIS.get(worksheet_key, list(COLUNAS_COTACOES))
+    if "ID Coleta" not in header:
+        raise RuntimeError("A aba catalogo_odds não contém a coluna 'ID Coleta'.")
+    id_index = header.index("ID Coleta")
+    remote_ids = list(aba.col_values(id_index + 1))
+    row_by_id: dict[str, int] = {}
+    for position in range(1, len(remote_ids)):
+        value = str(remote_ids[position]).strip()
+        if value:
+            row_by_id[value] = position + 1
+
+    to_append: list[dict[str, Any]] = []
+    affected: list[tuple[dict[str, Any], int | None]] = []
+    last_col = _letra_coluna(len(header))
+    for record in normalizados:
+        identifier = str(record.get("ID Coleta", "")).strip()
+        if not identifier:
+            raise RuntimeError("Cotação sem ID Coleta não pode ser persistida.")
+        line = [record.get(column, "") for column in header]
+        existing_row = row_by_id.get(identifier)
+        if existing_row is None:
+            to_append.append(record)
+            affected.append((record, None))
+        else:
+            aba.update(f"A{existing_row}:{last_col}{existing_row}", [line], value_input_option="RAW")
+            affected.append((record, existing_row))
+
+    if to_append:
+        rows = [[record.get(column, "") for column in header] for record in to_append]
+        aba.append_rows(rows, value_input_option="RAW")
+
+    # Confirma cada ID pela leitura bruta. Para linhas anexadas, procura o ID na coluna.
+    numeric_columns = set(COLUNAS_NUMERICAS_PLANILHA)
+    for record, suggested_row in affected:
+        identifier = str(record.get("ID Coleta", "")).strip()
+        row_number, values = _ler_linha_por_id(aba, header, "ID Coleta", identifier, suggested_row)
+        values = list(values) + [""] * max(0, len(header) - len(values))
+        real = dict(zip(header, values))
+        differences: list[str] = []
+        for column in COLUNAS_COTACOES:
+            expected = record.get(column, "")
+            if not _celula_equivalente(expected, real.get(column, ""), numerico=column in numeric_columns):
+                differences.append(f"{column}: enviado={expected!r}; lido={real.get(column, '')!r}")
+        if differences:
+            raise RuntimeError(
+                f"A cotação {identifier!r} não passou na leitura de conferência: "
+                + " | ".join(differences[:12])
+            )
+        row_by_id[identifier] = row_number
+
+    cache_key = (cfg["spreadsheet_id"], cfg["client_email"], str(titulo))
+    known = _CHAVES_GRAVADAS_NO_PROCESSO.setdefault(cache_key, set())
+    known.update((str(record.get("ID Coleta", "")).strip(),) for record in normalizados)
+    return len(normalizados)
+
+
+def salvar_cotacoes(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
+    return _salvar_cotacoes_upsert(secrets, registros)
 
 
 def salvar_cotacao(secrets: Any, registro: dict[str, Any] | Iterable[dict[str, Any]]) -> int:
@@ -715,7 +869,7 @@ def registrar_evento_lote(
 ) -> dict[str, Any]:
     """Grava e relê uma ação do lote antes de confirmar sucesso ao app.
 
-    A V28.1.5.11 apenas confiava no retorno do append. A partir da V28.1.5.11,
+    Versões anteriores confiavam apenas no retorno do append. Nesta versão,
     a linha é lida novamente e os identificadores e todas as cotações são
     comparados campo a campo. O formulário só pode ser limpo depois disso.
     """

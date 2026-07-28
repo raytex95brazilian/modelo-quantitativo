@@ -44,7 +44,7 @@ ast.parse(core_source)
 assert '_v28 = _load_required_module("tex_v28_core_2812")' in app_source
 assert "import tex_v28_core as _v28" not in app_source
 assert 'EXPECTED_CORE_API = "28.1.2"' in app_source
-assert 'INTERFACE_VERSION = "V28.1.5.11"' in app_source
+assert 'INTERFACE_VERSION = "V28.1.5.12"' in app_source
 assert 'Partida e cotações — etapa única' in app_source
 assert 'CONFIRMAR CONFRONTO' not in app_source
 assert 'Etapa 1 de 2' not in app_source
@@ -60,6 +60,9 @@ assert 'salvar_lote_pendente' in app_source
 assert 'carregar_lote_pendente' in app_source
 assert 'registrar_evento_lote' in app_source
 assert '_registrar_evento_obrigatorio("UPSERT", candidate)' in app_source
+assert 'criar_registros_cotacoes_digitadas' in app_source
+assert 'cotação(ões) gravada(s) imediatamente' in app_source
+assert 'catalogo_odds, antes da análise' in app_source
 assert '_confirmar_lote_remoto_antes_da_analise()' in app_source
 assert 'diagnostico_google' in app_source
 assert 'GRAVADO E RELIDO' in app_source
@@ -91,10 +94,11 @@ assert core.CORE_API_VERSION == "28.1.2"
 assert core.V28_CFG.max_entries == 5
 assert core.V28_CFG.strong_price_ev == 0.0
 assert core.V28_CFG.fallback_min_ev == -0.15
-assert storage.STORAGE_API_VERSION == "28.1.5.11"
+assert storage.STORAGE_API_VERSION == "28.1.5.12"
 assert "Lote JSON" in storage.COLUNAS_LOTE_PENDENTE
 assert "ID Evento" in storage.COLUNAS_EVENTOS_LOTE
 assert "Tipo de evento" in storage.COLUNAS_EVENTOS_LOTE
+assert callable(storage.criar_registros_cotacoes_digitadas)
 
 for name, columns in {
     "cotações": storage.COLUNAS_COTACOES,
@@ -150,4 +154,4 @@ for relative, path in distributed_files.items():
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert manifest_entries[relative] == digest, f"SHA-256 divergente: {relative}"
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.1.5.11: OK")
+print("TESTE DE INTEGRIDADE DO PACOTE V28.1.5.12: OK")

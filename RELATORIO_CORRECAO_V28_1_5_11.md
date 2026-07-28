@@ -1,4 +1,4 @@
-# Relatório de correção — Tex Statistics V28.1.5.11
+# Relatório de correção — Tex Statistics V28.1.5.12
 
 ## Falha observada
 
@@ -19,8 +19,8 @@ A coluna **Cotação** da planilha herdou formatação de data de uma estrutura 
 
 ## Versões
 
-- Interface: V28.1.5.11
-- Armazenamento: 28.1.5.11
+- Interface: V28.1.5.12
+- Armazenamento: 28.1.5.12
 - Motor preditivo: V28.1.2 — Estado Isolado
 
 O motor preditivo e o backtest não foram alterados.
