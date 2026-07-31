@@ -30,12 +30,16 @@ _storage = _load_required_module("tex_v25_storage")
 _finance = _load_required_module("tex_v28_finance")
 _v28 = _load_required_module("tex_v28_core_2812")
 _operacional = _load_required_module("tex_operacional_core")
+_filtro2018 = _load_required_module("tex_filtro_2018")
+_operacao_filtrada = _load_required_module("tex_operacao_filtrada")
 
 EXPECTED_CORE_API = "28.1.2"
 EXPECTED_STORAGE_API = "28.1.5.12"
 EXPECTED_FINANCE_API = "28.1.5.12"
-INTERFACE_VERSION = "V28.1.5.12"
-APP_NAME = "Tex Statistics V28.1.5.12"
+EXPECTED_FILTER_API = "28.2.0"
+EXPECTED_OPERATION_API = "28.2.0"
+INTERFACE_VERSION = "V28.2.0"
+APP_NAME = "Tex Statistics V28.2.0 — Filtro 2018"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -66,6 +70,8 @@ _REQUIRED_OPERACIONAL = (
     "INPUT_COLUMNS", "enrich_with_standings", "latest_team_catalog",
     "parse_odd", "standings_context",
 )
+_REQUIRED_FILTER_2018 = ("evaluate_lot_2018",)
+_REQUIRED_OPERATION_FILTERED = ("attach_filter_results", "build_operational_outputs")
 
 _IMPORT_PROBLEMS = list(_MODULE_IMPORT_ERRORS)
 for module_name, module, required in (
@@ -74,6 +80,8 @@ for module_name, module, required in (
     ("tex_v28_finance", _finance, _REQUIRED_FINANCE),
     ("tex_v28_core_2812", _v28, _REQUIRED_V28),
     ("tex_operacional_core", _operacional, _REQUIRED_OPERACIONAL),
+    ("tex_filtro_2018", _filtro2018, _REQUIRED_FILTER_2018),
+    ("tex_operacao_filtrada", _operacao_filtrada, _REQUIRED_OPERATION_FILTERED),
 ):
     if module is not None:
         _IMPORT_PROBLEMS.extend(
@@ -94,6 +102,16 @@ if _finance is not None and getattr(_finance, "FINANCE_API_VERSION", None) != EX
     _IMPORT_PROBLEMS.append(
         f"FINANCE_API_VERSION esperado {EXPECTED_FINANCE_API}; encontrado "
         f"{getattr(_finance, 'FINANCE_API_VERSION', 'ausente')}"
+    )
+if _filtro2018 is not None and getattr(_filtro2018, "FILTER_API_VERSION", None) != EXPECTED_FILTER_API:
+    _IMPORT_PROBLEMS.append(
+        f"FILTER_API_VERSION esperado {EXPECTED_FILTER_API}; encontrado "
+        f"{getattr(_filtro2018, 'FILTER_API_VERSION', 'ausente')}"
+    )
+if _operacao_filtrada is not None and getattr(_operacao_filtrada, "OPERATION_API_VERSION", None) != EXPECTED_OPERATION_API:
+    _IMPORT_PROBLEMS.append(
+        f"OPERATION_API_VERSION esperado {EXPECTED_OPERATION_API}; encontrado "
+        f"{getattr(_operacao_filtrada, 'OPERATION_API_VERSION', 'ausente')}"
     )
 
 LEAGUES = getattr(_v25, "LEAGUES", {})
@@ -139,6 +157,9 @@ enrich_with_standings = getattr(_operacional, "enrich_with_standings", None)
 latest_team_catalog = getattr(_operacional, "latest_team_catalog", None)
 parse_odd = getattr(_operacional, "parse_odd", None)
 standings_context = getattr(_operacional, "standings_context", None)
+evaluate_lot_2018 = getattr(_filtro2018, "evaluate_lot_2018", None)
+attach_filter_results = getattr(_operacao_filtrada, "attach_filter_results", None)
+build_operational_outputs = getattr(_operacao_filtrada, "build_operational_outputs", None)
 
 
 def build_ai_summary(
@@ -154,10 +175,18 @@ def build_ai_summary(
     original = _core_build_ai_summary(games, readings, evaluations, diagnostics, matches)
     original_lines = str(original).splitlines()
     body = original_lines[1:] if original_lines else []
+    approved = 0
+    rejected = 0
+    if not evaluations.empty and "Filter2018Approved" in evaluations:
+        by_game = evaluations[["InputID", "Filter2018Approved"]].drop_duplicates("InputID")
+        approved = int(by_game["Filter2018Approved"].fillna(False).astype(bool).sum())
+        rejected = int(len(by_game) - approved)
     return "\n".join([
         "ANÁLISE PARA IA — Tex Statistics",
         f"Interface: {APP_NAME}",
         f"Motor preditivo: {CORE_DISPLAY_NAME}",
+        f"Filtro eliminatório de 2018: {approved} aprovado(s) e {rejected} reprovado(s).",
+        "Jogos reprovados permanecem calculados e salvos, mas são proibidos em apostas simples e múltiplas.",
         *body,
     ])
 
@@ -170,14 +199,14 @@ LOCAL_PENDING_LOT_PATH = ROOT / "data" / "tex_v28_lote_pendente.json"
 CONSERVATIVE_BACKTEST_PATH = ROOT / "backtest" / "V28_1_5_7_META_5_RESUMO.json"
 FUSO = ZoneInfo("America/Fortaleza")
 
-st.set_page_config(page_title=APP_NAME, page_icon="⚽", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title=APP_NAME, page_icon="⚽", layout="wide", initial_sidebar_state="auto")
 
 if _IMPORT_PROBLEMS:
     st.error("Arquivos da V28 desencontrados no deploy.")
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.1.5.12, confirme tex_v25_storage.py e tex_v28_finance.py no GitHub, "
+        "pelo mesmo pacote V28.2.0, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -201,12 +230,28 @@ def apply_style() -> None:
     st.markdown(
         """
         <style>
-        .block-container{max-width:1500px;padding-top:1rem;padding-bottom:4rem}
-        .tex-head{padding:1.15rem 1.25rem;border-radius:18px;background:linear-gradient(125deg,#0f172a,#164e63);color:#fff;margin-bottom:1rem}
-        .tex-head h1{margin:0;font-size:2rem}.tex-head p{margin:.45rem 0 0;color:#dbeafe}
-        .rule-box{padding:.9rem 1rem;border-radius:13px;border:1px solid rgba(14,116,144,.30);background:rgba(14,116,144,.07);margin:.5rem 0 1rem}
-        [data-testid="stMetric"],[data-testid="stDataFrame"]{border:1px solid rgba(120,120,120,.22);border-radius:13px;padding:.45rem}
-        .game-card{padding:.85rem 1rem;border:1px solid rgba(120,120,120,.22);border-radius:13px;margin:.35rem 0}
+        :root{--tex-navy:#0f172a;--tex-cyan:#0891b2;--tex-teal:#0f766e;--tex-soft:#f0fdfa;--tex-border:rgba(15,118,110,.22)}
+        .block-container{max-width:1480px;padding-top:1rem;padding-bottom:5rem}
+        .tex-head{padding:1.25rem 1.35rem;border-radius:22px;background:linear-gradient(135deg,#0f172a 0%,#164e63 55%,#0f766e 100%);color:#fff;margin-bottom:1rem;box-shadow:0 18px 45px rgba(15,23,42,.18)}
+        .tex-head h1{margin:0;font-size:2rem;letter-spacing:-.03em}.tex-head p{margin:.55rem 0 0;color:#dbeafe;line-height:1.55}
+        .rule-box,.tex-info-card{padding:1rem 1.05rem;border-radius:16px;border:1px solid var(--tex-border);background:linear-gradient(135deg,rgba(240,253,250,.92),rgba(236,254,255,.92));margin:.55rem 0 1rem}
+        .filter-approved{padding:1rem;border-radius:16px;border:1px solid rgba(22,163,74,.32);background:rgba(220,252,231,.72);margin:.5rem 0}
+        .filter-rejected{padding:1rem;border-radius:16px;border:1px solid rgba(220,38,38,.28);background:rgba(254,226,226,.72);margin:.5rem 0}
+        .multiple-card{padding:1.05rem 1.15rem;border-radius:18px;background:linear-gradient(135deg,#172554,#164e63);color:#fff;box-shadow:0 14px 34px rgba(15,23,42,.18);margin:.75rem 0 1.1rem}
+        .multiple-card strong{color:#a5f3fc}
+        [data-testid="stMetric"],[data-testid="stDataFrame"]{border:1px solid rgba(120,120,120,.20);border-radius:15px;padding:.5rem;background:rgba(255,255,255,.02)}
+        [data-testid="stForm"],[data-testid="stVerticalBlockBorderWrapper"]{border-radius:18px!important}
+        .stButton>button,.stDownloadButton>button,.stLinkButton>a{min-height:46px;border-radius:14px!important;font-weight:750!important;letter-spacing:.01em;transition:transform .16s ease,box-shadow .16s ease!important}
+        .stButton>button:hover,.stDownloadButton>button:hover,.stLinkButton>a:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(8,145,178,.18)}
+        button[kind="primary"]{background:linear-gradient(135deg,#0891b2,#0f766e)!important;border:0!important;color:white!important}
+        [data-baseweb="input"]>div,[data-baseweb="select"]>div{border-radius:12px!important}
+        .game-card{padding:.95rem 1rem;border:1px solid rgba(120,120,120,.20);border-radius:15px;margin:.4rem 0}
+        @media(max-width:768px){
+          .block-container{padding:.65rem .75rem 4.5rem}.tex-head{padding:1rem;border-radius:17px}.tex-head h1{font-size:1.45rem}.tex-head p{font-size:.9rem}
+          [data-testid="stMetric"]{padding:.35rem}.stButton>button,.stDownloadButton>button,.stLinkButton>a{min-height:50px;font-size:.96rem}
+          .rule-box,.tex-info-card,.multiple-card{border-radius:14px;padding:.85rem}
+          [data-testid="stDataFrame"]{overflow-x:auto}
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -215,7 +260,7 @@ def apply_style() -> None:
         '<div class="tex-head"><h1>Tex Statistics</h1>'
         f'<p><b>Interface:</b> {APP_NAME}<br>'
         f'<b>Motor preditivo:</b> {CORE_DISPLAY_NAME}<br>'
-        'Análise completa por partida, ranking semanal com meta mínima de cinco entradas e controle financeiro com liquidação.</p></div>',
+        '<b>Fluxo:</b> cadastro e armazenamento integral → filtro eliminatório de 2018 → análise estatística e financeira dos aprovados → simples e sugestão de múltipla.</p></div>',
         unsafe_allow_html=True,
     )
 
@@ -272,6 +317,7 @@ def team_catalog(serialized: tuple[tuple[str, int, str, str], ...]):
 
 RESULT_STATE_KEYS = (
     "tex_entries", "tex_readings", "tex_evaluations", "tex_diagnostics",
+    "tex_filter_results", "tex_multiple_summary",
     "tex_ai_summary", "tex_analysis_fingerprint",
 )
 
@@ -553,6 +599,28 @@ def make_catalog_records(evaluations: pd.DataFrame, bankroll: float) -> list[dic
                 "Pontos do visitante": getattr(row, "AwayPoints", ""),
                 "Pontos por jogo do mandante": getattr(row, "HomePPG", ""),
                 "Pontos por jogo do visitante": getattr(row, "AwayPPG", ""),
+                "Filtro 2018 — status": getattr(row, "Filter2018Status", ""),
+                "Filtro 2018 — elegível operacional": "Sim" if bool(getattr(row, "Filter2018Approved", False)) else "Não",
+                "Regra 1 — resultado": "Aprovada" if bool(getattr(row, "Filter2018Rule1Pass", False)) else "Reprovada",
+                "Regra 1 — fundamento": getattr(row, "Filter2018Rule1Basis", ""),
+                "Regra 1 — detalhe": getattr(row, "Filter2018Rule1Detail", ""),
+                "Regra 2 — resultado": "Aprovada" if bool(getattr(row, "Filter2018Rule2Pass", False)) else "Reprovada",
+                "Regra 2 — detalhe": getattr(row, "Filter2018Rule2Detail", ""),
+                "Regra 3 — resultado": "Aprovada" if bool(getattr(row, "Filter2018Rule3Pass", False)) else "Reprovada",
+                "Regra 3 — gols do mandante nas últimas 5": getattr(row, "Filter2018Rule3Count", ""),
+                "Regra 3 — detalhe": getattr(row, "Filter2018Rule3Detail", ""),
+                "Regra 4 — resultado": "Aprovada" if bool(getattr(row, "Filter2018Rule4Pass", False)) else "Reprovada",
+                "Regra 4 — gols do visitante nas últimas 5": getattr(row, "Filter2018Rule4Count", ""),
+                "Regra 4 — detalhe": getattr(row, "Filter2018Rule4Detail", ""),
+                "Último confronto direto — data": getattr(row, "Filter2018LastH2HDate", ""),
+                "Último confronto direto — placar": getattr(row, "Filter2018LastH2HScore", ""),
+                "Último confronto direto — ambas marcaram": getattr(row, "Filter2018LastH2HBothScored", ""),
+                "Resumo do filtro 2018": getattr(row, "Filter2018Summary", ""),
+                "Decisão operacional": getattr(row, "OperationalDecision", getattr(row, "Status", "")),
+                "Mercado escolhido para simples": "Sim" if str(getattr(row, "Status", "")) == "OPERAR" else "Não",
+                "Incluído na sugestão de múltipla": "Sim" if bool(getattr(row, "IncludedInMultiple", False)) else "Não",
+                "Fator total da múltipla": getattr(row, "MultipleFactorTotal", ""),
+                "Versão do filtro 2018": EXPECTED_FILTER_API,
                 "Versão da interface": INTERFACE_VERSION,
                 "Versão da API do núcleo": EXPECTED_CORE_API,
                 "Versão do modelo": MODEL_VERSION,
@@ -574,10 +642,9 @@ def make_analysis_records(evaluations: pd.DataFrame, unit_fraction: float) -> li
             "desconto_cotacao": float(row.PriceHaircut),
             "modelo": MODEL_VERSION,
             "api_nucleo": EXPECTED_CORE_API,
-            "meta_minima_semanal": 5,
-            "piso_ev_principal": 0.0,
-            "piso_ev_complemento": -0.15,
-            "filtro": "ranking semanal: EV conservador não negativo com unidade cheia; complemento até -15% com meia unidade",
+            "filtro_2018_obrigatorio": True,
+            "piso_ev_financeiro": 0.0,
+            "politica_operacional": "somente jogos aprovados no filtro de 2018; sem meta mínima; uma seleção simples por partida",
         }
         record = {column: "" for column in COLUNAS_ANALISES}
         record.update(
@@ -640,6 +707,30 @@ def make_analysis_records(evaluations: pd.DataFrame, unit_fraction: float) -> li
                 "Limite conservador da faixa histórica %": float(row.SimilarCasesLowerProbability) * 100.0,
                 "Código do mercado": row.Market,
                 "Código da seleção": row.Side,
+                "Filtro 2018 — status": getattr(row, "Filter2018Status", ""),
+                "Filtro 2018 — elegível operacional": "Sim" if bool(getattr(row, "Filter2018Approved", False)) else "Não",
+                "Regra 1 — resultado": "Aprovada" if bool(getattr(row, "Filter2018Rule1Pass", False)) else "Reprovada",
+                "Regra 1 — fundamento": getattr(row, "Filter2018Rule1Basis", ""),
+                "Regra 1 — detalhe": getattr(row, "Filter2018Rule1Detail", ""),
+                "Regra 2 — resultado": "Aprovada" if bool(getattr(row, "Filter2018Rule2Pass", False)) else "Reprovada",
+                "Regra 2 — detalhe": getattr(row, "Filter2018Rule2Detail", ""),
+                "Regra 3 — resultado": "Aprovada" if bool(getattr(row, "Filter2018Rule3Pass", False)) else "Reprovada",
+                "Regra 3 — gols do mandante nas últimas 5": getattr(row, "Filter2018Rule3Count", ""),
+                "Regra 3 — detalhe": getattr(row, "Filter2018Rule3Detail", ""),
+                "Regra 4 — resultado": "Aprovada" if bool(getattr(row, "Filter2018Rule4Pass", False)) else "Reprovada",
+                "Regra 4 — gols do visitante nas últimas 5": getattr(row, "Filter2018Rule4Count", ""),
+                "Regra 4 — detalhe": getattr(row, "Filter2018Rule4Detail", ""),
+                "Último confronto direto — data": getattr(row, "Filter2018LastH2HDate", ""),
+                "Último confronto direto — placar": getattr(row, "Filter2018LastH2HScore", ""),
+                "Último confronto direto — ambas marcaram": getattr(row, "Filter2018LastH2HBothScored", ""),
+                "Resumo do filtro 2018": getattr(row, "Filter2018Summary", ""),
+                "Decisão operacional": getattr(row, "OperationalDecision", getattr(row, "Status", "")),
+                "Mercado escolhido para simples": "Sim" if str(getattr(row, "Status", "")) == "OPERAR" else "Não",
+                "Incluído na sugestão de múltipla": "Sim" if bool(getattr(row, "IncludedInMultiple", False)) else "Não",
+                "Fator total da múltipla": getattr(row, "MultipleFactorTotal", ""),
+                "Probabilidade conjunta da múltipla %": float(getattr(row, "MultipleJointProbability", 0.0) or 0.0) * 100.0,
+                "Valor esperado da múltipla %": float(getattr(row, "MultipleExpectedValue", 0.0) or 0.0) * 100.0,
+                "Versão do filtro 2018": EXPECTED_FILTER_API,
             }
         )
         records.append(record)
@@ -707,8 +798,8 @@ with st.sidebar:
             value=float(current_operational_config.get("unit_percent", 1.0)),
             step=0.1,
         )
-        st.info("Meta mínima semanal fixa: 5 entradas")
-        pending_weekly_target = 5
+        st.info("O filtro de 2018 é o único portão de elegibilidade para apostas.")
+        pending_weekly_target = 5  # parâmetro mantido apenas para compatibilidade interna do núcleo
         operational_config_submitted = st.form_submit_button(
             "APLICAR CONFIGURAÇÃO",
             use_container_width=True,
@@ -737,22 +828,15 @@ with st.sidebar:
     st.caption(f"Ligas: {len(LEAGUES)}")
     if backtest_summary:
         st.caption(
-            "Política semanal retrospectiva 2022–2025: "
-            f"{int(backtest_summary.get('entries', 0))} entradas | "
-            f"{float(backtest_summary.get('average_entries_per_week', 0.0)):.2f} por semana | "
-            f"{int(backtest_summary.get('weeks_with_target', 0))}/{int(backtest_summary.get('weeks', 0))} semanas com cinco entradas."
-        )
-        st.caption(
-            f"Cenário histórico com melhor cotação após desconto: retorno {float(backtest_summary.get('best_price_roi_per_staked_unit', 0.0)):+.2%}. "
-            f"Cenário histórico com cotação média após desconto: retorno {float(backtest_summary.get('average_price_roi_per_staked_unit', 0.0)):+.2%}. "
-            "O resultado da análise depende das cotações digitadas no lote."
+            "O backtest legado da V28 permanece no pacote apenas para auditoria histórica. "
+            "Ele não controla a seleção desta versão, que não possui meta mínima semanal."
         )
     if registered_week_counts:
         st.caption(f"Apostas já registradas por semana: {registered_week_counts}")
     if st.session_state.get("tex_ledger_sync_warning"):
         st.warning(
-            "A planilha não pôde ser sincronizada. O limite semanal está usando somente "
-            "o histórico local desta instalação até uma nova sincronização bem-sucedida."
+            "A planilha não pôde ser sincronizada. O histórico de apostas registrado nesta instalação "
+            "pode estar incompleto até uma nova sincronização bem-sucedida."
         )
     google_diag = diagnostico_google(st.secrets) if callable(diagnostico_google) else {}
     if google_configurado(st.secrets):
@@ -769,18 +853,23 @@ with st.sidebar:
         )
 
 st.markdown(
-    '<div class="rule-box"><b>Regra operacional:</b> a meta é de <b>cinco seleções por semana</b>, '
-    'sempre com no máximo uma seleção por partida. Entradas com EV conservador não negativo usam uma unidade; '
-    'se faltarem seleções, o ranking admite complemento somente até o piso rígido de −15%, com meia unidade. '
-    'Se não houver cinco partidas admissíveis, o app não força uma escolha pior. Mercados experimentais não entram na carteira.</div>',
+    '<div class="rule-box"><b>Regra operacional obrigatória:</b> todos os jogos são calculados e salvos. '
+    'Somente os confrontos <b>aprovados integralmente no filtro de 2018</b> seguem para qualquer decisão de aposta. '
+    'Depois da aprovação, o aplicativo realiza exclusivamente a análise estatística das probabilidades e a análise financeira das cotações. '
+    'Não existe meta mínima de entradas nem complemento com valor esperado negativo.</div>',
     unsafe_allow_html=True,
+)
+st.caption(
+    "Limitação atual da fonte: o histórico carregado contém 24 ligas de pontos corridos. "
+    "As últimas cinco partidas são buscadas sem separar casa e fora e atravessam temporadas; "
+    "copas e amistosos só poderão entrar quando uma fonte futura os fornecer."
 )
 
 # Restaura o lote antes de desenhar a interface e antes de exibir o estado do autosave.
 _ = games()
 
 # Migração automática: lotes criados nas versões anteriores podem existir apenas em
-# entrada_jogos. Ao abrir a V28.1.5.12, todas as odds desse lote são copiadas/atualizadas
+# entrada_jogos. Ao abrir a V28.2.0, todas as odds desse lote são copiadas/atualizadas
 # em catalogo_odds imediatamente, sem exigir o clique em ANALISAR TODO O LOTE.
 if games() and google_configurado(st.secrets) and not st.session_state.get("tex_catalog_backfill_done"):
     try:
@@ -1230,7 +1319,7 @@ else:
             st.error(f"Análise bloqueada: {exc}")
             st.stop()
         current_games = games_frame()
-        entries, readings, evaluations, diagnostics = analyze_games(
+        _legacy_entries, _legacy_readings, base_evaluations, diagnostics = analyze_games(
             current_games,
             matches,
             v28_model,
@@ -1240,12 +1329,26 @@ else:
             existing_week_counts=registered_week_counts,
             existing_match_ids=registered_match_ids,
         )
-        entries = enrich_with_standings(entries, current_games, matches)
-        readings = enrich_with_standings(readings, current_games, matches)
-        evaluations = enrich_with_standings(evaluations, current_games, matches)
+        # O núcleo calcula probabilidades para TODOS os jogos, inclusive os reprovados.
+        # Isso preserva integralmente a base histórica. O filtro atua apenas como portão operacional.
+        base_evaluations = enrich_with_standings(base_evaluations, current_games, matches)
+        filter_results = evaluate_lot_2018(current_games, matches)
+        filtered_evaluations = attach_filter_results(base_evaluations, filter_results)
+        entries, readings, evaluations, multiple_summary = build_operational_outputs(
+            filtered_evaluations,
+            bankroll=float(bankroll),
+            unit_fraction=float(unit_percent) / 100.0,
+        )
+        for frame in (entries, readings, evaluations):
+            if not frame.empty:
+                frame["MultipleFactorTotal"] = float(multiple_summary.factor)
+                frame["MultipleJointProbability"] = float(multiple_summary.joint_probability)
+                frame["MultipleExpectedValue"] = float(multiple_summary.expected_value)
         st.session_state.tex_entries = entries
         st.session_state.tex_readings = readings
         st.session_state.tex_evaluations = evaluations
+        st.session_state.tex_filter_results = filter_results
+        st.session_state.tex_multiple_summary = multiple_summary
         st.session_state.tex_diagnostics = diagnostics
         st.session_state.tex_ai_summary = build_ai_summary(
             current_games, readings, evaluations, diagnostics, matches
@@ -1294,6 +1397,8 @@ if saved_fingerprint and saved_fingerprint != current_fingerprint:
 entries = st.session_state.get("tex_entries", pd.DataFrame())
 readings = st.session_state.get("tex_readings", pd.DataFrame())
 evaluations = st.session_state.get("tex_evaluations", pd.DataFrame())
+filter_results = st.session_state.get("tex_filter_results", pd.DataFrame())
+multiple_summary = st.session_state.get("tex_multiple_summary")
 diagnostics = st.session_state.get("tex_diagnostics", pd.DataFrame())
 ai_summary = st.session_state.get("tex_ai_summary", "")
 if st.session_state.get("tex_analysis_autosave"):
@@ -1318,7 +1423,8 @@ def evaluation_table(frame: pd.DataFrame) -> pd.DataFrame:
         "RawSportsProbability", "DecisionProbability", "ConservativeProbability",
         "EmpiricalHitRate", "ProfileSample", "SampleConfidence", "Reliability",
         "ModelMarketDifference", "ModelSportsDifference", "MaximumComponentDisagreement",
-        "DisagreementLevel", "PortfolioTier", "StakeMultiplier",
+        "DisagreementLevel", "Filter2018Status", "OperationalDecision",
+        "IncludedInMultiple", "PortfolioTier", "StakeMultiplier",
         "ModelExpectedValue",
         "ConservativeExpectedValue", "Reason",
     ]
@@ -1351,6 +1457,9 @@ def evaluation_table(frame: pd.DataFrame) -> pd.DataFrame:
             "ModelSportsDifference": "Diferença modelo–esportivo",
             "MaximumComponentDisagreement": "Maior desacordo entre componentes",
             "DisagreementLevel": "Nível de desacordo",
+            "Filter2018Status": "Filtro de 2018",
+            "OperationalDecision": "Decisão operacional",
+            "IncludedInMultiple": "Incluído na múltipla",
             "PortfolioTier": "Faixa da carteira",
             "StakeMultiplier": "Multiplicador da unidade",
             "ModelExpectedValue": "Valor esperado do modelo",
@@ -1362,171 +1471,189 @@ def evaluation_table(frame: pd.DataFrame) -> pd.DataFrame:
 
 if not readings.empty or not diagnostics.empty:
     st.subheader("3. Resultado completo")
+
+    approved_count = (
+        int(filter_results["Filter2018Approved"].fillna(False).astype(bool).sum())
+        if isinstance(filter_results, pd.DataFrame) and not filter_results.empty
+        else 0
+    )
+    rejected_count = (
+        int(len(filter_results) - approved_count)
+        if isinstance(filter_results, pd.DataFrame) and not filter_results.empty
+        else 0
+    )
+    multiple_selections = (
+        multiple_summary.selections
+        if multiple_summary is not None and hasattr(multiple_summary, "selections")
+        else pd.DataFrame()
+    )
     analyzed_games = int((diagnostics["Situação"] == "ANALISADO").sum()) if not diagnostics.empty else 0
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Partidas analisadas", analyzed_games)
-    m2.metric("Entradas V28", len(entries))
-    m3.metric("Meta mínima semanal", int(weekly_target))
-    m4.metric("Leituras principais", len(readings))
-    m5.metric("Mercados avaliados", len(evaluations))
+    m1.metric("Partidas calculadas", analyzed_games)
+    m2.metric("Aprovadas no filtro", approved_count)
+    m3.metric("Eliminadas no filtro", rejected_count)
+    m4.metric("Apostas simples", len(entries))
+    m5.metric("Itens na múltipla", len(multiple_selections))
 
-    if entries.empty and not readings.empty:
-        st.warning(
-            f"Nenhuma seleção foi formada neste lote. As {len(readings)} leituras e o ranking semanal aparecem abaixo."
-        )
-    elif not entries.empty:
-        week_counts = entries.groupby("WeekID").size().to_dict() if "WeekID" in entries else {}
-        principal_count = int(entries["PortfolioTier"].eq("EV CONSERVADOR NÃO NEGATIVO").sum()) if "PortfolioTier" in entries else 0
-        complement_count = int(entries["PortfolioTier"].eq("COMPLEMENTO DE META — MEIA UNIDADE").sum()) if "PortfolioTier" in entries else 0
-        message = (
-            f"{len(entries)} entrada(s) na carteira: {principal_count} com EV conservador não negativo e "
-            f"{complement_count} complemento(s) de meia unidade. Distribuição semanal: {week_counts}."
-        )
-        if complement_count:
-            st.warning(message)
-        else:
-            st.success(message)
+    st.markdown("### Lista de verificação do filtro de 2018")
+    st.caption(
+        "Este é o único portão de elegibilidade esportiva. O resultado não apaga cálculos: "
+        "probabilidades e cotações de todos os jogos continuam armazenadas na planilha."
+    )
+    if isinstance(filter_results, pd.DataFrame) and not filter_results.empty:
+        filter_view = filter_results[[
+            "InputID", "Filter2018Status", "Filter2018Rule1Basis",
+            "Filter2018Rule3Count", "Filter2018Rule4Count",
+            "Filter2018LastH2HScore", "Filter2018Summary",
+        ]].copy()
+        game_names = {str(item["ID"]): f"{item['Mandante']} x {item['Visitante']}" for item in games()}
+        filter_view.insert(1, "Partida", filter_view["InputID"].astype(str).map(game_names))
+        filter_view = filter_view.drop(columns=["InputID"]).rename(columns={
+            "Filter2018Status": "Resultado",
+            "Filter2018Rule1Basis": "Regra 1 — fundamento",
+            "Filter2018Rule3Count": "Mandante marcou em",
+            "Filter2018Rule4Count": "Visitante marcou em",
+            "Filter2018LastH2HScore": "Último confronto direto",
+            "Filter2018Summary": "Resumo",
+        })
+        st.dataframe(filter_view, hide_index=True, use_container_width=True)
 
-    st.markdown("### Carteira semanal ranqueada")
-    if entries.empty:
-        closest = readings.sort_values(["ExpectedValue", "DecisionProbability"], ascending=[False, False]).head(int(weekly_target)).copy()
-        st.warning(f"A meta mínima semanal de {int(weekly_target)} ainda não foi preenchida neste lote. Veja as prioridades abaixo.")
-        if not closest.empty:
-            st.dataframe(evaluation_table(closest), hide_index=True, use_container_width=True)
+    st.markdown("### Sugestão de múltipla")
+    if multiple_summary is not None and len(multiple_selections) >= 2:
+        reference_stake = float(bankroll) * float(unit_percent) / 100.0
+        potential_return = reference_stake * float(multiple_summary.factor)
+        potential_profit = potential_return - reference_stake
+        st.markdown(
+            '<div class="multiple-card"><b>SUGESTÃO DE MÚLTIPLA</b><br>'
+            'Somente jogos aprovados no filtro de 2018. Para cada confronto, foi escolhido um único mercado: '
+            'o de maior probabilidade conservadora entre as opções com cotação financeiramente favorável.</div>',
+            unsafe_allow_html=True,
+        )
+        multi_view = multiple_selections[[
+            "League", "Home", "Away", "MarketName", "Selection",
+            "ConservativeProbability", "Odd", "EffectiveOdd",
+            "ConservativeExpectedValue", "SampleConfidence",
+        ]].copy()
+        multi_view.insert(1, "Partida", multi_view["Home"].astype(str) + " x " + multi_view["Away"].astype(str))
+        multi_view = multi_view.drop(columns=["Home", "Away"]).rename(columns={
+            "League": "Liga", "MarketName": "Mercado", "Selection": "Seleção",
+            "ConservativeProbability": "Probabilidade conservadora",
+            "Odd": "Cotação", "EffectiveOdd": "Cotação após desconto",
+            "ConservativeExpectedValue": "Valor esperado conservador",
+            "SampleConfidence": "Confiança estatística",
+        })
+        st.dataframe(
+            multi_view, hide_index=True, use_container_width=True,
+            column_config={
+                "Probabilidade conservadora": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1),
+                "Cotação": st.column_config.NumberColumn(format="%.2f"),
+                "Cotação após desconto": st.column_config.NumberColumn(format="%.2f"),
+                "Valor esperado conservador": st.column_config.NumberColumn(format="%.1f%%"),
+            },
+        )
+        a, b, c, d = st.columns(4)
+        a.metric("Fator total", f"{float(multiple_summary.factor):.2f}")
+        b.metric("Probabilidade conjunta estimada", pct(float(multiple_summary.joint_probability)))
+        c.metric("Valor esperado conjunto", pct(float(multiple_summary.expected_value)))
+        d.metric("Retorno com uma unidade", money(potential_return), f"Lucro potencial {money(potential_profit)}")
+        st.caption(
+            "A probabilidade conjunta é uma aproximação obtida pelo produto das probabilidades individuais. "
+            "O fator total é o produto das cotações informadas. A entrada de referência é uma unidade da banca atual."
+        )
+    elif multiple_summary is not None and len(multiple_selections) == 1:
+        st.info(
+            "Há apenas uma seleção que atende simultaneamente ao filtro, à análise estatística e ao preço atual. "
+            "Ela permanece como oportunidade individual; uma múltipla exige pelo menos dois confrontos."
+        )
     else:
-        qualified_weeks = entries.groupby("WeekID").size().to_dict() if "WeekID" in entries else {}
-        principal_count = int(entries["PortfolioTier"].eq("EV CONSERVADOR NÃO NEGATIVO").sum()) if "PortfolioTier" in entries else 0
-        complement_count = int(entries["PortfolioTier"].eq("COMPLEMENTO DE META — MEIA UNIDADE").sum()) if "PortfolioTier" in entries else 0
-        portfolio_message = (
-            f"Carteira formada: {len(entries)} entrada(s), sendo {principal_count} principal(is) e "
-            f"{complement_count} complemento(s) de meia unidade. Quantidade por semana: {qualified_weeks}."
+        st.info(
+            "Nenhuma sugestão de múltipla foi formada. Isso ocorre quando menos de duas partidas aprovadas "
+            "possuem um mercado com cotação financeiramente favorável."
         )
-        if complement_count:
-            st.warning(portfolio_message)
-        else:
-            st.success(portfolio_message)
+
+    st.markdown("### Apostas individuais")
+    if entries.empty:
+        st.info(
+            "Nenhuma partida aprovada apresentou cotação favorável no cenário conservador. "
+            "Os eventos continuam aptos e analisados, mas não há entrada ao preço atual."
+        )
+    else:
+        st.success(
+            f"{len(entries)} oportunidade(s) individual(is) identificada(s). "
+            "Não existe meta mínima nem inclusão de complemento com valor esperado negativo."
+        )
         st.dataframe(
             display_frame(entries),
             hide_index=True,
             use_container_width=True,
             column_config={
                 "Probabilidade do modelo": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                "Probabilidade conservadora": st.column_config.NumberColumn(format="%.1f%%"),
                 "Mercado sem margem": st.column_config.NumberColumn(format="%.1f%%"),
-                "Probabilidade esportiva": st.column_config.NumberColumn(format="%.1f%%"),
                 "Valor esperado conservador": st.column_config.NumberColumn(format="%.1f%%"),
-                "Acerto histórico da faixa": st.column_config.NumberColumn(format="%.1f%%"),
-                "Estabilidade da calibração": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
                 "Entrada fixa": st.column_config.NumberColumn(format="R$ %.2f"),
             },
         )
-    if not evaluations.empty and "WeekID" in evaluations:
-        for week_id in sorted(evaluations["WeekID"].dropna().astype(str).unique()):
-            existing_count = int(registered_week_counts.get(week_id, 0))
-            current_count = int((entries["WeekID"].astype(str).eq(week_id)).sum()) if not entries.empty else 0
-            missing_for_target = max(0, int(weekly_target) - existing_count - current_count)
-            if missing_for_target > 0:
-                st.info(
-                    f"Semana {week_id}: faltam {missing_for_target} entrada(s) para a meta mínima de {weekly_target}. "
-                    "Adicione e analise mais partidas das 24 ligas para completar a carteira."
-                )
-            else:
-                st.success(
-                    f"Semana {week_id}: meta mínima de {weekly_target} entrada(s) atingida "
-                    f"({existing_count} já registrada(s) + {current_count} neste lote)."
-                )
 
     st.markdown("### Análise de cada partida")
+    filter_by_id = (
+        filter_results.set_index(filter_results["InputID"].astype(str)).to_dict("index")
+        if isinstance(filter_results, pd.DataFrame) and not filter_results.empty
+        else {}
+    )
     for game_index, game in enumerate(games(), start=1):
         input_id = str(game["ID"])
+        game_filter = filter_by_id.get(input_id, {})
         game_reading = readings[readings["InputID"].astype(str).eq(input_id)] if not readings.empty else pd.DataFrame()
         game_evaluations = evaluations[evaluations["InputID"].astype(str).eq(input_id)] if not evaluations.empty else pd.DataFrame()
-        context = standings_context(
-            matches,
-            str(game["Código da liga"]),
-            pd.to_datetime(game["Data"]).date(),
-            str(game["Mandante"]),
-            str(game["Visitante"]),
-        )
+        approved = bool(game_filter.get("Filter2018Approved", False))
 
         with st.container(border=True):
-            st.markdown(
-                f"#### {game_index}. {game['Mandante']} x {game['Visitante']} — {game['Liga']}"
-            )
+            st.markdown(f"#### {game_index}. {game['Mandante']} x {game['Visitante']} — {game['Liga']}")
             st.caption(
                 f"{pd.to_datetime(game['Data']).strftime('%d/%m/%Y')} às {game['Hora']} | "
-                f"Cotações: {game['Casa de apostas']}"
+                f"Casa de apostas: {game['Casa de apostas']}"
             )
+            css_class = "filter-approved" if approved else "filter-rejected"
+            filter_title = "APROVADO NO FILTRO DE 2018" if approved else "REPROVADO NO FILTRO DE 2018 — FORA DO UNIVERSO OPERACIONAL"
+            st.markdown(
+                f'<div class="{css_class}"><b>{filter_title}</b><br>{game_filter.get("Filter2018Summary", "Resultado indisponível.")}</div>',
+                unsafe_allow_html=True,
+            )
+            checklist = pd.DataFrame([
+                {"Regra": "1 — posição e pontos do visitante", "Resultado": "Aprovada" if game_filter.get("Filter2018Rule1Pass") else "Reprovada", "Detalhe": game_filter.get("Filter2018Rule1Detail", "")},
+                {"Regra": "2 — último confronto direto", "Resultado": "Aprovada" if game_filter.get("Filter2018Rule2Pass") else "Reprovada", "Detalhe": game_filter.get("Filter2018Rule2Detail", "")},
+                {"Regra": "3 — mandante marcou em 4 das últimas 5", "Resultado": "Aprovada" if game_filter.get("Filter2018Rule3Pass") else "Reprovada", "Detalhe": game_filter.get("Filter2018Rule3Detail", "")},
+                {"Regra": "4 — visitante marcou em 4 das últimas 5", "Resultado": "Aprovada" if game_filter.get("Filter2018Rule4Pass") else "Reprovada", "Detalhe": game_filter.get("Filter2018Rule4Detail", "")},
+            ])
+            st.dataframe(checklist, hide_index=True, use_container_width=True)
 
-            st.markdown("**Classificação do campeonato antes da partida**")
-            if context.get("Available") and context.get("Consolidated"):
-                c1, c2 = st.columns(2)
-                c1.metric(
-                    str(game["Mandante"]),
-                    f"{context['HomePosition']}º lugar",
-                    f"{context['HomePoints']} pontos em {context['HomeGames']} jogos | {context['HomePPG']:.2f} ponto(s) por jogo",
+            if not approved:
+                st.warning(
+                    "O jogo morre operacionalmente neste ponto: não pode aparecer nas apostas simples nem na sugestão de múltipla. "
+                    "Os cálculos abaixo continuam salvos exclusivamente para formar a base de dados."
                 )
-                c2.metric(
-                    str(game["Visitante"]),
-                    f"{context['AwayPosition']}º lugar",
-                    f"{context['AwayPoints']} pontos em {context['AwayGames']} jogos | {context['AwayPPG']:.2f} ponto(s) por jogo",
-                )
-                with st.expander(f"Ver classificação completa — temporada {context['Season']}"):
+                with st.expander("Ver probabilidades armazenadas para auditoria", expanded=False):
                     st.dataframe(
-                        context["Table"],
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "Pontos por jogo": st.column_config.NumberColumn(format="%.2f"),
-                            "Gols por jogo": st.column_config.NumberColumn(format="%.2f"),
-                            "Gols sofridos por jogo": st.column_config.NumberColumn(format="%.2f"),
-                        },
+                        evaluation_table(game_evaluations.sort_values(
+                            ["ConservativeProbability", "ConservativeExpectedValue"], ascending=[False, False]
+                        )),
+                        hide_index=True, use_container_width=True,
                     )
-            elif context.get("Available"):
-                st.info(
-                    "Classificação ainda não consolidada: a temporada está na amostra inicial. "
-                    "Os números abaixo são informativos e nenhuma posição ordinal é usada na interpretação."
-                )
-                c1, c2 = st.columns(2)
-                c1.metric(
-                    str(game["Mandante"]),
-                    f"{context['HomePoints']} ponto(s)",
-                    f"{context['HomeGames']} jogo(s) | {context['HomePPG']:.2f} ponto(s) por jogo",
-                )
-                c2.metric(
-                    str(game["Visitante"]),
-                    f"{context['AwayPoints']} ponto(s)",
-                    f"{context['AwayGames']} jogo(s) | {context['AwayPPG']:.2f} ponto(s) por jogo",
-                )
-                provisional_table = context["Table"].drop(columns=["Posição"], errors="ignore")
-                with st.expander(f"Ver dados provisórios — temporada {context['Season']}"):
-                    st.dataframe(provisional_table, hide_index=True, use_container_width=True)
-            else:
-                st.info(
-                    f"A classificação da temporada {context.get('Season', '')} ainda não pôde ser reconstruída "
-                    "para as duas equipes com os resultados carregados."
-                )
-
-            if game_reading.empty:
-                st.error("A partida não produziu leitura. Consulte o diagnóstico no fim da página.")
                 continue
 
+            st.success("Evento apto. A análise posterior é exclusivamente estatística e financeira.")
+            if game_reading.empty:
+                st.error("A partida foi aprovada, mas não produziu leitura estatística. Consulte o diagnóstico.")
+                continue
             row = game_reading.iloc[0]
             status = str(row["Status"])
-            portfolio_tier = str(row.get("PortfolioTier", "")).strip()
-            tier_suffix = f" — {portfolio_tier}" if status == "OPERAR" and portfolio_tier else ""
             headline = (
-                f"{status}{tier_suffix}: {row['Selection']} | cotação {float(row['Odd']):.2f} | "
+                f"{status}: {row['Selection']} | cotação {float(row['Odd']):.2f} | "
                 f"probabilidade conservadora {pct(row['ConservativeProbability'])}"
             )
-            if status == "OPERAR" and portfolio_tier == "EV CONSERVADOR NÃO NEGATIVO":
+            if status == "OPERAR":
                 st.success(headline)
-            elif status == "OPERAR":
-                st.warning(headline)
-                st.caption(
-                    "Complemento da meta semanal: meia unidade e exposição reduzida, definido com a cotação já informada nesta análise."
-                )
-            elif status == "NÃO SELECIONADA":
-                st.info(headline)
             else:
                 st.info(headline)
 
@@ -1535,93 +1662,42 @@ if not readings.empty or not diagnostics.empty:
             p2.metric("Probabilidade esportiva", pct(row["RawSportsProbability"]))
             p3.metric("Probabilidade do modelo", pct(row["DecisionProbability"]))
             p4.metric("Probabilidade conservadora", pct(row["ConservativeProbability"]))
-
-            disagreement_level = str(row.get("DisagreementLevel", "NORMAL"))
-            disagreement_pp = float(row.get("MaximumComponentDisagreement", 0.0)) * 100.0
-            if disagreement_level == "ALTO":
-                st.warning(
-                    f"Desacordo alto entre componentes: {disagreement_pp:.1f} pontos percentuais. "
-                    f"Modelo–mercado {float(row.get('ModelMarketDifference', 0.0))*100:+.1f} p.p.; "
-                    f"modelo–esportivo {float(row.get('ModelSportsDifference', 0.0))*100:+.1f} p.p."
-                )
-            elif disagreement_level == "MODERADO":
-                st.caption(
-                    f"Desacordo moderado entre componentes: {disagreement_pp:.1f} p.p. "
-                    "Consulte todos os mercados antes da decisão."
-                )
-
-            a1, a2, a3, a4 = st.columns(4)
-            a1.metric("Amostra histórica da faixa", int(row["ProfileSample"]))
-            a2.metric("Confiança estatística da amostra", str(row["SampleConfidence"]))
-            a3.metric("Estabilidade da calibração", pct(row["Reliability"]))
-            a4.metric("Acerto histórico da faixa", pct(row["EmpiricalHitRate"]))
-
             o1, o2, o3, o4 = st.columns(4)
             o1.metric("Cotação informada", f"{float(row['Odd']):.2f}")
-            o2.metric("Cotação após desconto de 2%", f"{float(row['EffectiveOdd']):.2f}")
-            o3.metric("Valor esperado conservador", pct(row["ExpectedValue"]))
-            o4.metric("Decisão final", status)
-
-            g1, g2, g3 = st.columns(3)
-            g1.metric(f"Gols projetados — {game['Mandante']}", f"{float(row['LambdaHome']):.2f}")
-            g2.metric(f"Gols projetados — {game['Visitante']}", f"{float(row['LambdaAway']):.2f}")
-            g3.metric("Total projetado", f"{float(row['LambdaHome'] + row['LambdaAway']):.2f}")
-
-            st.write(f"**Motivo da decisão:** {row['Reason']}")
-            st.caption(f"Qualidade da amostra: {row['SampleConfidenceReason']}")
+            o2.metric("Cotação mínima calculada", f"{float(row['RequiredOddForOperation']):.2f}")
+            o3.metric("Valor esperado conservador", pct(row["ConservativeExpectedValue"]))
+            o4.metric("Decisão financeira", status)
+            st.write(f"**Motivo:** {row['Reason']}")
 
             with st.expander("Ver todos os mercados avaliados", expanded=True):
                 st.dataframe(
-                    evaluation_table(
-                        game_evaluations.sort_values(
-                            ["StatusOrder", "Score"], ascending=[True, False]
-                        )
-                    ),
-                    hide_index=True,
-                    use_container_width=True,
+                    evaluation_table(game_evaluations.sort_values(
+                        ["ConservativeProbability", "ConservativeExpectedValue"], ascending=[False, False]
+                    )),
+                    hide_index=True, use_container_width=True,
                     column_config={
                         "Mercado sem margem": st.column_config.NumberColumn(format="%.1f%%"),
                         "Probabilidade esportiva": st.column_config.NumberColumn(format="%.1f%%"),
                         "Probabilidade do modelo": st.column_config.NumberColumn(format="%.1f%%"),
-                        "Acerto histórico da faixa": st.column_config.NumberColumn(format="%.1f%%"),
-                        "Estabilidade da calibração": st.column_config.NumberColumn(format="%.1f%%"),
+                        "Probabilidade conservadora": st.column_config.NumberColumn(format="%.1f%%"),
                         "Valor esperado conservador": st.column_config.NumberColumn(format="%.1f%%"),
                         "Cotação atual": st.column_config.NumberColumn(format="%.2f"),
                         "Cotação após desconto de 2%": st.column_config.NumberColumn(format="%.2f"),
                     },
                 )
 
-    st.markdown("### Carteira e auditoria")
-    tab_entries, tab_all, tab_errors = st.tabs(
-        ["Carteira semanal", "Todos os mercados", "Diagnóstico"]
-    )
-    with tab_entries:
-        if entries.empty:
-            closest = readings.sort_values(["ExpectedValue", "DecisionProbability"], ascending=[False, False]).head(5).copy()
-            st.info("Nenhuma seleção entrou na carteira com as cotações informadas. Abaixo estão as melhores leituras do lote, sem indicação de acompanhamento posterior.")
-            st.dataframe(evaluation_table(closest), hide_index=True, use_container_width=True)
-        else:
-            st.dataframe(
-                display_frame(entries),
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "Probabilidade do modelo": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
-                    "Probabilidade conservadora": st.column_config.NumberColumn(format="%.1f%%"),
-                    "Mercado sem margem": st.column_config.NumberColumn(format="%.1f%%"),
-                    "Acerto histórico da faixa": st.column_config.NumberColumn(format="%.1f%%"),
-                    "Estabilidade da calibração": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
-                    "Entrada fixa": st.column_config.NumberColumn(format="R$ %.2f"),
-                },
-            )
+    st.markdown("### Auditoria completa")
+    tab_all, tab_errors = st.tabs(["Todos os mercados de todos os jogos", "Diagnóstico técnico"])
     with tab_all:
         st.dataframe(
-            evaluation_table(evaluations.sort_values(["MatchID", "StatusOrder", "Score"], ascending=[True, True, False])),
-            hide_index=True,
-            use_container_width=True,
+            evaluation_table(evaluations.sort_values(
+                ["InputID", "Filter2018Approved", "ConservativeProbability"], ascending=[True, False, False]
+            )),
+            hide_index=True, use_container_width=True,
         )
     with tab_errors:
         st.dataframe(diagnostics, hide_index=True, use_container_width=True)
+
     st.markdown("### Análise para IA")
     if not ai_summary:
         ai_summary = build_ai_summary(games_frame(), readings, evaluations, diagnostics, matches)

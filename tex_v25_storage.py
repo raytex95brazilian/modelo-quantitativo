@@ -49,7 +49,9 @@ COLUNAS_NUMERICAS_PLANILHA = {
     "Odd mandante", "Odd empate", "Odd visitante", "Odd mais de 2,5",
     "Odd menos de 2,5", "Odd ambas marcam — Sim", "Odd ambas marcam — Não",
     "Entrada (R$)", "Lucro ou prejuízo (R$)", "Banca antes (R$)",
-    "Banca depois (R$)",
+    "Banca depois (R$)", "Regra 3 — gols do mandante nas últimas 5",
+    "Regra 4 — gols do visitante nas últimas 5", "Fator total da múltipla",
+    "Probabilidade conjunta da múltipla %", "Valor esperado da múltipla %",
 }
 
 # Mantém a estrutura histórica da planilha antiga e apenas acrescenta campos novos à direita.
@@ -63,6 +65,16 @@ COLUNAS_COTACOES = [
     "Pontos do mandante", "Pontos do visitante", "Pontos por jogo do mandante",
     "Pontos por jogo do visitante",
     "Versão da interface", "Versão da API do núcleo", "Versão do modelo",
+    "Filtro 2018 — status", "Filtro 2018 — elegível operacional",
+    "Regra 1 — resultado", "Regra 1 — fundamento", "Regra 1 — detalhe",
+    "Regra 2 — resultado", "Regra 2 — detalhe",
+    "Regra 3 — resultado", "Regra 3 — gols do mandante nas últimas 5", "Regra 3 — detalhe",
+    "Regra 4 — resultado", "Regra 4 — gols do visitante nas últimas 5", "Regra 4 — detalhe",
+    "Último confronto direto — data", "Último confronto direto — placar",
+    "Último confronto direto — ambas marcaram", "Resumo do filtro 2018",
+    "Decisão operacional", "Mercado escolhido para simples",
+    "Incluído na sugestão de múltipla", "Fator total da múltipla",
+    "Versão do filtro 2018",
 ]
 
 COLUNAS_LOTE_PENDENTE = [
@@ -100,6 +112,17 @@ COLUNAS_ANALISES = [
     "Versão da interface", "Versão da API do núcleo", "Probabilidade conservadora %",
     "Valor esperado do modelo %", "Valor esperado conservador %",
     "Limite conservador da faixa histórica %", "Código do mercado", "Código da seleção",
+    "Filtro 2018 — status", "Filtro 2018 — elegível operacional",
+    "Regra 1 — resultado", "Regra 1 — fundamento", "Regra 1 — detalhe",
+    "Regra 2 — resultado", "Regra 2 — detalhe",
+    "Regra 3 — resultado", "Regra 3 — gols do mandante nas últimas 5", "Regra 3 — detalhe",
+    "Regra 4 — resultado", "Regra 4 — gols do visitante nas últimas 5", "Regra 4 — detalhe",
+    "Último confronto direto — data", "Último confronto direto — placar",
+    "Último confronto direto — ambas marcaram", "Resumo do filtro 2018",
+    "Decisão operacional", "Mercado escolhido para simples",
+    "Incluído na sugestão de múltipla", "Fator total da múltipla",
+    "Probabilidade conjunta da múltipla %", "Valor esperado da múltipla %",
+    "Versão do filtro 2018",
 ]
 
 

@@ -1,20 +1,13 @@
-# Tex Statistics V28.1.5.12
+# Tex Statistics V28.2.0 — Filtro 2018
 
-Interface operacional sobre o motor V28.1.2 — Estado Isolado.
+Consulte primeiro `LEIA_PRIMEIRO.md`.
 
-## Persistência
+Versões internas preservadas:
 
-Cada partida é gravada na aba `entrada_jogos` antes de entrar no lote da tela. O app relê a linha e confere todas as cotações. Sem confirmação, o formulário não é apagado.
+- motor preditivo: V28.1.2 — Estado Isolado;
+- modelo: V28.0;
+- armazenamento e finanças: API compatível com V28.1.5.12;
+- filtro e operação: API 28.2.0;
+- interface: V28.2.0.
 
-Depois de **Analisar todo o lote**, as linhas de `catalogo_odds` e `historico_analises` também são gravadas com leitura de conferência.
-
-A planilha de destino deve ser declarada explicitamente nos Secrets; não existe fallback silencioso.
-
-## Interface
-
-- formulário em uma etapa;
-- seletores corretos por liga;
-- campos de cotação vazios;
-- casa padrão PIXBET;
-- Análise para IA visível na tela;
-- decisão fechada com as cotações informadas.
+A atualização não substitui nem reorganiza as colunas antigas da Planilha Google. Novas colunas são adicionadas à direita.
