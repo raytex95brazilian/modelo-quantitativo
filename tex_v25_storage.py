@@ -7,10 +7,11 @@ from types import SimpleNamespace
 from uuid import uuid4
 import json
 import re
+import time
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.1.5.12"
+STORAGE_API_VERSION = "28.2.1"
 
 from tex_v28_finance import COLUNAS_APOSTAS, identificador_registro, liquidar_registro
 
@@ -671,8 +672,96 @@ def criar_registros_cotacoes_digitadas(
     return records
 
 
+def _erro_de_quota(exc: Exception) -> bool:
+    texto = str(exc or "").lower()
+    return any(
+        trecho in texto
+        for trecho in (
+            "429", "quota exceeded", "resource_exhausted",
+            "too many requests", "write requests per minute",
+            "read requests per minute",
+        )
+    )
+
+
+def _executar_com_backoff(func, *, operacao: str, tentativas: int = 4):
+    """Executa uma chamada da API com espera exponencial curta para erros 429.
+
+    O backoff é apenas uma proteção adicional. A prevenção principal é agrupar
+    centenas de linhas em uma única chamada batch_update/batch_get.
+    """
+    atrasos = (1.0, 2.0, 4.0)
+    ultimo: Exception | None = None
+    for tentativa in range(tentativas):
+        try:
+            return func()
+        except Exception as exc:  # gspread.APIError sem dependência rígida
+            ultimo = exc
+            if not _erro_de_quota(exc) or tentativa >= tentativas - 1:
+                raise
+            time.sleep(atrasos[min(tentativa, len(atrasos) - 1)])
+    raise RuntimeError(f"Falha em {operacao}: {ultimo}")
+
+
+def _intervalo_linhas_append(resposta: Any) -> tuple[int, int] | None:
+    if not isinstance(resposta, dict):
+        return None
+    intervalo = str(
+        resposta.get("updates", {}).get("updatedRange")
+        or resposta.get("updatedRange")
+        or ""
+    )
+    match = re.search(r"![A-Z]+(\d+):[A-Z]+(\d+)$", intervalo)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _batch_get_linhas_sem_formatacao(
+    aba: Any, intervalos: list[str]
+) -> list[list[Any]]:
+    if not intervalos:
+        return []
+    batch_get = getattr(aba, "batch_get", None)
+    if callable(batch_get):
+        try:
+            blocos = _executar_com_backoff(
+                lambda: batch_get(
+                    intervalos,
+                    value_render_option="UNFORMATTED_VALUE",
+                    date_time_render_option="SERIAL_NUMBER",
+                ),
+                operacao="leitura em lote",
+            )
+        except TypeError:
+            blocos = _executar_com_backoff(
+                lambda: batch_get(intervalos), operacao="leitura em lote"
+            )
+        saida: list[list[Any]] = []
+        for bloco in blocos or []:
+            if bloco and isinstance(bloco, list) and isinstance(bloco[0], list):
+                saida.append(list(bloco[0]))
+            else:
+                saida.append([])
+        return saida
+    # Compatibilidade com mocks/implementações antigas. Em produção (gspread 6)
+    # o caminho acima é usado e consome uma única requisição de leitura.
+    return [
+        (_ler_intervalo_sem_formatacao(aba, intervalo) or [[]])[0]
+        for intervalo in intervalos
+    ]
+
+
 def _salvar_cotacoes_upsert(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
-    """Insere novas cotações e atualiza as já existentes pelo ID Coleta."""
+    """Insere/atualiza cotações com no máximo duas gravações por lote.
+
+    A implementação anterior executava ``worksheet.update`` dentro de um loop.
+    Em um lote de 210 seleções isso gerava até 210 solicitações de escrita e
+    inevitavelmente ultrapassava a cota de 60 gravações/minuto por usuário.
+    Agora todas as linhas existentes são atualizadas por ``batch_update`` em uma
+    única chamada e todas as novas são anexadas por um único ``append_rows``.
+    A conferência também é feita por um único ``batch_get``.
+    """
     normalizados = _normalizar(registros, COLUNAS_COTACOES)
     if not normalizados:
         return 0
@@ -685,58 +774,123 @@ def _salvar_cotacoes_upsert(secrets: Any, registros: Iterable[dict[str, Any]]) -
     header = _CABECALHOS_ATUAIS.get(worksheet_key, list(COLUNAS_COTACOES))
     if "ID Coleta" not in header:
         raise RuntimeError("A aba catalogo_odds não contém a coluna 'ID Coleta'.")
+
     id_index = header.index("ID Coleta")
-    remote_ids = list(aba.col_values(id_index + 1))
+    remote_ids = _executar_com_backoff(
+        lambda: list(aba.col_values(id_index + 1)),
+        operacao="leitura dos IDs de cotações",
+    )
     row_by_id: dict[str, int] = {}
     for position in range(1, len(remote_ids)):
         value = str(remote_ids[position]).strip()
         if value:
             row_by_id[value] = position + 1
 
-    to_append: list[dict[str, Any]] = []
-    affected: list[tuple[dict[str, Any], int | None]] = []
     last_col = _letra_coluna(len(header))
+    updates: list[dict[str, Any]] = []
+    appends: list[dict[str, Any]] = []
+    record_by_id: dict[str, dict[str, Any]] = {}
     for record in normalizados:
         identifier = str(record.get("ID Coleta", "")).strip()
         if not identifier:
             raise RuntimeError("Cotação sem ID Coleta não pode ser persistida.")
+        record_by_id[identifier] = record
         line = [record.get(column, "") for column in header]
         existing_row = row_by_id.get(identifier)
         if existing_row is None:
-            to_append.append(record)
-            affected.append((record, None))
+            appends.append(record)
         else:
-            aba.update(f"A{existing_row}:{last_col}{existing_row}", [line], value_input_option="RAW")
-            affected.append((record, existing_row))
+            updates.append({
+                "range": f"A{existing_row}:{last_col}{existing_row}",
+                "values": [line],
+            })
 
-    if to_append:
-        rows = [[record.get(column, "") for column in header] for record in to_append]
-        aba.append_rows(rows, value_input_option="RAW")
+    # Uma única solicitação de escrita para todas as linhas já existentes.
+    if updates:
+        batch_update = getattr(aba, "batch_update", None)
+        if callable(batch_update):
+            _executar_com_backoff(
+                lambda: batch_update(updates, value_input_option="RAW"),
+                operacao="atualização em lote de cotações",
+            )
+        else:
+            # Compatibilidade exclusiva com mocks e clientes antigos. Em produção,
+            # requirements.txt fixa gspread>=6 e usa uma única chamada batch_update.
+            for item in updates:
+                aba.update(item["range"], item["values"], value_input_option="RAW")
 
-    # Confirma cada ID pela leitura bruta. Para linhas anexadas, procura o ID na coluna.
+    # Uma única solicitação de escrita para todas as linhas novas.
+    if appends:
+        rows = [[record.get(column, "") for column in header] for record in appends]
+        resposta = _executar_com_backoff(
+            lambda: aba.append_rows(rows, value_input_option="RAW"),
+            operacao="inclusão em lote de cotações",
+        )
+        intervalo_linhas = _intervalo_linhas_append(resposta)
+        if intervalo_linhas and intervalo_linhas[1] - intervalo_linhas[0] + 1 == len(appends):
+            for offset, record in enumerate(appends):
+                row_by_id[str(record.get("ID Coleta", "")).strip()] = intervalo_linhas[0] + offset
+        else:
+            # Resposta sem updatedRange: uma única leitura da coluna resolve
+            # todas as linhas anexadas; nunca há uma leitura por registro.
+            ids_depois = _executar_com_backoff(
+                lambda: list(aba.col_values(id_index + 1)),
+                operacao="confirmação dos IDs anexados",
+            )
+            for position in range(1, len(ids_depois)):
+                value = str(ids_depois[position]).strip()
+                if value:
+                    row_by_id[value] = position + 1
+
+    faltantes = [identifier for identifier in record_by_id if identifier not in row_by_id]
+    if faltantes:
+        raise RuntimeError(
+            "A API respondeu, mas estes IDs não foram localizados na planilha: "
+            + ", ".join(faltantes[:10])
+        )
+
+    # Uma única solicitação de leitura para conferir todas as linhas afetadas.
+    ordered_ids = list(record_by_id)
+    ranges = [
+        f"A{row_by_id[identifier]}:{last_col}{row_by_id[identifier]}"
+        for identifier in ordered_ids
+    ]
+    values_by_range = _batch_get_linhas_sem_formatacao(aba, ranges)
+    if len(values_by_range) != len(ordered_ids):
+        raise RuntimeError(
+            f"A conferência em lote retornou {len(values_by_range)} linha(s), "
+            f"mas eram esperadas {len(ordered_ids)}."
+        )
+
     numeric_columns = set(COLUNAS_NUMERICAS_PLANILHA)
-    for record, suggested_row in affected:
-        identifier = str(record.get("ID Coleta", "")).strip()
-        row_number, values = _ler_linha_por_id(aba, header, "ID Coleta", identifier, suggested_row)
+    divergencias: list[str] = []
+    for identifier, values in zip(ordered_ids, values_by_range):
         values = list(values) + [""] * max(0, len(header) - len(values))
         real = dict(zip(header, values))
-        differences: list[str] = []
+        record = record_by_id[identifier]
         for column in COLUNAS_COTACOES:
             expected = record.get(column, "")
-            if not _celula_equivalente(expected, real.get(column, ""), numerico=column in numeric_columns):
-                differences.append(f"{column}: enviado={expected!r}; lido={real.get(column, '')!r}")
-        if differences:
-            raise RuntimeError(
-                f"A cotação {identifier!r} não passou na leitura de conferência: "
-                + " | ".join(differences[:12])
-            )
-        row_by_id[identifier] = row_number
+            if not _celula_equivalente(
+                expected, real.get(column, ""), numerico=column in numeric_columns
+            ):
+                divergencias.append(
+                    f"{identifier}, {column}: enviado={expected!r}; "
+                    f"lido={real.get(column, '')!r}"
+                )
+                if len(divergencias) >= 20:
+                    break
+        if len(divergencias) >= 20:
+            break
+    if divergencias:
+        raise RuntimeError(
+            "As cotações não passaram na conferência em lote: "
+            + " | ".join(divergencias)
+        )
 
     cache_key = (cfg["spreadsheet_id"], cfg["client_email"], str(titulo))
     known = _CHAVES_GRAVADAS_NO_PROCESSO.setdefault(cache_key, set())
-    known.update((str(record.get("ID Coleta", "")).strip(),) for record in normalizados)
+    known.update((identifier,) for identifier in ordered_ids)
     return len(normalizados)
-
 
 def salvar_cotacoes(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
     return _salvar_cotacoes_upsert(secrets, registros)

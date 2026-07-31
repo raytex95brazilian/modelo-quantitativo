@@ -55,8 +55,9 @@ assert 'BAIXAR ANÁLISE PARA IA — OPCIONAL' in source
 sidebar_start = source.index('with st.sidebar:')
 sidebar_end = source.index('st.markdown(', sidebar_start)
 sidebar = source[sidebar_start:sidebar_end]
-assert 'with st.form("tex_operational_config_form"' in sidebar
-assert 'APLICAR CONFIGURAÇÃO' in sidebar
+assert 'with st.form("tex_operational_config_form"' not in sidebar
+assert 'APLICAR CONFIGURAÇÃO' not in sidebar
+assert 'on_change=_apply_operational_config_automatically' in sidebar
 
 assert 'streamlit>=1.37,<2.0' in requirements
-print("TESTE DE USABILIDADE E ESTABILIDADE V28.1.5.12: OK")
+print("TESTE DE USABILIDADE E ESTABILIDADE V28.2.1: OK")

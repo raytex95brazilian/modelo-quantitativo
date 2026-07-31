@@ -50,7 +50,7 @@ assert 'EXPECTED_FILTER_API = "28.2.0"' in app_source
 assert 'evaluate_lot_2018(current_games, matches)' in app_source
 assert 'build_operational_outputs(' in app_source
 assert 'Somente jogos aprovados no filtro de 2018' in app_source
-assert 'INTERFACE_VERSION = "V28.2.0"' in app_source
+assert 'INTERFACE_VERSION = "V28.2.1"' in app_source
 assert 'Partida e cotações — etapa única' in app_source
 assert 'CONFIRMAR CONFRONTO' not in app_source
 assert 'Etapa 1 de 2' not in app_source
@@ -59,7 +59,9 @@ assert '\n                value=0.0,' not in app_source
 assert 'st.markdown("### Análise para IA")' in app_source
 assert 'st.code(ai_summary, language=None, wrap_lines=True)' in app_source
 assert '@_fragment' in app_source
-assert 'with st.form("tex_operational_config_form"' in app_source
+assert 'with st.form("tex_operational_config_form"' not in app_source
+assert 'on_change=_apply_operational_config_automatically' in app_source
+assert 'Cotação justa' in app_source
 assert 'with st.form(f"game_form_{form_version}"' in app_source
 assert '"weekly_target": 5' in app_source
 assert 'salvar_lote_pendente' in app_source
@@ -100,7 +102,7 @@ assert core.CORE_API_VERSION == "28.1.2"
 assert core.V28_CFG.max_entries == 5
 assert core.V28_CFG.strong_price_ev == 0.0
 assert core.V28_CFG.fallback_min_ev == -0.15
-assert storage.STORAGE_API_VERSION == "28.1.5.12"
+assert storage.STORAGE_API_VERSION == "28.2.1"
 assert "Lote JSON" in storage.COLUNAS_LOTE_PENDENTE
 assert "ID Evento" in storage.COLUNAS_EVENTOS_LOTE
 assert storage.COLUNAS_COTACOES[-1] == "Versão do filtro 2018"
@@ -162,4 +164,4 @@ for relative, path in distributed_files.items():
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert manifest_entries[relative] == digest, f"SHA-256 divergente: {relative}"
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.2.0: OK")
+print("TESTE DE INTEGRIDADE DO PACOTE V28.2.1: OK")

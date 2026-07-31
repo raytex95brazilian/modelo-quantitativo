@@ -34,12 +34,12 @@ _filtro2018 = _load_required_module("tex_filtro_2018")
 _operacao_filtrada = _load_required_module("tex_operacao_filtrada")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.1.5.12"
+EXPECTED_STORAGE_API = "28.2.1"
 EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.2.0"
 EXPECTED_OPERATION_API = "28.2.0"
-INTERFACE_VERSION = "V28.2.0"
-APP_NAME = "Tex Statistics V28.2.0 — Filtro 2018"
+INTERFACE_VERSION = "V28.2.1"
+APP_NAME = "Tex Statistics V28.2.1 — Interface limpa e gravação em lote"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -206,7 +206,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.2.0, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.2.1, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -781,42 +781,51 @@ if "tex_operational_config" not in st.session_state:
         "weekly_target": 5,
     }
 
+if "tex_bankroll_input" not in st.session_state:
+    st.session_state.tex_bankroll_input = float(
+        st.session_state.tex_operational_config.get("bankroll", 1000.0)
+    )
+if "tex_unit_percent_input" not in st.session_state:
+    st.session_state.tex_unit_percent_input = float(
+        st.session_state.tex_operational_config.get("unit_percent", 1.0)
+    )
+
+
+def _apply_operational_config_automatically() -> None:
+    current = dict(st.session_state.get("tex_operational_config", {}))
+    updated = {
+        "bankroll": float(st.session_state.get("tex_bankroll_input", 1000.0)),
+        "unit_percent": float(st.session_state.get("tex_unit_percent_input", 1.0)),
+        "weekly_target": 5,
+    }
+    if updated != current:
+        st.session_state.tex_operational_config = updated
+        invalidate_analysis()
+
+
 with st.sidebar:
     st.header("Operação")
+    st.number_input(
+        "Banca informada para a análise (R$)",
+        min_value=0.0,
+        step=10.0,
+        key="tex_bankroll_input",
+        on_change=_apply_operational_config_automatically,
+    )
+    st.number_input(
+        "Unidade fixa (%)",
+        min_value=0.1,
+        max_value=2.0,
+        step=0.1,
+        key="tex_unit_percent_input",
+        on_change=_apply_operational_config_automatically,
+    )
+    st.info(
+        "Os valores são aplicados automaticamente. O filtro de 2018 é o único portão "
+        "de elegibilidade para apostas."
+    )
+    _apply_operational_config_automatically()
     current_operational_config = dict(st.session_state.tex_operational_config)
-    with st.form("tex_operational_config_form", clear_on_submit=False):
-        pending_bankroll = st.number_input(
-            "Banca informada para a análise (R$)",
-            min_value=0.0,
-            value=float(current_operational_config.get("bankroll", 1000.0)),
-            step=10.0,
-        )
-        pending_unit_percent = st.number_input(
-            "Unidade fixa (%)",
-            min_value=0.1,
-            max_value=2.0,
-            value=float(current_operational_config.get("unit_percent", 1.0)),
-            step=0.1,
-        )
-        st.info("O filtro de 2018 é o único portão de elegibilidade para apostas.")
-        pending_weekly_target = 5  # parâmetro mantido apenas para compatibilidade interna do núcleo
-        operational_config_submitted = st.form_submit_button(
-            "APLICAR CONFIGURAÇÃO",
-            use_container_width=True,
-        )
-
-    if operational_config_submitted:
-        updated_operational_config = {
-            "bankroll": float(pending_bankroll),
-            "unit_percent": float(pending_unit_percent),
-            "weekly_target": int(pending_weekly_target),
-        }
-        if updated_operational_config != current_operational_config:
-            st.session_state.tex_operational_config = updated_operational_config
-            invalidate_analysis()
-        current_operational_config = updated_operational_config
-        st.success("Configuração aplicada.")
-
     bankroll = float(current_operational_config["bankroll"])
     unit_percent = float(current_operational_config["unit_percent"])
     weekly_target = 5
@@ -869,7 +878,7 @@ st.caption(
 _ = games()
 
 # Migração automática: lotes criados nas versões anteriores podem existir apenas em
-# entrada_jogos. Ao abrir a V28.2.0, todas as odds desse lote são copiadas/atualizadas
+# entrada_jogos. Ao abrir a V28.2.1, todas as odds desse lote são copiadas/atualizadas
 # em catalogo_odds imediatamente, sem exigir o clique em ANALISAR TODO O LOTE.
 if games() and google_configurado(st.secrets) and not st.session_state.get("tex_catalog_backfill_done"):
     try:
@@ -1378,7 +1387,8 @@ else:
             except Exception as exc:
                 st.session_state.tex_analysis_autosave_error = (
                     "A análise permaneceu na tela, mas o salvamento automático na planilha falhou: "
-                    f"{exc}. Use o botão de repetir salvamento abaixo."
+                    f"{exc}. A versão atual grava em lote e tenta novamente automaticamente em erros de quota. "
+                    "Caso a quota do Google ainda esteja temporariamente esgotada, aguarde cerca de um minuto e use o botão de repetir salvamento."
                 )
 
 current_fingerprint = lot_fingerprint(
@@ -1415,40 +1425,46 @@ def money(value: float) -> str:
     return f"R$ {float(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def evaluation_table(frame: pd.DataFrame) -> pd.DataFrame:
+def _fair_odd_from_probability(value: float) -> float:
+    probability = float(value or 0.0)
+    return 1.0 / probability if probability > 0.0 else float("nan")
+
+
+def evaluation_table(frame: pd.DataFrame, *, technical: bool = False) -> pd.DataFrame:
+    """Tabela enxuta por padrão; cálculos auxiliares ficam no modo técnico."""
     if frame.empty:
         return frame.copy()
-    columns = [
-        "Status", "MarketName", "Selection", "Odd", "EffectiveOdd", "MarketProbability",
-        "RawSportsProbability", "DecisionProbability", "ConservativeProbability",
-        "EmpiricalHitRate", "ProfileSample", "SampleConfidence", "Reliability",
-        "ModelMarketDifference", "ModelSportsDifference", "MaximumComponentDisagreement",
-        "DisagreementLevel", "Filter2018Status", "OperationalDecision",
-        "IncludedInMultiple", "PortfolioTier", "StakeMultiplier",
-        "ModelExpectedValue",
-        "ConservativeExpectedValue", "Reason",
-    ]
-    out = frame[[column for column in columns if column in frame.columns]].copy()
-    percentage_columns = (
-        "MarketProbability", "RawSportsProbability", "DecisionProbability",
-        "ConservativeProbability", "EmpiricalHitRate", "Reliability",
-        "ModelExpectedValue", "ConservativeExpectedValue",
-        "ModelMarketDifference", "ModelSportsDifference", "MaximumComponentDisagreement",
-    )
-    for column in percentage_columns:
-        if column in out:
-            out[column] = pd.to_numeric(out[column], errors="coerce") * 100.0
-    return out.rename(
-        columns={
-            "Status": "Situação",
-            "MarketName": "Mercado",
-            "Selection": "Seleção",
-            "Odd": "Cotação atual",
-            "EffectiveOdd": "Cotação após desconto de 2%",
+
+    source = frame.copy()
+    source["FairOdd"] = pd.to_numeric(
+        source.get("ConservativeProbability"), errors="coerce"
+    ).map(lambda value: _fair_odd_from_probability(value) if pd.notna(value) else float("nan"))
+
+    if technical:
+        columns = [
+            "Status", "MarketName", "Selection", "Odd", "EffectiveOdd", "FairOdd",
+            "RequiredOddForOperation", "MarketProbability", "RawSportsProbability",
+            "DecisionProbability", "ConservativeProbability", "EmpiricalHitRate",
+            "ProfileSample", "SampleConfidence", "Reliability", "ModelMarketDifference",
+            "ModelSportsDifference", "MaximumComponentDisagreement", "DisagreementLevel",
+            "Filter2018Status", "OperationalDecision", "IncludedInMultiple",
+            "PortfolioTier", "StakeMultiplier", "ModelExpectedValue",
+            "ConservativeExpectedValue", "Reason",
+        ]
+        percentage_columns = (
+            "MarketProbability", "RawSportsProbability", "DecisionProbability",
+            "ConservativeProbability", "EmpiricalHitRate", "Reliability",
+            "ModelExpectedValue", "ConservativeExpectedValue", "ModelMarketDifference",
+            "ModelSportsDifference", "MaximumComponentDisagreement",
+        )
+        rename = {
+            "Status": "Situação", "MarketName": "Mercado", "Selection": "Seleção",
+            "Odd": "Cotação atual", "EffectiveOdd": "Cotação após desconto de 2%",
+            "FairOdd": "Cotação justa", "RequiredOddForOperation": "Cotação mínima para operar",
             "MarketProbability": "Mercado sem margem",
             "RawSportsProbability": "Probabilidade esportiva",
             "DecisionProbability": "Probabilidade do modelo",
-            "ConservativeProbability": "Probabilidade conservadora",
+            "ConservativeProbability": "Probabilidade final",
             "EmpiricalHitRate": "Acerto histórico da faixa",
             "ProfileSample": "Amostra histórica da faixa",
             "SampleConfidence": "Confiança estatística da amostra",
@@ -1463,10 +1479,30 @@ def evaluation_table(frame: pd.DataFrame) -> pd.DataFrame:
             "PortfolioTier": "Faixa da carteira",
             "StakeMultiplier": "Multiplicador da unidade",
             "ModelExpectedValue": "Valor esperado do modelo",
-            "ConservativeExpectedValue": "Valor esperado conservador",
+            "ConservativeExpectedValue": "Valor esperado final",
             "Reason": "Motivo",
         }
-    )
+    else:
+        columns = [
+            "Status", "MarketName", "Selection", "Odd", "FairOdd",
+            "RequiredOddForOperation", "ConservativeProbability",
+            "ConservativeExpectedValue", "OperationalDecision", "Reason",
+        ]
+        percentage_columns = ("ConservativeProbability", "ConservativeExpectedValue")
+        rename = {
+            "Status": "Situação", "MarketName": "Mercado", "Selection": "Seleção",
+            "Odd": "Cotação atual", "FairOdd": "Cotação justa",
+            "RequiredOddForOperation": "Cotação mínima para operar",
+            "ConservativeProbability": "Probabilidade final",
+            "ConservativeExpectedValue": "Valor esperado final",
+            "OperationalDecision": "Decisão financeira", "Reason": "Motivo",
+        }
+
+    out = source[[column for column in columns if column in source.columns]].copy()
+    for column in percentage_columns:
+        if column in out:
+            out[column] = pd.to_numeric(out[column], errors="coerce") * 100.0
+    return out.rename(columns=rename)
 
 
 if not readings.empty or not diagnostics.empty:
@@ -1526,29 +1562,30 @@ if not readings.empty or not diagnostics.empty:
         st.markdown(
             '<div class="multiple-card"><b>SUGESTÃO DE MÚLTIPLA</b><br>'
             'Somente jogos aprovados no filtro de 2018. Para cada confronto, foi escolhido um único mercado: '
-            'o de maior probabilidade conservadora entre as opções com cotação financeiramente favorável.</div>',
+            'o de maior probabilidade final entre as opções com cotação financeiramente favorável.</div>',
             unsafe_allow_html=True,
         )
         multi_view = multiple_selections[[
             "League", "Home", "Away", "MarketName", "Selection",
-            "ConservativeProbability", "Odd", "EffectiveOdd",
-            "ConservativeExpectedValue", "SampleConfidence",
+            "ConservativeProbability", "Odd", "ConservativeExpectedValue",
         ]].copy()
+        multi_view["FairOdd"] = pd.to_numeric(
+            multi_view["ConservativeProbability"], errors="coerce"
+        ).map(lambda value: _fair_odd_from_probability(value) if pd.notna(value) else float("nan"))
         multi_view.insert(1, "Partida", multi_view["Home"].astype(str) + " x " + multi_view["Away"].astype(str))
         multi_view = multi_view.drop(columns=["Home", "Away"]).rename(columns={
             "League": "Liga", "MarketName": "Mercado", "Selection": "Seleção",
-            "ConservativeProbability": "Probabilidade conservadora",
-            "Odd": "Cotação", "EffectiveOdd": "Cotação após desconto",
-            "ConservativeExpectedValue": "Valor esperado conservador",
-            "SampleConfidence": "Confiança estatística",
+            "ConservativeProbability": "Probabilidade final",
+            "Odd": "Cotação", "FairOdd": "Cotação justa",
+            "ConservativeExpectedValue": "Valor esperado final",
         })
         st.dataframe(
             multi_view, hide_index=True, use_container_width=True,
             column_config={
-                "Probabilidade conservadora": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1),
+                "Probabilidade final": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1),
                 "Cotação": st.column_config.NumberColumn(format="%.2f"),
-                "Cotação após desconto": st.column_config.NumberColumn(format="%.2f"),
-                "Valor esperado conservador": st.column_config.NumberColumn(format="%.1f%%"),
+                "Cotação justa": st.column_config.NumberColumn(format="%.2f"),
+                "Valor esperado final": st.column_config.NumberColumn(format="%.1f%%"),
             },
         )
         a, b, c, d = st.columns(4)
@@ -1583,15 +1620,15 @@ if not readings.empty or not diagnostics.empty:
             "Não existe meta mínima nem inclusão de complemento com valor esperado negativo."
         )
         st.dataframe(
-            display_frame(entries),
+            evaluation_table(entries),
             hide_index=True,
             use_container_width=True,
             column_config={
-                "Probabilidade do modelo": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
-                "Probabilidade conservadora": st.column_config.NumberColumn(format="%.1f%%"),
-                "Mercado sem margem": st.column_config.NumberColumn(format="%.1f%%"),
-                "Valor esperado conservador": st.column_config.NumberColumn(format="%.1f%%"),
-                "Entrada fixa": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Probabilidade final": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+                "Cotação atual": st.column_config.NumberColumn(format="%.2f"),
+                "Cotação justa": st.column_config.NumberColumn(format="%.2f"),
+                "Cotação mínima para operar": st.column_config.NumberColumn(format="%.2f"),
+                "Valor esperado final": st.column_config.NumberColumn(format="%.1f%%"),
             },
         )
 
@@ -1650,49 +1687,62 @@ if not readings.empty or not diagnostics.empty:
             status = str(row["Status"])
             headline = (
                 f"{status}: {row['Selection']} | cotação {float(row['Odd']):.2f} | "
-                f"probabilidade conservadora {pct(row['ConservativeProbability'])}"
+                f"probabilidade final {pct(row['ConservativeProbability'])}"
             )
             if status == "OPERAR":
                 st.success(headline)
             else:
                 st.info(headline)
 
+            fair_odd = _fair_odd_from_probability(row["ConservativeProbability"])
             p1, p2, p3, p4 = st.columns(4)
-            p1.metric("Mercado sem margem", pct(row["MarketProbability"]))
-            p2.metric("Probabilidade esportiva", pct(row["RawSportsProbability"]))
-            p3.metric("Probabilidade do modelo", pct(row["DecisionProbability"]))
-            p4.metric("Probabilidade conservadora", pct(row["ConservativeProbability"]))
-            o1, o2, o3, o4 = st.columns(4)
-            o1.metric("Cotação informada", f"{float(row['Odd']):.2f}")
-            o2.metric("Cotação mínima calculada", f"{float(row['RequiredOddForOperation']):.2f}")
-            o3.metric("Valor esperado conservador", pct(row["ConservativeExpectedValue"]))
-            o4.metric("Decisão financeira", status)
+            p1.metric("Probabilidade final", pct(row["ConservativeProbability"]))
+            p2.metric("Cotação justa", f"{fair_odd:.2f}")
+            p3.metric("Cotação atual", f"{float(row['Odd']):.2f}")
+            p4.metric("Valor esperado", pct(row["ConservativeExpectedValue"]))
+            o1, o2 = st.columns(2)
+            o1.metric("Cotação mínima para operar", f"{float(row['RequiredOddForOperation']):.2f}")
+            o2.metric("Decisão financeira", status)
+            st.caption("Cotação justa = 1 ÷ probabilidade final. Quanto maior a cotação atual em relação à justa, melhor o preço.")
             st.write(f"**Motivo:** {row['Reason']}")
 
-            with st.expander("Ver todos os mercados avaliados", expanded=True):
+            ordered_markets = game_evaluations.sort_values(
+                ["ConservativeProbability", "ConservativeExpectedValue"], ascending=[False, False]
+            )
+            with st.expander("Ver todos os mercados avaliados", expanded=False):
                 st.dataframe(
-                    evaluation_table(game_evaluations.sort_values(
-                        ["ConservativeProbability", "ConservativeExpectedValue"], ascending=[False, False]
-                    )),
+                    evaluation_table(ordered_markets),
                     hide_index=True, use_container_width=True,
                     column_config={
-                        "Mercado sem margem": st.column_config.NumberColumn(format="%.1f%%"),
-                        "Probabilidade esportiva": st.column_config.NumberColumn(format="%.1f%%"),
-                        "Probabilidade do modelo": st.column_config.NumberColumn(format="%.1f%%"),
-                        "Probabilidade conservadora": st.column_config.NumberColumn(format="%.1f%%"),
-                        "Valor esperado conservador": st.column_config.NumberColumn(format="%.1f%%"),
+                        "Probabilidade final": st.column_config.NumberColumn(format="%.1f%%"),
+                        "Valor esperado final": st.column_config.NumberColumn(format="%.1f%%"),
                         "Cotação atual": st.column_config.NumberColumn(format="%.2f"),
-                        "Cotação após desconto de 2%": st.column_config.NumberColumn(format="%.2f"),
+                        "Cotação justa": st.column_config.NumberColumn(format="%.2f"),
+                        "Cotação mínima para operar": st.column_config.NumberColumn(format="%.2f"),
                     },
+                )
+            with st.expander("Ver cálculos técnicos detalhados", expanded=False):
+                st.dataframe(
+                    evaluation_table(ordered_markets, technical=True),
+                    hide_index=True, use_container_width=True,
                 )
 
     st.markdown("### Auditoria completa")
-    tab_all, tab_errors = st.tabs(["Todos os mercados de todos os jogos", "Diagnóstico técnico"])
-    with tab_all:
+    tab_summary, tab_technical, tab_errors = st.tabs([
+        "Resumo dos mercados", "Cálculos técnicos", "Diagnóstico técnico"
+    ])
+    ordered_audit = evaluations.sort_values(
+        ["InputID", "Filter2018Approved", "ConservativeProbability"],
+        ascending=[True, False, False],
+    )
+    with tab_summary:
         st.dataframe(
-            evaluation_table(evaluations.sort_values(
-                ["InputID", "Filter2018Approved", "ConservativeProbability"], ascending=[True, False, False]
-            )),
+            evaluation_table(ordered_audit),
+            hide_index=True, use_container_width=True,
+        )
+    with tab_technical:
+        st.dataframe(
+            evaluation_table(ordered_audit, technical=True),
             hide_index=True, use_container_width=True,
         )
     with tab_errors:
