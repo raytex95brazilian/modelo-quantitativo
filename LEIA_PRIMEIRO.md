@@ -1,6 +1,6 @@
-# Tex Statistics V28.3.3 — Classificação e forma recente
+# Tex Statistics V28.3.4 — Gols esperados restaurados
 
-Esta versão foi construída diretamente sobre a V28.3.2 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
+Esta versão foi construída diretamente sobre a V28.3.3 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
 
 ## Novo modo de cadastro
 
@@ -106,7 +106,7 @@ Substitua todo o conteúdo do projeto pelo conteúdo deste pacote. Não misture 
 
 Versões esperadas:
 
-- interface: `V28.3.3`;
+- interface: `V28.3.4`;
 - armazenamento: `28.3.1`;
 - importador: `28.3.0`;
 - núcleo preditivo: `28.1.2`;
@@ -158,3 +158,18 @@ A forma é resumida por marcadores `V`, `E` e `D`. O botão **Ver os placares do
 Somente partidas anteriores ao confronto analisado são usadas. Os dados vêm da base histórica carregada pelo aplicativo, que atualmente é predominantemente formada por jogos de liga.
 
 A alteração é apenas de contexto e interface. As colunas existentes das planilhas e as regras estatísticas, financeiras e operacionais não foram modificadas.
+
+
+## Correção V28.3.4 — gols esperados novamente na tela
+
+O cálculo de gols esperados já permanecia ativo no motor e salvo nas colunas `Gols projetados casa`, `Gols projetados fora` e `Gols projetados total`. Nesta versão, ele volta a aparecer visualmente dentro do cartão de cada partida aprovada.
+
+O quadro **Projeção de gols do modelo** mostra:
+
+- gols esperados do mandante, com o nome do time;
+- gols esperados do visitante, com o nome do time;
+- soma esperada de gols da partida.
+
+Os valores são apresentados antes da recomendação estatística e financeira. Uma observação na própria tela esclarece que se tratam de médias probabilísticas do modelo de Poisson, e não de previsão de placar exato.
+
+Nenhuma regra do filtro de 2018, probabilidade, cotação, operação, importação ou estrutura de planilha foi modificada.

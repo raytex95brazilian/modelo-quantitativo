@@ -41,8 +41,8 @@ EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.3.3"
 EXPECTED_OPERATION_API = "28.2.0"
 EXPECTED_IMPORTER_API = "28.3.0"
-INTERFACE_VERSION = "V28.3.3"
-APP_NAME = "Tex Statistics V28.3.3 — Classificação e forma recente"
+INTERFACE_VERSION = "V28.3.4"
+APP_NAME = "Tex Statistics V28.3.4 — Gols esperados restaurados"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -1943,6 +1943,34 @@ def _fair_odd_from_probability(value: float) -> float:
     return 1.0 / probability if probability > 0.0 else float("nan")
 
 
+def _safe_float(value) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return number
+
+
+def render_expected_goals(row: pd.Series, home: str, away: str) -> None:
+    """Exibe a projeção de gols já calculada pelo motor estatístico."""
+    home_expected = _safe_float(row.get("LambdaHome"))
+    away_expected = _safe_float(row.get("LambdaAway"))
+    if pd.isna(home_expected) or pd.isna(away_expected):
+        st.info("A projeção de gols não ficou disponível para esta partida.")
+        return
+
+    total_expected = home_expected + away_expected
+    st.markdown("##### Projeção de gols do modelo")
+    goal_home, goal_away, goal_total = st.columns(3)
+    goal_home.metric(f"Gols esperados — {home}", f"{home_expected:.2f}")
+    goal_away.metric(f"Gols esperados — {away}", f"{away_expected:.2f}")
+    goal_total.metric("Gols esperados — total", f"{total_expected:.2f}")
+    st.caption(
+        "Os gols esperados representam médias probabilísticas usadas pelo modelo de Poisson; "
+        "não correspondem a uma previsão de placar exato."
+    )
+
+
 def evaluation_table(frame: pd.DataFrame, *, technical: bool = False) -> pd.DataFrame:
     """Tabela enxuta por padrão; cálculos auxiliares ficam no modo técnico."""
     if frame.empty:
@@ -2364,6 +2392,11 @@ if not readings.empty or not diagnostics.empty:
                 st.error("A partida foi aprovada, mas não produziu leitura estatística. Consulte o diagnóstico.")
                 continue
             row = game_reading.iloc[0]
+            render_expected_goals(
+                row,
+                home=str(game["Mandante"]),
+                away=str(game["Visitante"]),
+            )
             status = str(row["Status"])
             headline = (
                 f"{status}: {row['Selection']} | cotação {float(row['Odd']):.2f} | "

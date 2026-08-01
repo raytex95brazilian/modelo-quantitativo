@@ -52,7 +52,7 @@ assert 'EXPECTED_FILTER_API = "28.3.3"' in app_source
 assert 'evaluate_lot_2018(current_games, matches)' in app_source
 assert 'build_operational_outputs(' in app_source
 assert 'Somente jogos aprovados no filtro de 2018' in app_source
-assert 'INTERFACE_VERSION = "V28.3.3"' in app_source
+assert 'INTERFACE_VERSION = "V28.3.4"' in app_source
 assert 'Partida e cotações — etapa única' in app_source
 assert 'CONFIRMAR CONFRONTO' not in app_source
 assert 'Etapa 1 de 2' not in app_source
@@ -68,6 +68,10 @@ assert '"MatchDisplay": "Partida"' in app_source
 assert '"LeagueDisplay": "Liga"' in app_source
 assert 'Cada oportunidade mostra agora a partida, a liga, a data e o horário' in app_source
 assert 'Classificação e forma antes da partida' in app_source
+assert 'def render_expected_goals(' in app_source
+assert 'Projeção de gols do modelo' in app_source
+assert 'Gols esperados — total' in app_source
+assert 'LambdaHome' in app_source and 'LambdaAway' in app_source
 assert 'Últimos 5 em casa' in app_source
 assert 'Últimos 5 fora' in app_source
 assert 'build_lot_form_contexts(current_games, matches)' in app_source
@@ -180,4 +184,4 @@ for relative, path in distributed_files.items():
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert manifest_entries[relative] == digest, f"SHA-256 divergente: {relative}"
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.3.3: OK")
+print("TESTE DE INTEGRIDADE DO PACOTE V28.3.4: OK")
