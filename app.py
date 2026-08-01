@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import hashlib
+import html
 import json
 
 import pandas as pd
@@ -37,11 +38,11 @@ _importador = _load_required_module("tex_importador_programacao")
 EXPECTED_CORE_API = "28.1.2"
 EXPECTED_STORAGE_API = "28.3.1"
 EXPECTED_FINANCE_API = "28.1.5.12"
-EXPECTED_FILTER_API = "28.2.0"
+EXPECTED_FILTER_API = "28.3.3"
 EXPECTED_OPERATION_API = "28.2.0"
 EXPECTED_IMPORTER_API = "28.3.0"
-INTERFACE_VERSION = "V28.3.2"
-APP_NAME = "Tex Statistics V28.3.2 — Identificação completa das oportunidades"
+INTERFACE_VERSION = "V28.3.3"
+APP_NAME = "Tex Statistics V28.3.3 — Classificação e forma recente"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -72,7 +73,7 @@ _REQUIRED_OPERACIONAL = (
     "INPUT_COLUMNS", "enrich_with_standings", "latest_team_catalog",
     "parse_odd", "standings_context",
 )
-_REQUIRED_FILTER_2018 = ("evaluate_lot_2018",)
+_REQUIRED_FILTER_2018 = ("evaluate_lot_2018", "build_lot_form_contexts")
 _REQUIRED_OPERATION_FILTERED = ("attach_filter_results", "build_operational_outputs")
 _REQUIRED_IMPORTER = (
     "parse_pasted_schedule", "resolve_imported_matches",
@@ -171,6 +172,7 @@ latest_team_catalog = getattr(_operacional, "latest_team_catalog", None)
 parse_odd = getattr(_operacional, "parse_odd", None)
 standings_context = getattr(_operacional, "standings_context", None)
 evaluate_lot_2018 = getattr(_filtro2018, "evaluate_lot_2018", None)
+build_lot_form_contexts = getattr(_filtro2018, "build_lot_form_contexts", None)
 attach_filter_results = getattr(_operacao_filtrada, "attach_filter_results", None)
 build_operational_outputs = getattr(_operacao_filtrada, "build_operational_outputs", None)
 parse_pasted_schedule = getattr(_importador, "parse_pasted_schedule", None)
@@ -266,6 +268,11 @@ def apply_style() -> None:
         [aria-selected="true"][data-baseweb="tab"]{background:linear-gradient(135deg,rgba(8,145,178,.16),rgba(15,118,110,.14))}
         [data-testid="stTextArea"] textarea{border-radius:14px!important;line-height:1.45}
         .game-card{padding:.95rem 1rem;border:1px solid rgba(120,120,120,.20);border-radius:15px;margin:.4rem 0}
+        .team-context{padding:.9rem 1rem;border:1px solid rgba(8,145,178,.20);border-radius:16px;background:linear-gradient(135deg,rgba(236,254,255,.78),rgba(240,253,250,.72));margin:.45rem 0}
+        .team-context-title{font-weight:800;font-size:1.02rem;margin-bottom:.2rem}.team-context-meta{font-size:.91rem;opacity:.84;margin-bottom:.55rem}
+        .form-strip{display:flex;gap:.38rem;flex-wrap:wrap;align-items:center;margin:.25rem 0 .55rem}.form-label{font-size:.82rem;font-weight:750;opacity:.75;margin-right:.1rem}
+        .form-badge{display:inline-flex;align-items:center;justify-content:center;min-width:29px;height:29px;border-radius:9px;color:#fff;font-weight:850;font-size:.82rem;box-shadow:0 3px 8px rgba(15,23,42,.12)}
+        .form-v{background:#15803d}.form-e{background:#a16207}.form-d{background:#b91c1c}.form-na{background:#64748b}
         @media(max-width:768px){
           .block-container{padding:.65rem .75rem 4.5rem}.tex-head{padding:1rem;border-radius:17px}.tex-head h1{font-size:1.45rem}.tex-head p{font-size:.9rem}
           [data-testid="stMetric"]{padding:.35rem}.stButton>button,.stDownloadButton>button,.stLinkButton>a{min-height:50px;font-size:.96rem}
@@ -340,7 +347,7 @@ def team_catalog(serialized: tuple[tuple[str, int, str, str], ...]):
 
 RESULT_STATE_KEYS = (
     "tex_entries", "tex_readings", "tex_evaluations", "tex_diagnostics",
-    "tex_filter_results", "tex_multiple_summary",
+    "tex_filter_results", "tex_form_contexts", "tex_multiple_summary",
     "tex_ai_summary", "tex_analysis_fingerprint",
 )
 
@@ -1818,6 +1825,7 @@ else:
         # Isso preserva integralmente a base histórica. O filtro atua apenas como portão operacional.
         base_evaluations = enrich_with_standings(base_evaluations, current_games, matches)
         filter_results = evaluate_lot_2018(current_games, matches)
+        form_contexts = build_lot_form_contexts(current_games, matches)
         filtered_evaluations = attach_filter_results(base_evaluations, filter_results)
         entries, readings, evaluations, multiple_summary = build_operational_outputs(
             filtered_evaluations,
@@ -1833,6 +1841,7 @@ else:
         st.session_state.tex_readings = readings
         st.session_state.tex_evaluations = evaluations
         st.session_state.tex_filter_results = filter_results
+        st.session_state.tex_form_contexts = form_contexts
         st.session_state.tex_multiple_summary = multiple_summary
         st.session_state.tex_diagnostics = diagnostics
         st.session_state.tex_ai_summary = build_ai_summary(
@@ -1899,8 +1908,17 @@ entries = st.session_state.get("tex_entries", pd.DataFrame())
 readings = st.session_state.get("tex_readings", pd.DataFrame())
 evaluations = st.session_state.get("tex_evaluations", pd.DataFrame())
 filter_results = st.session_state.get("tex_filter_results", pd.DataFrame())
-multiple_summary = st.session_state.get("tex_multiple_summary")
 diagnostics = st.session_state.get("tex_diagnostics", pd.DataFrame())
+form_contexts = st.session_state.get("tex_form_contexts", {})
+if not isinstance(form_contexts, dict):
+    form_contexts = {}
+if not form_contexts and (not readings.empty or not diagnostics.empty) and games():
+    try:
+        form_contexts = build_lot_form_contexts(games_frame(), matches)
+        st.session_state.tex_form_contexts = form_contexts
+    except Exception:
+        form_contexts = {}
+multiple_summary = st.session_state.get("tex_multiple_summary")
 ai_summary = st.session_state.get("tex_ai_summary", "")
 if st.session_state.get("tex_analysis_autosave"):
     st.success(str(st.session_state.pop("tex_analysis_autosave")))
@@ -2037,6 +2055,130 @@ def evaluation_table(frame: pd.DataFrame, *, technical: bool = False) -> pd.Data
         if column in out:
             out[column] = pd.to_numeric(out[column], errors="coerce") * 100.0
     return out.rename(columns=rename)
+
+
+def _form_badges(records: list[dict]) -> str:
+    if not records:
+        return '<span class="form-badge form-na">—</span>'
+    badges: list[str] = []
+    for item in records:
+        result = str(item.get("Result", "")).upper()
+        css = {"V": "form-v", "E": "form-e", "D": "form-d"}.get(result, "form-na")
+        title = html.escape(
+            f"{item.get('Date', '')} · {item.get('Venue', '')} · "
+            f"{item.get('Opponent', '')} · {item.get('Score', '')}"
+        )
+        badges.append(
+            f'<span class="form-badge {css}" title="{title}">{html.escape(result or "—")}</span>'
+        )
+    return "".join(badges)
+
+
+def _form_table(records: list[dict]) -> pd.DataFrame:
+    if not records:
+        return pd.DataFrame(columns=["Data", "Local", "Adversário", "Placar", "R"])
+    return pd.DataFrame([
+        {
+            "Data": item.get("Date", ""),
+            "Local": item.get("VenueShort", ""),
+            "Adversário": item.get("Opponent", ""),
+            "Placar": item.get("Score", ""),
+            "R": item.get("Result", ""),
+        }
+        for item in records
+    ])
+
+
+def _standing_text(standing: dict) -> str:
+    if not standing or not standing.get("Available"):
+        return "Classificação indisponível na base para a data do evento."
+    return (
+        f"<b>{int(standing.get('Position', 0))}º lugar</b> · "
+        f"{int(standing.get('Points', 0))} pontos · {int(standing.get('Games', 0))} jogos · "
+        f"{int(standing.get('Wins', 0))}V/{int(standing.get('Draws', 0))}E/{int(standing.get('Losses', 0))}D · "
+        f"gols {int(standing.get('GoalsFor', 0))}:{int(standing.get('GoalsAgainst', 0))}"
+    )
+
+
+def _render_team_context(
+    *,
+    team: str,
+    role: str,
+    standing: dict,
+    overall: list[dict],
+    venue_specific: list[dict],
+    venue_title: str,
+) -> None:
+    st.markdown(
+        '<div class="team-context">'
+        f'<div class="team-context-title">{html.escape(role)} — {html.escape(team)}</div>'
+        f'<div class="team-context-meta">{_standing_text(standing)}</div>'
+        '<div class="form-strip"><span class="form-label">Forma geral:</span>'
+        f'{_form_badges(overall)}</div>'
+        f'<div class="form-strip"><span class="form-label">{html.escape(venue_title)}:</span>'
+        f'{_form_badges(venue_specific)}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_game_form_context(context: dict) -> None:
+    if not context:
+        st.info("Classificação e forma recente não puderam ser montadas para esta partida.")
+        return
+    season = int(context.get("StandingsSeason", 0) or 0)
+    title_suffix = f" — temporada {season}" if season else ""
+    st.markdown(f"##### Classificação e forma antes da partida{title_suffix}")
+    st.caption("V = vitória · E = empate · D = derrota. Todos os registros são anteriores à data do confronto analisado.")
+    home_col, away_col = st.columns(2)
+    with home_col:
+        _render_team_context(
+            team=str(context.get("HomeTeam", "Mandante")),
+            role="Mandante",
+            standing=dict(context.get("HomeStanding") or {}),
+            overall=list(context.get("HomeOverall") or []),
+            venue_specific=list(context.get("HomeAtHome") or []),
+            venue_title="Últimos 5 em casa",
+        )
+    with away_col:
+        _render_team_context(
+            team=str(context.get("AwayTeam", "Visitante")),
+            role="Visitante",
+            standing=dict(context.get("AwayStanding") or {}),
+            overall=list(context.get("AwayOverall") or []),
+            venue_specific=list(context.get("AwayAway") or []),
+            venue_title="Últimos 5 fora",
+        )
+
+    with st.expander("Ver os placares dos jogos recentes", expanded=False):
+        home_details, away_details = st.columns(2)
+        with home_details:
+            st.markdown(f"**{context.get('HomeTeam', 'Mandante')} — últimos 5, qualquer mando**")
+            st.dataframe(
+                _form_table(list(context.get("HomeOverall") or [])),
+                hide_index=True,
+                use_container_width=True,
+            )
+            st.markdown(f"**{context.get('HomeTeam', 'Mandante')} — últimos 5 em casa**")
+            st.dataframe(
+                _form_table(list(context.get("HomeAtHome") or [])),
+                hide_index=True,
+                use_container_width=True,
+            )
+        with away_details:
+            st.markdown(f"**{context.get('AwayTeam', 'Visitante')} — últimos 5, qualquer mando**")
+            st.dataframe(
+                _form_table(list(context.get("AwayOverall") or [])),
+                hide_index=True,
+                use_container_width=True,
+            )
+            st.markdown(f"**{context.get('AwayTeam', 'Visitante')} — últimos 5 fora**")
+            st.dataframe(
+                _form_table(list(context.get("AwayAway") or [])),
+                hide_index=True,
+                use_container_width=True,
+            )
+        st.caption(str(context.get("SourceNote", "")))
 
 
 if not readings.empty or not diagnostics.empty:
@@ -2188,6 +2330,7 @@ if not readings.empty or not diagnostics.empty:
                 f"{pd.to_datetime(game['Data']).strftime('%d/%m/%Y')} às {game['Hora']} | "
                 f"Casa de apostas: {game['Casa de apostas']}"
             )
+            render_game_form_context(dict(form_contexts.get(input_id, {}) or {}))
             css_class = "filter-approved" if approved else "filter-rejected"
             filter_title = "APROVADO NO FILTRO DE 2018" if approved else "REPROVADO NO FILTRO DE 2018 — FORA DO UNIVERSO OPERACIONAL"
             st.markdown(

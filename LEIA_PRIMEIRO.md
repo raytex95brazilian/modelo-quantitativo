@@ -1,6 +1,6 @@
-# Tex Statistics V28.3.2 — Identificação completa das apostas individuais
+# Tex Statistics V28.3.3 — Classificação e forma recente
 
-Esta versão foi construída diretamente sobre a V28.3.1 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
+Esta versão foi construída diretamente sobre a V28.3.2 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
 
 ## Novo modo de cadastro
 
@@ -106,11 +106,11 @@ Substitua todo o conteúdo do projeto pelo conteúdo deste pacote. Não misture 
 
 Versões esperadas:
 
-- interface: `V28.3.2`;
+- interface: `V28.3.3`;
 - armazenamento: `28.3.1`;
 - importador: `28.3.0`;
 - núcleo preditivo: `28.1.2`;
-- filtro de 2018: `28.2.0`.
+- filtro de 2018 e contexto esportivo: `28.3.3`.
 
 
 ## Correção V28.3.1 — conferência numérica do Google Sheets
@@ -140,3 +140,21 @@ A tabela **Apostas individuais** passa a exibir, antes do mercado e das cotaçõ
 Assim, uma indicação como `Ambas marcam — Sim` não aparece mais isolada. O usuário consegue identificar imediatamente a qual confronto a oportunidade pertence. A mesma identificação também está disponível no quadro técnico detalhado.
 
 Esta correção altera apenas a apresentação e a versão registrada da interface. O motor estatístico, o filtro de 2018, as regras financeiras, a importação 1X2 e as colunas das planilhas permanecem inalterados.
+
+
+## Upgrade V28.3.3 — classificação e forma recente
+
+Dentro do cartão de cada partida, antes do resultado do filtro, o aplicativo agora apresenta:
+
+- posição e pontos dos dois times na data do evento;
+- campanha resumida: jogos, vitórias, empates, derrotas e gols;
+- últimos cinco jogos do mandante, independentemente do mando;
+- últimos cinco jogos do mandante em casa;
+- últimos cinco jogos do visitante, independentemente do mando;
+- últimos cinco jogos do visitante fora.
+
+A forma é resumida por marcadores `V`, `E` e `D`. O botão **Ver os placares dos jogos recentes** abre as quatro listas completas com data, local, adversário e placar.
+
+Somente partidas anteriores ao confronto analisado são usadas. Os dados vêm da base histórica carregada pelo aplicativo, que atualmente é predominantemente formada por jogos de liga.
+
+A alteração é apenas de contexto e interface. As colunas existentes das planilhas e as regras estatísticas, financeiras e operacionais não foram modificadas.

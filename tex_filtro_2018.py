@@ -9,7 +9,7 @@ import pandas as pd
 
 from tex_operacional_core import clean_text, parse_date, standings_context
 
-FILTER_API_VERSION = "28.2.0"
+FILTER_API_VERSION = "28.3.3"
 FILTER_NAME = "Filtro eliminatório de 2018"
 
 
@@ -122,14 +122,34 @@ class HistoryIndex:
         self.team_history = dict(team_history)
         self.h2h_history = dict(h2h_history)
 
-    def last_matches(self, team: str, before: date, limit: int = 5) -> list[dict[str, Any]]:
+    def _last_matches_by_venue(
+        self,
+        team: str,
+        before: date,
+        limit: int = 5,
+        venue: str | None = None,
+    ) -> list[dict[str, Any]]:
         selected: list[dict[str, Any]] = []
         for item in self.team_history.get(team, []):
-            if item["DateParsed"] < before:
-                selected.append(item)
-                if len(selected) >= limit:
-                    break
+            if item["DateParsed"] >= before:
+                continue
+            if venue == "home" and item["Home"] != team:
+                continue
+            if venue == "away" and item["Away"] != team:
+                continue
+            selected.append(item)
+            if len(selected) >= limit:
+                break
         return selected
+
+    def last_matches(self, team: str, before: date, limit: int = 5) -> list[dict[str, Any]]:
+        return self._last_matches_by_venue(team, before, limit, venue=None)
+
+    def last_home_matches(self, team: str, before: date, limit: int = 5) -> list[dict[str, Any]]:
+        return self._last_matches_by_venue(team, before, limit, venue="home")
+
+    def last_away_matches(self, team: str, before: date, limit: int = 5) -> list[dict[str, Any]]:
+        return self._last_matches_by_venue(team, before, limit, venue="away")
 
     def last_h2h(self, home: str, away: str, before: date) -> tuple[dict[str, Any] | None, int]:
         skipped_non_round_robin = 0
@@ -285,6 +305,133 @@ def evaluate_game_2018(
     )
 
 
+def _team_result(item: dict[str, Any], team: str) -> str:
+    if item.get("Home") == team:
+        goals_for = int(item.get("HG", 0))
+        goals_against = int(item.get("AG", 0))
+    elif item.get("Away") == team:
+        goals_for = int(item.get("AG", 0))
+        goals_against = int(item.get("HG", 0))
+    else:
+        return ""
+    if goals_for > goals_against:
+        return "V"
+    if goals_for == goals_against:
+        return "E"
+    return "D"
+
+
+def _form_match(item: dict[str, Any], team: str) -> dict[str, Any]:
+    is_home = item.get("Home") == team
+    goals_for = int(item.get("HG", 0) if is_home else item.get("AG", 0))
+    goals_against = int(item.get("AG", 0) if is_home else item.get("HG", 0))
+    opponent = clean_text(item.get("Away") if is_home else item.get("Home"))
+    match_date = item.get("DateParsed")
+    date_display = match_date.strftime("%d/%m/%Y") if isinstance(match_date, date) else clean_text(match_date)
+    return {
+        "Date": date_display,
+        "DateParsed": match_date,
+        "Venue": "Casa" if is_home else "Fora",
+        "VenueShort": "C" if is_home else "F",
+        "Opponent": opponent,
+        "GoalsFor": goals_for,
+        "GoalsAgainst": goals_against,
+        "Score": f"{goals_for} x {goals_against}",
+        "Result": _team_result(item, team),
+        "League": clean_text(item.get("League")),
+        "Code": clean_text(item.get("Code")),
+        "Fixture": f"{clean_text(item.get('Home'))} {int(item.get('HG', 0))} x {int(item.get('AG', 0))} {clean_text(item.get('Away'))}",
+    }
+
+
+def _standing_snapshot(context: dict[str, Any], team: str) -> dict[str, Any]:
+    if not context.get("Available"):
+        return {"Available": False, "Team": team}
+    table = context.get("Table")
+    if not isinstance(table, pd.DataFrame) or table.empty or "Equipe" not in table.columns:
+        return {"Available": False, "Team": team}
+    rows = table[table["Equipe"].astype(str).eq(team)]
+    if rows.empty:
+        return {"Available": False, "Team": team}
+    row = rows.iloc[0]
+    return {
+        "Available": True,
+        "Team": team,
+        "Position": int(row.get("Posição", 0)),
+        "Points": int(row.get("Pontos", 0)),
+        "Games": int(row.get("Jogos", 0)),
+        "Wins": int(row.get("Vitórias", 0)),
+        "Draws": int(row.get("Empates", 0)),
+        "Losses": int(row.get("Derrotas", 0)),
+        "GoalsFor": int(row.get("Gols marcados", 0)),
+        "GoalsAgainst": int(row.get("Gols sofridos", 0)),
+        "GoalDifference": int(row.get("Saldo", 0)),
+        "Season": int(row.get("Temporada", context.get("Season", 0)) or 0),
+    }
+
+
+def build_game_form_context(
+    game: dict[str, Any] | pd.Series,
+    matches: list[dict[str, Any]],
+    history: HistoryIndex | None = None,
+) -> dict[str, Any]:
+    """Monta classificação e forma anteriores ao evento, sem usar resultados futuros.
+
+    A forma geral reproduz a sequência cronológica da base carregada, independentemente
+    do mando. Para o mandante também são separados os cinco jogos anteriores em casa;
+    para o visitante, os cinco anteriores fora de casa.
+    """
+    payload = dict(game)
+    input_id = clean_text(payload.get("ID"))
+    code = clean_text(payload.get("Código da liga"))
+    home = clean_text(payload.get("Mandante"))
+    away = clean_text(payload.get("Visitante"))
+    match_date = parse_date(payload.get("Data"))
+    history = history or HistoryIndex(matches)
+    table_context = standings_context(matches, code, match_date, home, away)
+
+    home_overall = history.last_matches(home, match_date, 5)
+    home_at_home = history.last_home_matches(home, match_date, 5)
+    away_overall = history.last_matches(away, match_date, 5)
+    away_away = history.last_away_matches(away, match_date, 5)
+
+    return {
+        "InputID": input_id,
+        "MatchDate": match_date.strftime("%d/%m/%Y"),
+        "LeagueCode": code,
+        "League": clean_text(payload.get("Liga")),
+        "HomeTeam": home,
+        "AwayTeam": away,
+        "StandingsAvailable": bool(table_context.get("Available")),
+        "StandingsSeason": int(table_context.get("Season", 0) or 0),
+        "StandingsReason": clean_text(table_context.get("ConsolidationReason")),
+        "HomeStanding": _standing_snapshot(table_context, home),
+        "AwayStanding": _standing_snapshot(table_context, away),
+        "HomeOverall": [_form_match(item, home) for item in home_overall],
+        "HomeAtHome": [_form_match(item, home) for item in home_at_home],
+        "AwayOverall": [_form_match(item, away) for item in away_overall],
+        "AwayAway": [_form_match(item, away) for item in away_away],
+        "SourceNote": (
+            "Somente partidas anteriores ao evento presentes na base histórica carregada. "
+            "A fonte atual é predominantemente composta por jogos de liga."
+        ),
+    }
+
+
+def build_lot_form_contexts(
+    games: pd.DataFrame,
+    matches: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    if games.empty:
+        return {}
+    history = HistoryIndex(matches)
+    contexts: dict[str, dict[str, Any]] = {}
+    for _, row in games.iterrows():
+        context = build_game_form_context(row, matches, history)
+        contexts[str(context.get("InputID", ""))] = context
+    return contexts
+
+
 def evaluate_lot_2018(games: pd.DataFrame, matches: list[dict[str, Any]]) -> pd.DataFrame:
     if games.empty:
         return pd.DataFrame()
@@ -296,4 +443,5 @@ def evaluate_lot_2018(games: pd.DataFrame, matches: list[dict[str, Any]]) -> pd.
 __all__ = [
     "FILTER_API_VERSION", "FILTER_NAME", "Filter2018Result", "HistoryIndex",
     "evaluate_game_2018", "evaluate_lot_2018",
+    "build_game_form_context", "build_lot_form_contexts",
 ]
