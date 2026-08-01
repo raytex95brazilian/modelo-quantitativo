@@ -1,4 +1,20 @@
-# Tex Statistics V28.3.6 — Lotes separados por importação
+# Tex Statistics V28.3.7 — Resumo dos jogos aprovados
+
+
+## Upgrade V28.3.7 — resumo imediato dos aprovados
+
+Logo abaixo dos cinco indicadores gerais, a tela agora exibe **Resumo dos jogos aprovados**. A tabela reúne todos os confrontos que passaram no filtro obrigatório de 2018, sem exigir que o usuário percorra os cartões de partidas reprovadas.
+
+Para cada aprovado, o resumo mostra:
+
+- número correspondente ao cartão na seção **Análise de cada partida**;
+- confronto, liga, data e horário;
+- resultado da análise posterior (`OPERAR` ou `SEM VALOR AO PREÇO ATUAL`);
+- melhor mercado e seleção;
+- probabilidade final;
+- cotação atual, cotação justa e valor esperado.
+
+A lista inclui também jogos aprovados que não geraram aposta simples. Assim, o número **Aprovadas no filtro** sempre pode ser conferido diretamente na tabela. Nenhuma regra, cálculo ou coluna de planilha foi alterada.
 
 ## Correção V28.3.6 — cada importação pode formar um lote independente
 
@@ -20,7 +36,7 @@ Criar um novo lote **não apaga dados históricos**. Permanecem intactos:
 O sistema registra um evento `CLEAR` e os novos `UPSERTs` na mesma escrita em lote. Assim, a restauração após reinício também retorna somente o lote ativo mais recente, sem misturar Brasil e México.
 
 
-Esta versão foi construída diretamente sobre a V28.3.4 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
+Esta versão foi construída diretamente sobre a V28.3.6 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
 
 ## Novo modo de cadastro
 
@@ -126,7 +142,7 @@ Substitua todo o conteúdo do projeto pelo conteúdo deste pacote. Não misture 
 
 Versões esperadas:
 
-- interface: `V28.3.6`;
+- interface: `V28.3.7`;
 - armazenamento: `28.3.6`;
 - importador: `28.3.0`;
 - núcleo preditivo: `28.1.2`;

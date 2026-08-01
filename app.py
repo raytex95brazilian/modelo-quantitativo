@@ -41,8 +41,8 @@ EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.3.3"
 EXPECTED_OPERATION_API = "28.2.0"
 EXPECTED_IMPORTER_API = "28.3.0"
-INTERFACE_VERSION = "V28.3.6"
-APP_NAME = "Tex Statistics V28.3.6 — Lotes separados por importação"
+INTERFACE_VERSION = "V28.3.7"
+APP_NAME = "Tex Statistics V28.3.7 — Resumo dos aprovados"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -224,7 +224,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.3.6, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.3.7, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -2160,6 +2160,87 @@ def evaluation_table(frame: pd.DataFrame, *, technical: bool = False) -> pd.Data
     return out.rename(columns=rename)
 
 
+
+def approved_games_summary_table(
+    game_records: list[dict],
+    filter_results: pd.DataFrame,
+    readings: pd.DataFrame,
+) -> pd.DataFrame:
+    """Monta um resumo compacto de todos os jogos aprovados no filtro de 2018.
+
+    A tabela preserva a ordem original do lote e inclui o número da partida na
+    seção detalhada, permitindo localizar rapidamente o cartão correspondente.
+    Jogos aprovados sem leitura estatística continuam aparecendo no resumo.
+    """
+    columns = [
+        "Nº", "Partida", "Liga", "Data e hora", "Resultado da análise",
+        "Melhor mercado", "Probabilidade final", "Cotação atual",
+        "Cotação justa", "Valor esperado",
+    ]
+    if not isinstance(filter_results, pd.DataFrame) or filter_results.empty:
+        return pd.DataFrame(columns=columns)
+
+    approved_by_id: dict[str, dict] = {}
+    for _, row in filter_results.iterrows():
+        input_id = str(row.get("InputID", ""))
+        approved_value = row.get("Filter2018Approved", False)
+        if input_id and pd.notna(approved_value) and bool(approved_value):
+            approved_by_id[input_id] = row.to_dict()
+
+    reading_by_id: dict[str, dict] = {}
+    if isinstance(readings, pd.DataFrame) and not readings.empty and "InputID" in readings.columns:
+        for _, row in readings.drop_duplicates("InputID", keep="first").iterrows():
+            reading_by_id[str(row.get("InputID", ""))] = row.to_dict()
+
+    records: list[dict] = []
+    for game_number, game in enumerate(game_records, start=1):
+        input_id = str(game.get("ID", ""))
+        if input_id not in approved_by_id:
+            continue
+
+        reading = reading_by_id.get(input_id, {})
+        probability = pd.to_numeric(
+            pd.Series([reading.get("ConservativeProbability")]), errors="coerce"
+        ).iloc[0]
+        odd = pd.to_numeric(pd.Series([reading.get("Odd")]), errors="coerce").iloc[0]
+        expected_value = pd.to_numeric(
+            pd.Series([reading.get("ConservativeExpectedValue")]), errors="coerce"
+        ).iloc[0]
+        fair_odd = (
+            _fair_odd_from_probability(float(probability))
+            if pd.notna(probability) and float(probability) > 0
+            else float("nan")
+        )
+
+        game_date = pd.to_datetime(game.get("Data"), errors="coerce")
+        date_display = game_date.strftime("%d/%m/%Y") if pd.notna(game_date) else str(game.get("Data", ""))
+        hour_display = str(game.get("Hora", "")).strip()[:5]
+        date_time_display = " · ".join(part for part in (date_display, hour_display) if part)
+
+        market = str(reading.get("MarketName", "")).strip()
+        selection = str(reading.get("Selection", "")).strip()
+        if market and selection and selection.casefold().startswith(market.casefold()):
+            market_display = selection
+        else:
+            market_display = " — ".join(part for part in (market, selection) if part)
+        status = str(reading.get("Status", "ANÁLISE NÃO DISPONÍVEL")).strip() or "ANÁLISE NÃO DISPONÍVEL"
+
+        records.append({
+            "Nº": game_number,
+            "Partida": f"{game.get('Mandante', '')} x {game.get('Visitante', '')}",
+            "Liga": str(game.get("Liga", "")),
+            "Data e hora": date_time_display,
+            "Resultado da análise": status,
+            "Melhor mercado": market_display or "Não disponível",
+            "Probabilidade final": float(probability) * 100.0 if pd.notna(probability) else float("nan"),
+            "Cotação atual": float(odd) if pd.notna(odd) else float("nan"),
+            "Cotação justa": float(fair_odd) if pd.notna(fair_odd) else float("nan"),
+            "Valor esperado": float(expected_value) * 100.0 if pd.notna(expected_value) else float("nan"),
+        })
+
+    return pd.DataFrame(records, columns=columns)
+
+
 def _form_badges(records: list[dict]) -> str:
     if not records:
         return '<span class="form-badge form-na">—</span>'
@@ -2309,6 +2390,34 @@ if not readings.empty or not diagnostics.empty:
     m3.metric("Eliminadas no filtro", rejected_count)
     m4.metric("Apostas simples", len(entries))
     m5.metric("Itens na múltipla", len(multiple_selections))
+
+    st.markdown("### Resumo dos jogos aprovados")
+    approved_summary = approved_games_summary_table(games(), filter_results, readings)
+    if approved_summary.empty:
+        st.info("Nenhuma partida foi aprovada no filtro de 2018 neste lote.")
+    else:
+        st.success(
+            f"{len(approved_summary)} partida(s) aprovada(s). "
+            "Todas aparecem abaixo, inclusive as que não apresentaram cotação favorável."
+        )
+        st.dataframe(
+            approved_summary,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Nº": st.column_config.NumberColumn(format="%d"),
+                "Probabilidade final": st.column_config.ProgressColumn(
+                    format="%.1f%%", min_value=0, max_value=100
+                ),
+                "Cotação atual": st.column_config.NumberColumn(format="%.2f"),
+                "Cotação justa": st.column_config.NumberColumn(format="%.2f"),
+                "Valor esperado": st.column_config.NumberColumn(format="%.1f%%"),
+            },
+        )
+        st.caption(
+            "O número da primeira coluna corresponde à posição do jogo na seção 'Análise de cada partida'. "
+            "Assim, você identifica imediatamente quais eventos passaram no filtro sem percorrer os reprovados."
+        )
 
     st.markdown("### Lista de verificação do filtro de 2018")
     st.caption(

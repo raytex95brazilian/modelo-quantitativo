@@ -112,9 +112,48 @@ update_stub = types.ModuleType("tex_v25_atualizacao")
 sys.modules["tex_v25_atualizacao"] = update_stub
 
 app = importlib.import_module("app")
-assert app.INTERFACE_VERSION == "V28.3.6"
+assert app.INTERFACE_VERSION == "V28.3.7"
 assert app.EXPECTED_CORE_API == "28.1.2"
 assert app.max_entries == 5
+
+# O topo do resultado deve listar todos os aprovados, inclusive os sem aposta simples.
+summary_games = [
+    {
+        "ID": "g1", "Data": "2026-08-08", "Hora": "16:00",
+        "Liga": "Brasileirão Série A", "Mandante": "Gremio", "Visitante": "Sao Paulo",
+    },
+    {
+        "ID": "g2", "Data": "2026-08-08", "Hora": "18:30",
+        "Liga": "Brasileirão Série A", "Mandante": "Remo", "Visitante": "Atletico-MG",
+    },
+    {
+        "ID": "g3", "Data": "2026-08-08", "Hora": "20:30",
+        "Liga": "Brasileirão Série A", "Mandante": "Coritiba", "Visitante": "Chapecoense-SC",
+    },
+]
+summary_filters = pd.DataFrame([
+    {"InputID": "g1", "Filter2018Approved": True},
+    {"InputID": "g2", "Filter2018Approved": False},
+    {"InputID": "g3", "Filter2018Approved": True},
+])
+summary_readings = pd.DataFrame([
+    {
+        "InputID": "g1", "Status": "OPERAR", "MarketName": "Ambas marcam",
+        "Selection": "Ambas marcam — Sim", "ConservativeProbability": 0.57,
+        "Odd": 1.90, "ConservativeExpectedValue": 0.061,
+    },
+    {
+        "InputID": "g3", "Status": "SEM VALOR AO PREÇO ATUAL", "MarketName": "Mais de 2,5",
+        "Selection": "Mais de 2,5", "ConservativeProbability": 0.61,
+        "Odd": 1.55, "ConservativeExpectedValue": -0.073,
+    },
+])
+summary = app.approved_games_summary_table(summary_games, summary_filters, summary_readings)
+assert list(summary["Nº"]) == [1, 3]
+assert list(summary["Partida"]) == ["Gremio x Sao Paulo", "Coritiba x Chapecoense-SC"]
+assert list(summary["Resultado da análise"]) == ["OPERAR", "SEM VALOR AO PREÇO ATUAL"]
+assert abs(float(summary.iloc[0]["Probabilidade final"]) - 57.0) < 1e-9
+assert abs(float(summary.iloc[0]["Cotação justa"]) - (1.0 / 0.57)) < 1e-9
 
 # O lote deve sobreviver à perda completa do session_state usando o backup automático.
 from tempfile import TemporaryDirectory
@@ -323,10 +362,10 @@ assert abs(float(catalog[catalog["Grupo do mercado"].eq("1X2")].iloc[0]["Margem 
 config = json.loads(str(analysis.iloc[0]["Configuração JSON"]))
 assert config["api_nucleo"] == "28.1.2"
 assert config["percentual_unidade"] == 0.01
-assert catalog.iloc[0]["Versão da interface"] == "V28.3.6"
-assert analysis.iloc[0]["Versão da interface"] == "V28.3.6"
+assert catalog.iloc[0]["Versão da interface"] == "V28.3.7"
+assert analysis.iloc[0]["Versão da interface"] == "V28.3.7"
 summary_text = app.build_ai_summary(games, evaluations.sort_values(["MatchID", "StatusOrder"]).drop_duplicates("MatchID"), evaluations, diagnostics, matches)
 for forbidden in ("AGUARDAR PREÇO", "PREÇO FORTE", "ELEGÍVEL PARA META", "RESERVA", "mínima de admissibilidade da meta", "equilíbrio individual"):
     assert forbidden not in summary_text, forbidden
 
-print("TESTE DO APP SEM INTERFACE GRÁFICA V28.3.6: OK")
+print("TESTE DO APP SEM INTERFACE GRÁFICA V28.3.7: OK")

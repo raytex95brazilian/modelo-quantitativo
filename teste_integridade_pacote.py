@@ -52,7 +52,7 @@ assert 'EXPECTED_FILTER_API = "28.3.3"' in app_source
 assert 'evaluate_lot_2018(current_games, matches)' in app_source
 assert 'build_operational_outputs(' in app_source
 assert 'Somente jogos aprovados no filtro de 2018' in app_source
-assert 'INTERFACE_VERSION = "V28.3.6"' in app_source
+assert 'INTERFACE_VERSION = "V28.3.7"' in app_source
 assert 'Partida e cotações — etapa única' in app_source
 assert 'CONFIRMAR CONFRONTO' not in app_source
 assert 'Etapa 1 de 2' not in app_source
@@ -80,6 +80,8 @@ assert 'Colar jogos e cotações 1X2' in app_source
 assert 'resolve_imported_matches' in app_source
 assert 'registrar_eventos_lote' in app_source
 assert 'Destino desta importação' in app_source
+assert '### Resumo dos jogos aprovados' in app_source
+assert 'def approved_games_summary_table(' in app_source
 assert 'Criar novo lote — substituir apenas o lote exibido' in app_source
 assert 'Adicionar ao lote atual' in app_source
 assert 'replace_current_lot=replace_current_lot' in app_source
@@ -189,4 +191,4 @@ for relative, path in distributed_files.items():
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert manifest_entries[relative] == digest, f"SHA-256 divergente: {relative}"
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.3.6: OK")
+print("TESTE DE INTEGRIDADE DO PACOTE V28.3.7: OK")
