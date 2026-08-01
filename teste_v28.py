@@ -16,10 +16,11 @@ entries,readings,evaluations,diagnostics=analyze_games(games,matches,model,1000,
 assert len(readings)==3
 assert len(evaluations)==21
 assert (evaluations['Market']=='BTTS').sum()==6
-assert evaluations[evaluations['Market']=='BTTS']['Status'].eq('EXPERIMENTAL').all()
+assert not evaluations[evaluations['Market']=='BTTS']['Status'].eq('EXPERIMENTAL').any()
 assert entries['MatchID'].nunique()==len(entries)
 assert entries['MatchID'].nunique()==len(entries)
-assert entries['StakeMultiplier'].isin([0.5, 1.0]).all()
+assert entries['StakeMultiplier'].eq(1.0).all()
+assert entries['ConservativeExpectedValue'].ge(0.0).all()
 assert entries['Status'].eq('OPERAR').all()
 print('TESTE V28 OK')
 print(entries[['Home','Away','Selection','Odd','DecisionProbability','ExpectedValue','Status']].to_string(index=False))

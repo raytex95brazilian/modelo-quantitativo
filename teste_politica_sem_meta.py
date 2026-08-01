@@ -34,19 +34,16 @@ entries, readings, evaluations, diagnostics = analyze_games(
 )
 
 assert len(diagnostics[diagnostics["Situação"].eq("ERRO")]) == 0
-assert len(entries) == 5, entries[["Home", "Away", "Selection", "ExpectedValue"]]
-assert entries["MatchID"].nunique() == 5
+positive_matches = evaluations.loc[
+    evaluations["ConservativeExpectedValue"].ge(0.0), "MatchID"
+].astype(str).nunique()
+assert len(entries) == positive_matches
+assert entries["MatchID"].nunique() == len(entries)
 assert entries["Status"].eq("OPERAR").all()
-assert entries["PortfolioTier"].eq("COMPLEMENTO DE META — MEIA UNIDADE").all()
-assert entries["StakeMultiplier"].eq(0.5).all()
-assert entries["ExpectedValue"].ge(-0.15).all()
-assert {tuple(x) for x in entries[["Home", "Selection"]].to_records(index=False)} == {
-    ("Vasco", "Menos de 2,5 gols"),
-    ("Flamengo RJ", "Flamengo RJ"),
-    ("Bragantino", "Bragantino"),
-    ("Guadalajara Chivas", "Guadalajara Chivas"),
-    ("Santos Laguna", "Santos Laguna"),
-}
+assert entries["StakeMultiplier"].eq(1.0).all()
+assert entries["ConservativeExpectedValue"].ge(0.0).all()
+assert not entries["PortfolioTier"].astype(str).str.contains("COMPLEMENTO", case=False).any()
+assert not evaluations["Reason"].astype(str).str.contains("meta semanal|piso rígido|-15%", case=False, regex=True).any()
 assert {"ModelSportsDifference", "MaximumComponentDisagreement", "DisagreementLevel"}.issubset(evaluations.columns)
 
 context = standings_context(matches, "MEX", pd.Timestamp("2026-07-25").date(), "Guadalajara Chivas", "Juarez")
@@ -59,6 +56,8 @@ assert "Guadalajara Chivas 18º" not in summary
 assert "Amostra histórica da faixa" in summary
 assert "confiança estatística" in summary
 assert "Desacordo entre componentes" in summary
+assert "meta de cinco seleções" not in summary
+assert "complementos até o piso rígido" not in summary
 assert "mínima de admissibilidade da meta" not in summary
 assert "equilíbrio individual" not in summary
 assert "AGUARDAR PREÇO" not in summary
@@ -66,5 +65,5 @@ assert "PREÇO FORTE" not in summary
 assert "ELEGÍVEL PARA META" not in summary
 assert "RESERVA" not in summary
 
-print("TESTE META MÍNIMA 5: OK")
+print("TESTE POLÍTICA SEM META MÍNIMA: OK")
 print(entries[["Home", "Away", "Selection", "Odd", "ExpectedValue", "PortfolioTier", "Stake"]].to_string(index=False))

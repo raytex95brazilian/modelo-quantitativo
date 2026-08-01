@@ -4,7 +4,7 @@ from tex_importador_programacao import IMPORTER_API_VERSION, infer_league_and_te
 from tex_operacional_core import latest_team_catalog
 from tex_v25_core import LEAGUES, normalize_zip
 
-assert IMPORTER_API_VERSION == "28.3.9"
+assert IMPORTER_API_VERSION == "28.3.14"
 
 root = Path(__file__).resolve().parent
 matches = normalize_zip(root / "data" / "TEX_V22_DADOS_24_LIGAS.zip", include_incomplete_annual_2026=True)

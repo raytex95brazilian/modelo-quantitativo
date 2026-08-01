@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pandas as pd
 
-OPERATION_API_VERSION = "28.3.11"
+OPERATION_API_VERSION = "28.3.12"
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,30 @@ def build_operational_outputs(
     out["StakeMultiplier"] = 0.0
     out["PortfolioTier"] = ""
 
+    def _current_reason(row: pd.Series) -> str:
+        filter_status_value = str(row.get("Filter2018Status", "REPROVADO") or "REPROVADO")
+        if filter_status_value == "NÃO AVALIÁVEL":
+            return str(row.get("Filter2018Summary", "Dados insuficientes para concluir o filtro de 2018."))
+        if not bool(row.get("Filter2018Approved", False)):
+            return str(row.get("Filter2018Summary", "Evento reprovado no filtro eliminatório de 2018."))
+        if bool(row.get("FinanciallyFavorable", False)):
+            return (
+                "Evento aprovado no filtro de 2018; a cotação atual é igual ou superior à cotação mínima "
+                "calculada para esta probabilidade."
+            )
+        odd = pd.to_numeric(pd.Series([row.get("Odd")]), errors="coerce").iloc[0]
+        required = pd.to_numeric(pd.Series([row.get("RequiredOddForOperation")]), errors="coerce").iloc[0]
+        if pd.notna(odd) and pd.notna(required):
+            return (
+                f"Evento aprovado no filtro de 2018, porém a cotação atual ({float(odd):.2f}) "
+                f"está abaixo da cotação mínima para operar ({float(required):.2f})."
+            )
+        return "Evento aprovado no filtro de 2018, porém a cotação informada não apresentou valor financeiro positivo."
+
+    # Apaga justificativas herdadas da política antiga de meta semanal. Cada linha passa
+    # a explicar exclusivamente filtro, probabilidade e preço atual.
+    out["Reason"] = out.apply(_current_reason, axis=1)
+
     approved = out[out["Filter2018Approved"]].copy()
     reading_rows: list[pd.Series] = []
     individual_rows: list[pd.Series] = []
@@ -121,10 +145,10 @@ def build_operational_outputs(
         financial_best["Status"] = "OPERAR"
         financial_best["StakeMultiplier"] = 1.0
         financial_best["Stake"] = float(bankroll) * float(unit_fraction)
-        financial_best["PortfolioTier"] = "APROVADA NO FILTRO 2018 — VALOR FINANCEIRO POSITIVO"
+        financial_best["PortfolioTier"] = "APOSTA INDIVIDUAL — MELHOR VALOR ESPERADO POSITIVO DA PARTIDA"
         financial_best["Reason"] = (
-            "Evento aprovado no filtro de 2018; este é o mercado com melhor valor esperado conservador "
-            "entre as cotações informadas para a partida."
+            "Evento aprovado no filtro de 2018; esta é a cotação com maior valor esperado final não negativo "
+            "entre os mercados informados para a partida. Não existe meta mínima nem complemento negativo."
         )
         individual_rows.append(financial_best)
         reading_rows.append(financial_best)
@@ -179,6 +203,15 @@ def build_operational_outputs(
         expected_value = joint_probability * effective_factor - 1.0
     else:
         factor = effective_factor = joint_probability = break_even = expected_value = 0.0
+
+    status_priority = {
+        "OPERAR": 0,
+        "COTAÇÃO FAVORÁVEL": 1,
+        "SEM VALOR AO PREÇO ATUAL": 2,
+        "REPROVADO NO FILTRO DE 2018": 3,
+        "NÃO AVALIÁVEL — DADOS INSUFICIENTES": 4,
+    }
+    out["StatusOrder"] = out["Status"].map(status_priority).fillna(9).astype(int)
 
     summary = MultipleSummary(
         selections=multiple,

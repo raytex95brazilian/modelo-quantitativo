@@ -39,10 +39,10 @@ EXPECTED_CORE_API = "28.1.2"
 EXPECTED_STORAGE_API = "28.3.6"
 EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.3.11"
-EXPECTED_OPERATION_API = "28.3.11"
-EXPECTED_IMPORTER_API = "28.3.9"
-INTERFACE_VERSION = "V28.3.11"
-APP_NAME = "Tex Statistics V28.3.11 — Temporadas corrigidas nas 24 ligas"
+EXPECTED_OPERATION_API = "28.3.12"
+EXPECTED_IMPORTER_API = "28.3.14"
+INTERFACE_VERSION = "V28.3.14"
+APP_NAME = "Tex Statistics V28.3.14 — Catálogo universal das 24 ligas"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -70,8 +70,9 @@ _REQUIRED_V28 = (
     "load_v28_model", "lot_fingerprint", "validate_market_odds",
 )
 _REQUIRED_OPERACIONAL = (
-    "INPUT_COLUMNS", "enrich_with_standings", "latest_team_catalog",
-    "parse_odd", "standings_context",
+    "INPUT_COLUMNS", "all_team_catalog", "enrich_with_standings",
+    "latest_team_catalog", "parse_odd", "seasonal_team_catalog",
+    "standings_context",
 )
 _REQUIRED_FILTER_2018 = ("evaluate_lot_2018", "build_lot_form_contexts")
 _REQUIRED_OPERATION_FILTERED = ("attach_filter_results", "build_operational_outputs")
@@ -169,6 +170,8 @@ validate_market_odds = getattr(_v28, "validate_market_odds", None)
 INPUT_COLUMNS = getattr(_operacional, "INPUT_COLUMNS", [])
 enrich_with_standings = getattr(_operacional, "enrich_with_standings", None)
 latest_team_catalog = getattr(_operacional, "latest_team_catalog", None)
+all_team_catalog = getattr(_operacional, "all_team_catalog", None)
+seasonal_team_catalog = getattr(_operacional, "seasonal_team_catalog", None)
 parse_odd = getattr(_operacional, "parse_odd", None)
 standings_context = getattr(_operacional, "standings_context", None)
 evaluate_lot_2018 = getattr(_filtro2018, "evaluate_lot_2018", None)
@@ -187,32 +190,217 @@ def build_ai_summary(
     diagnostics: pd.DataFrame,
     matches,
 ) -> str:
-    """Gera o resumo com identificação inequívoca da interface e do motor."""
-    if not callable(_core_build_ai_summary):
-        raise RuntimeError("O núcleo V28.1.2 não disponibilizou build_ai_summary.")
-    original = _core_build_ai_summary(games, readings, evaluations, diagnostics, matches)
-    original_lines = str(original).splitlines()
-    body = original_lines[1:] if original_lines else []
-    approved = 0
-    rejected = 0
-    not_evaluable = 0
-    if not evaluations.empty and "Filter2018Approved" in evaluations:
-        columns = ["InputID", "Filter2018Approved"]
-        if "Filter2018Status" in evaluations.columns:
-            columns.append("Filter2018Status")
-        by_game = evaluations[columns].drop_duplicates("InputID")
-        approved = int(by_game["Filter2018Approved"].fillna(False).astype(bool).sum())
-        if "Filter2018Status" in by_game.columns:
-            not_evaluable = int(by_game["Filter2018Status"].fillna("").astype(str).eq("NÃO AVALIÁVEL").sum())
-        rejected = int(len(by_game) - approved - not_evaluable)
-    return "\n".join([
+    """Gera um relatório coerente com a política operacional vigente.
+
+    O relatório não reutiliza a política histórica de meta semanal do núcleo.
+    Ele descreve os resultados já processados pelo filtro eliminatório de 2018
+    e pela camada estatística/financeira atual.
+    """
+    def _num(value, default=float("nan")) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        return number
+
+    def _pct_text(value) -> str:
+        number = _num(value)
+        return "indisponível" if pd.isna(number) else f"{number:.1%}"
+
+    def _odd_text(value) -> str:
+        number = _num(value)
+        return "indisponível" if pd.isna(number) else f"{number:.2f}"
+
+    def _form_text(records) -> str:
+        values = [str(item.get("Result", "")).strip().upper() for item in (records or [])]
+        values = [value for value in values if value]
+        return "-".join(values) if values else "sem dados"
+
+    game_frame = games.copy() if isinstance(games, pd.DataFrame) else pd.DataFrame(games or [])
+    reading_frame = readings.copy() if isinstance(readings, pd.DataFrame) else pd.DataFrame()
+    evaluation_frame = evaluations.copy() if isinstance(evaluations, pd.DataFrame) else pd.DataFrame()
+    diagnostic_frame = diagnostics.copy() if isinstance(diagnostics, pd.DataFrame) else pd.DataFrame()
+
+    approved_ids: set[str] = set()
+    rejected_ids: set[str] = set()
+    not_evaluable_ids: set[str] = set()
+    filter_by_id: dict[str, dict] = {}
+    if not evaluation_frame.empty and "InputID" in evaluation_frame.columns:
+        filter_columns = [column for column in (
+            "InputID", "Filter2018Approved", "Filter2018Status", "Filter2018Summary"
+        ) if column in evaluation_frame.columns]
+        filter_rows = evaluation_frame[filter_columns].drop_duplicates("InputID")
+        for row in filter_rows.to_dict("records"):
+            input_id = str(row.get("InputID", ""))
+            filter_by_id[input_id] = row
+            status = str(row.get("Filter2018Status", "") or "")
+            if bool(row.get("Filter2018Approved", False)):
+                approved_ids.add(input_id)
+            elif status == "NÃO AVALIÁVEL":
+                not_evaluable_ids.add(input_id)
+            else:
+                rejected_ids.add(input_id)
+
+    contexts: dict[str, dict] = {}
+    if callable(build_lot_form_contexts) and not game_frame.empty:
+        try:
+            contexts = build_lot_form_contexts(game_frame, matches) or {}
+        except Exception:
+            contexts = {}
+
+    lines = [
         "ANÁLISE PARA IA — Tex Statistics",
         f"Interface: {APP_NAME}",
         f"Motor preditivo: {CORE_DISPLAY_NAME}",
-        f"Filtro eliminatório de 2018: {approved} aprovado(s), {rejected} reprovado(s) e {not_evaluable} não avaliável(is) por falta de dados.",
-        "Jogos reprovados ou não avaliáveis permanecem calculados e salvos, mas são proibidos em apostas simples e múltiplas.",
-        *body,
-    ])
+        (
+            "Filtro eliminatório de 2018: "
+            f"{len(approved_ids)} aprovado(s), {len(rejected_ids)} reprovado(s) e "
+            f"{len(not_evaluable_ids)} não avaliável(is) por falta de dados."
+        ),
+        "Regra absoluta: jogos reprovados ou não avaliáveis são calculados e salvos, mas não podem entrar em apostas simples nem na múltipla.",
+        "Política operacional atual: não existe meta mínima de seleções; nenhuma entrada com valor esperado final negativo é adicionada; há no máximo uma aposta individual por partida.",
+        "Múltipla: somente jogos aprovados, no máximo um mercado por partida e apenas seleções com cotação financeiramente favorável.",
+        "Ambas marcam é um mercado elegível quando suas cotações foram informadas. A ausência de amostra histórica completa de odds deve permanecer visível, mas não cria uma proibição automática.",
+        "Todos os mercados com cotações completas permanecem registrados na base, inclusive quando não geram entrada.",
+        f"Partidas: {len(game_frame)} | leituras principais: {len(reading_frame)} | seleções avaliadas: {len(evaluation_frame)}",
+        "",
+        "RESUMO DOS JOGOS APROVADOS",
+    ]
+
+    approved_summary_count = 0
+    for _, game in game_frame.reset_index(drop=True).iterrows():
+        input_id = str(game.get("ID", ""))
+        if input_id not in approved_ids:
+            continue
+        approved_summary_count += 1
+        reading = reading_frame[
+            reading_frame.get("InputID", pd.Series(dtype=str)).astype(str).eq(input_id)
+        ] if not reading_frame.empty and "InputID" in reading_frame.columns else pd.DataFrame()
+        date_value = pd.to_datetime(game.get("Data"), errors="coerce")
+        date_text = date_value.strftime("%d/%m/%Y") if pd.notna(date_value) else str(game.get("Data", ""))
+        if reading.empty:
+            decision = "ANÁLISE ESTATÍSTICA INDISPONÍVEL"
+            market_text = "sem leitura principal"
+        else:
+            row = reading.iloc[0]
+            decision = str(row.get("Status", "ANÁLISE INDISPONÍVEL"))
+            selection = str(row.get("Selection", row.get("MarketName", "")))
+            market_text = (
+                f"{selection}; cotação {_odd_text(row.get('Odd'))}; "
+                f"probabilidade final {_pct_text(row.get('ConservativeProbability'))}; "
+                f"valor esperado final {_pct_text(row.get('ConservativeExpectedValue'))}"
+            )
+        lines.append(
+            f"- {game.get('Mandante', '')} x {game.get('Visitante', '')} | {game.get('Liga', '')} | "
+            f"{date_text} {str(game.get('Hora', ''))[:5]} | {decision} | {market_text}."
+        )
+    if approved_summary_count == 0:
+        lines.append("- Nenhuma partida foi aprovada no filtro de 2018 neste lote.")
+
+    multiple_rows = (
+        evaluation_frame[evaluation_frame.get("IncludedInMultiple", False).fillna(False).astype(bool)]
+        if not evaluation_frame.empty and "IncludedInMultiple" in evaluation_frame.columns
+        else pd.DataFrame()
+    )
+    lines.extend(["", "SUGESTÃO DE MÚLTIPLA"])
+    if len(multiple_rows) >= 2:
+        for _, row in multiple_rows.sort_values("InputID", kind="stable").iterrows():
+            lines.append(
+                f"- {row.get('Home', '')} x {row.get('Away', '')}: {row.get('Selection', '')}; "
+                f"cotação {_odd_text(row.get('Odd'))}; probabilidade final {_pct_text(row.get('ConservativeProbability'))}."
+            )
+        factor = pd.to_numeric(multiple_rows.get("Odd"), errors="coerce").prod()
+        joint = pd.to_numeric(multiple_rows.get("ConservativeProbability"), errors="coerce").prod()
+        lines.append(f"Fator total aproximado: {factor:.2f} | probabilidade conjunta estimada: {joint:.1%}.")
+    elif len(multiple_rows) == 1:
+        lines.append("- Apenas uma seleção favorável foi encontrada; ela permanece individual e não forma múltipla sozinha.")
+    else:
+        lines.append("- Nenhuma múltipla foi formada porque menos de duas partidas aprovadas apresentaram cotação favorável.")
+
+    lines.extend(["", "DETALHAMENTO DE TODAS AS PARTIDAS"])
+    for _, game in game_frame.reset_index(drop=True).iterrows():
+        input_id = str(game.get("ID", ""))
+        home = str(game.get("Mandante", ""))
+        away = str(game.get("Visitante", ""))
+        date_value = pd.to_datetime(game.get("Data"), errors="coerce")
+        date_text = date_value.strftime("%d/%m/%Y") if pd.notna(date_value) else str(game.get("Data", ""))
+        game_filter = filter_by_id.get(input_id, {})
+        filter_status = "APROVADO" if input_id in approved_ids else (
+            "NÃO AVALIÁVEL" if input_id in not_evaluable_ids else "REPROVADO"
+        )
+        lines.append(f"JOGO: {home} x {away} | {game.get('Liga', '')} | {date_text} {str(game.get('Hora', ''))[:5]}")
+        lines.append(
+            f"Filtro de 2018: {filter_status}. "
+            f"{str(game_filter.get('Filter2018Summary', '') or '').strip()}"
+        )
+
+        context = dict(contexts.get(input_id, {}) or {})
+        home_standing = dict(context.get("HomeStanding") or {})
+        away_standing = dict(context.get("AwayStanding") or {})
+        if home_standing.get("Available") and away_standing.get("Available"):
+            lines.append(
+                f"Classificação antes da partida: {home} {int(home_standing.get('Position', 0))}º, "
+                f"{int(home_standing.get('Points', 0))} pontos em {int(home_standing.get('Games', 0))} jogos | "
+                f"{away} {int(away_standing.get('Position', 0))}º, {int(away_standing.get('Points', 0))} pontos "
+                f"em {int(away_standing.get('Games', 0))} jogos."
+            )
+        lines.append(
+            f"Forma recente: {home} geral {_form_text(context.get('HomeOverall'))}, em casa {_form_text(context.get('HomeAtHome'))} | "
+            f"{away} geral {_form_text(context.get('AwayOverall'))}, fora {_form_text(context.get('AwayAway'))}."
+        )
+
+        reading = reading_frame[
+            reading_frame.get("InputID", pd.Series(dtype=str)).astype(str).eq(input_id)
+        ] if not reading_frame.empty and "InputID" in reading_frame.columns else pd.DataFrame()
+        if not reading.empty:
+            row = reading.iloc[0]
+            lines.append(
+                f"Leitura principal: {row.get('Selection', '')} | {row.get('Status', '')} | "
+                f"cotação {_odd_text(row.get('Odd'))} | cotação após desconto {_odd_text(row.get('EffectiveOdd'))} | "
+                f"probabilidade do modelo {_pct_text(row.get('DecisionProbability'))} | "
+                f"probabilidade final {_pct_text(row.get('ConservativeProbability'))} | "
+                f"mercado sem margem {_pct_text(row.get('MarketProbability'))} | "
+                f"probabilidade esportiva {_pct_text(row.get('RawSportsProbability'))} | "
+                f"valor esperado final {_pct_text(row.get('ConservativeExpectedValue'))}."
+            )
+            lines.append(
+                f"Amostra histórica da faixa: {int(_num(row.get('ProfileSample'), 0))}; "
+                f"acerto histórico {_pct_text(row.get('EmpiricalHitRate'))}; "
+                f"confiança {row.get('SampleConfidence', '')}; estabilidade {_pct_text(row.get('Reliability'))}."
+            )
+
+        game_evaluations = (
+            evaluation_frame[evaluation_frame["InputID"].astype(str).eq(input_id)].copy()
+            if not evaluation_frame.empty and "InputID" in evaluation_frame.columns else pd.DataFrame()
+        )
+        if not game_evaluations.empty:
+            priority = {
+                "OPERAR": 0, "COTAÇÃO FAVORÁVEL": 1, "SEM VALOR AO PREÇO ATUAL": 2,
+                "REPROVADO NO FILTRO DE 2018": 3, "NÃO AVALIÁVEL — DADOS INSUFICIENTES": 4,
+            }
+            game_evaluations["_ReportOrder"] = game_evaluations.get("Status", "").map(priority).fillna(9)
+            game_evaluations = game_evaluations.sort_values(
+                ["_ReportOrder", "ConservativeExpectedValue", "ConservativeProbability"],
+                ascending=[True, False, False], kind="stable"
+            )
+            for _, item in game_evaluations.iterrows():
+                lines.append(
+                    f"- {item.get('Selection', '')}: {item.get('Status', '')}; "
+                    f"cotação {_odd_text(item.get('Odd'))}; probabilidade final {_pct_text(item.get('ConservativeProbability'))}; "
+                    f"valor esperado final {_pct_text(item.get('ConservativeExpectedValue'))}; "
+                    f"amostra histórica {int(_num(item.get('ProfileSample'), 0))}; "
+                    f"motivo: {str(item.get('Reason', '')).strip()}"
+                )
+        lines.append("")
+
+    if not diagnostic_frame.empty and "Situação" in diagnostic_frame.columns:
+        errors = diagnostic_frame[diagnostic_frame["Situação"].astype(str).eq("ERRO")]
+        for _, row in errors.iterrows():
+            lines.append(f"ERRO: {row.get('Jogo', '')} — {row.get('Detalhe', '')}")
+    lines.append(
+        "Nota: probabilidades não garantem resultado. As decisões dependem da qualidade dos dados, da calibração e da cotação efetivamente disponível."
+    )
+    return "\n".join(lines)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -230,7 +418,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.3.11, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.3.14, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -349,7 +537,10 @@ def team_catalog(serialized: tuple[tuple[str, int, str, str], ...]):
         {"Code": code, "Season": season, "Home": home, "Away": away}
         for code, season, home, away in serialized
     ]
-    return latest_team_catalog(rows)
+    latest, seasons = latest_team_catalog(rows)
+    universal = all_team_catalog(rows)
+    by_season = seasonal_team_catalog(rows)
+    return latest, seasons, universal, by_season
 
 
 RESULT_STATE_KEYS = (
@@ -908,7 +1099,7 @@ serialized = tuple(
     (str(item["Code"]), int(item["Season"]), str(item["Home"]), str(item["Away"]))
     for item in matches
 )
-teams_by_code, season_by_code = team_catalog(serialized)
+teams_by_code, season_by_code, import_teams_by_code, teams_by_season = team_catalog(serialized)
 
 if "tex_ledger" not in st.session_state:
     try:
@@ -936,7 +1127,6 @@ if "tex_operational_config" not in st.session_state:
     st.session_state.tex_operational_config = {
         "bankroll": 1000.0,
         "unit_percent": 1.0,
-        "weekly_target": 5,
     }
 
 if "tex_bankroll_input" not in st.session_state:
@@ -954,7 +1144,6 @@ def _apply_operational_config_automatically() -> None:
     updated = {
         "bankroll": float(st.session_state.get("tex_bankroll_input", 1000.0)),
         "unit_percent": float(st.session_state.get("tex_unit_percent_input", 1.0)),
-        "weekly_target": 5,
     }
     if updated != current:
         st.session_state.tex_operational_config = updated
@@ -986,8 +1175,9 @@ with st.sidebar:
     current_operational_config = dict(st.session_state.tex_operational_config)
     bankroll = float(current_operational_config["bankroll"])
     unit_percent = float(current_operational_config["unit_percent"])
-    weekly_target = 5
-    max_entries = weekly_target  # compatibilidade com o contrato do núcleo isolado
+    # Parâmetro legado mantido apenas na assinatura do motor. A política atual não limita
+    # nem completa a quantidade de entradas.
+    max_entries = 0
 
     st.divider()
     st.caption(f"Fonte: {source}")
@@ -1501,8 +1691,10 @@ def render_bulk_import() -> None:
             else:
                 resolved = resolve_imported_matches(
                     parsed,
-                    teams_by_code=teams_by_code,
+                    teams_by_code=import_teams_by_code,
                     leagues=LEAGUES,
+                    preferred_teams_by_code=teams_by_code,
+                    teams_by_season=teams_by_season,
                 )
                 for item in resolved:
                     try:
@@ -1535,9 +1727,9 @@ def render_bulk_import() -> None:
         c2.metric("Reconhecidas automaticamente", recognized)
         c3.metric("Precisam de revisão", review)
         st.caption(
-            "A liga é inferida pelas duas equipes em conjunto. Ex.: Flamengo + São Paulo → "
-            "Brasileirão Série A; NY City + Inter Miami → EUA - MLS. Você pode corrigir "
-            "liga, nomes, data, horário ou cotações diretamente na tabela."
+            "A liga é inferida pelas duas equipes em conjunto usando o catálogo universal "
+            "de todas as temporadas das 24 ligas, com prioridade para a temporada da partida. "
+            "Você pode corrigir liga, nomes, data, horário ou cotações diretamente na tabela."
         )
 
         editable_columns = [
@@ -1606,10 +1798,20 @@ def render_bulk_import() -> None:
             # Sem a data, clubes promovidos/rebaixados reconhecidos na prévia eram
             # rejeitados no clique de gravação.
             home, home_score = resolve_team_in_league(
-                str(row.get("Mandante", "")), code, teams_by_code, match_date=game_date
+                str(row.get("Mandante", "")),
+                code,
+                import_teams_by_code,
+                match_date=game_date,
+                preferred_teams_by_code=teams_by_code,
+                teams_by_season=teams_by_season,
             )
             away, away_score = resolve_team_in_league(
-                str(row.get("Visitante", "")), code, teams_by_code, match_date=game_date
+                str(row.get("Visitante", "")),
+                code,
+                import_teams_by_code,
+                match_date=game_date,
+                preferred_teams_by_code=teams_by_code,
+                teams_by_season=teams_by_season,
             )
             if not home or home_score < 0.72:
                 errors.append(f"{label}: mandante não reconhecido em {league_name}: {row.get('Mandante', '')!r}.")

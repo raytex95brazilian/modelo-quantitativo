@@ -112,9 +112,9 @@ update_stub = types.ModuleType("tex_v25_atualizacao")
 sys.modules["tex_v25_atualizacao"] = update_stub
 
 app = importlib.import_module("app")
-assert app.INTERFACE_VERSION == "V28.3.11"
+assert app.INTERFACE_VERSION == "V28.3.14"
 assert app.EXPECTED_CORE_API == "28.1.2"
-assert app.max_entries == 5
+assert app.max_entries == 0
 
 # O topo do resultado deve listar todos os aprovados, inclusive os sem aposta simples.
 summary_games = [
@@ -154,6 +154,32 @@ assert list(summary["Partida"]) == ["Gremio x Sao Paulo", "Coritiba x Chapecoens
 assert list(summary["Resultado da análise"]) == ["OPERAR", "SEM VALOR AO PREÇO ATUAL"]
 assert abs(float(summary.iloc[0]["Probabilidade final"]) - 57.0) < 1e-9
 assert abs(float(summary.iloc[0]["Cotação justa"]) - (1.0 / 0.57)) < 1e-9
+
+report_evaluations = summary_readings.copy()
+report_evaluations["Filter2018Approved"] = True
+report_evaluations["Filter2018Status"] = "APROVADO"
+report_evaluations["Filter2018Summary"] = "Todas as regras foram atendidas."
+report_evaluations["IncludedInMultiple"] = False
+report_evaluations["Home"] = ["Gremio", "Coritiba"]
+report_evaluations["Away"] = ["Sao Paulo", "Chapecoense-SC"]
+report_evaluations["EffectiveOdd"] = report_evaluations["Odd"] * 0.98
+report_evaluations["DecisionProbability"] = report_evaluations["ConservativeProbability"]
+report_evaluations["MarketProbability"] = report_evaluations["ConservativeProbability"]
+report_evaluations["RawSportsProbability"] = report_evaluations["ConservativeProbability"]
+report_evaluations["ProfileSample"] = [0, 100]
+report_evaluations["EmpiricalHitRate"] = report_evaluations["ConservativeProbability"]
+report_evaluations["SampleConfidence"] = ["NÃO VALIDADA", "MODERADA"]
+report_evaluations["Reliability"] = [0.0, 0.8]
+report_evaluations["Reason"] = ["Cotação favorável.", "Sem valor ao preço atual."]
+report_text = app.build_ai_summary(
+    pd.DataFrame(summary_games), summary_readings, report_evaluations, pd.DataFrame(), []
+)
+assert "RESUMO DOS JOGOS APROVADOS" in report_text
+assert "não existe meta mínima" in report_text.lower()
+assert "complementos até o piso rígido" not in report_text
+assert "meta de cinco seleções" not in report_text
+assert "Ambas marcam é um mercado elegível" in report_text
+assert "Gremio x Sao Paulo" in report_text
 
 # O lote deve sobreviver à perda completa do session_state usando o backup automático.
 from tempfile import TemporaryDirectory
@@ -362,10 +388,10 @@ assert abs(float(catalog[catalog["Grupo do mercado"].eq("1X2")].iloc[0]["Margem 
 config = json.loads(str(analysis.iloc[0]["Configuração JSON"]))
 assert config["api_nucleo"] == "28.1.2"
 assert config["percentual_unidade"] == 0.01
-assert catalog.iloc[0]["Versão da interface"] == "V28.3.11"
-assert analysis.iloc[0]["Versão da interface"] == "V28.3.11"
+assert catalog.iloc[0]["Versão da interface"] == "V28.3.14"
+assert analysis.iloc[0]["Versão da interface"] == "V28.3.14"
 summary_text = app.build_ai_summary(games, evaluations.sort_values(["MatchID", "StatusOrder"]).drop_duplicates("MatchID"), evaluations, diagnostics, matches)
 for forbidden in ("AGUARDAR PREÇO", "PREÇO FORTE", "ELEGÍVEL PARA META", "RESERVA", "mínima de admissibilidade da meta", "equilíbrio individual"):
     assert forbidden not in summary_text, forbidden
 
-print("TESTE DO APP SEM INTERFACE GRÁFICA V28.3.11: OK")
+print("TESTE DO APP SEM INTERFACE GRÁFICA V28.3.14: OK")

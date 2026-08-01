@@ -58,6 +58,11 @@ evaluations = pd.DataFrame([
         "DecisionProbability": 0.65, "Reliability": 0.72, "Odd": 1.75, "EffectiveOdd": 1.715,
     },
     {
+        "InputID": "aprovado-sem-valor", "MatchID": "m4", "WeekID": "2026-30", "Market": "1X2", "Side": "D",
+        "Selection": "Empate 4", "ConservativeExpectedValue": -0.01, "ConservativeProbability": 0.40,
+        "DecisionProbability": 0.41, "Reliability": 0.70, "Odd": 2.40, "EffectiveOdd": 2.352,
+    },
+    {
         "InputID": "reprovado", "MatchID": "m3", "WeekID": "2026-30", "Market": "1X2", "Side": "H",
         "Selection": "Mandante 3", "ConservativeExpectedValue": 0.50, "ConservativeProbability": 0.80,
         "DecisionProbability": 0.82, "Reliability": 0.90, "Odd": 2.00, "EffectiveOdd": 1.96,
@@ -66,6 +71,7 @@ evaluations = pd.DataFrame([
 filters = pd.DataFrame([
     {"InputID": "aprovado-1", "Filter2018Approved": True, "Filter2018Status": "APROVADO", "Filter2018Summary": "ok"},
     {"InputID": "aprovado-2", "Filter2018Approved": True, "Filter2018Status": "APROVADO", "Filter2018Summary": "ok"},
+    {"InputID": "aprovado-sem-valor", "Filter2018Approved": True, "Filter2018Status": "APROVADO", "Filter2018Summary": "ok"},
     {"InputID": "reprovado", "Filter2018Approved": False, "Filter2018Status": "REPROVADO", "Filter2018Summary": "não"},
 ])
 merged = attach_filter_results(evaluations, filters)
@@ -73,6 +79,9 @@ entries, readings, all_rows, multiple = build_operational_outputs(merged, bankro
 assert len(all_rows) == len(evaluations)
 assert "reprovado" not in set(entries.get("InputID", []))
 assert "reprovado" not in set(multiple.selections.get("InputID", []))
+assert "aprovado-sem-valor" not in set(entries.get("InputID", []))
+assert "aprovado-sem-valor" not in set(multiple.selections.get("InputID", []))
+assert readings[readings["InputID"].eq("aprovado-sem-valor")].iloc[0]["Status"] == "SEM VALOR AO PREÇO ATUAL"
 assert len(entries) == 2
 assert len(multiple.selections) == 2
 # Na primeira partida, a simples prioriza o maior valor financeiro; a múltipla prioriza a maior probabilidade.

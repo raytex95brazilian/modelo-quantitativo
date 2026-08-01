@@ -1,0 +1,33 @@
+{
+  "versao": "28.3.14",
+  "ligas": 24,
+  "vinculos_liga_equipe": 888,
+  "equipes_canonicas_distintas": 783,
+  "aliases_explicitos": 163,
+  "contagem_por_liga": {
+    "BRA": 38,
+    "ARG": 45,
+    "USA": 31,
+    "MEX": 25,
+    "JPN": 32,
+    "CHN": 45,
+    "SWE": 36,
+    "NOR": 31,
+    "FIN": 23,
+    "IRL": 23,
+    "E0": 37,
+    "E1": 52,
+    "SP1": 33,
+    "SP2": 66,
+    "I1": 39,
+    "I2": 59,
+    "D1": 31,
+    "D2": 41,
+    "F1": 36,
+    "P1": 34,
+    "N1": 29,
+    "B1": 29,
+    "T1": 43,
+    "G1": 30
+  }
+}

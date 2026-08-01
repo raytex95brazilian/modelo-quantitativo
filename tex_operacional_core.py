@@ -185,6 +185,47 @@ def season_label_for_match(
     return f"{season}/{str(season + 1)[-2:]}"
 
 
+def all_team_catalog(matches: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Lista todos os nomes canônicos já observados em cada uma das 24 ligas.
+
+    Este catálogo é destinado ao importador. Diferentemente do seletor manual,
+    ele não descarta clubes de temporadas anteriores, o que evita bloqueios de
+    promovidos, rebaixados e equipes que retornam à divisão depois de alguns anos.
+    """
+    frame = pd.DataFrame(
+        [(m.get("Code"), m.get("Home"), m.get("Away")) for m in matches],
+        columns=["Code", "Home", "Away"],
+    )
+    teams: dict[str, list[str]] = {}
+    for code in LEAGUES:
+        subset = frame[frame["Code"].eq(code)]
+        names = sorted(
+            {name.strip() for name in subset["Home"].dropna().astype(str) if name.strip()}
+            | {name.strip() for name in subset["Away"].dropna().astype(str) if name.strip()}
+        )
+        teams[code] = names
+    return teams
+
+
+def seasonal_team_catalog(matches: list[dict[str, Any]]) -> dict[str, dict[int, list[str]]]:
+    """Organiza os nomes canônicos por liga e temporada para priorização temporal."""
+    frame = pd.DataFrame(
+        [(m.get("Code"), m.get("Season"), m.get("Home"), m.get("Away")) for m in matches],
+        columns=["Code", "Season", "Home", "Away"],
+    )
+    frame["Season"] = pd.to_numeric(frame["Season"], errors="coerce")
+    catalog: dict[str, dict[int, list[str]]] = {code: {} for code in LEAGUES}
+    for code in LEAGUES:
+        subset = frame[frame["Code"].eq(code)].dropna(subset=["Season"])
+        for season, group in subset.groupby("Season"):
+            names = sorted(
+                {name.strip() for name in group["Home"].dropna().astype(str) if name.strip()}
+                | {name.strip() for name in group["Away"].dropna().astype(str) if name.strip()}
+            )
+            catalog[code][int(season)] = names
+    return catalog
+
+
 def latest_team_catalog(matches: list[dict[str, Any]]) -> tuple[dict[str, list[str]], dict[str, int]]:
     """Lista os times da temporada mais recente encontrada em cada liga."""
     frame = pd.DataFrame(

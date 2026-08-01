@@ -53,15 +53,15 @@ MARKET_DEFINITIONS = {
 @dataclass(frozen=True)
 class V28Config:
     unit_fraction: float = 0.01
-    weekly_target: int = 5
+    weekly_target: int = 0  # compatibilidade; não existe meta mínima na política atual
     min_odd: float = 1.20
     max_odd: float = 3.00
     price_haircut: float = 0.02
     strong_price_ev: float = 0.0
     weekly_portfolio_ev_floor: float = 0.0
-    fallback_min_ev: float = -0.15
-    near_conservative_ev: float = -0.15
-    fallback_stake_fraction: float = 0.50
+    fallback_min_ev: float = 0.0  # compatibilidade; complementos com EV negativo são proibidos
+    near_conservative_ev: float = 0.0
+    fallback_stake_fraction: float = 1.0
     minimum_profile_sample: int = 100
     wilson_z: float = 1.2815515655446004
 
@@ -247,8 +247,8 @@ def lot_fingerprint(
 ) -> str:
     """Hash determinístico do lote e dos parâmetros que alteram a análise.
 
-    Além das partidas e cotações, inclui banca, percentual da unidade e limite
-    semanal quando esses valores são informados. Assim, um resultado calculado
+    Além das partidas e cotações, inclui banca, percentual da unidade e o campo
+    legado max_entries quando informado. Esse campo não controla a política atual. Assim, um resultado calculado
     com parâmetros antigos nunca permanece válido na interface.
     """
     records: list[dict[str, Any]] = []
@@ -330,8 +330,9 @@ def _complete_odds(row: pd.Series, columns: list[str]) -> list[float] | None:
 
 
 def _experimental_btts_probability(market_probability: float, raw_probability: float) -> float:
-    # BTTS permanece visível, porém fora da carteira validada porque a base histórica
-    # não contém odds completas desse mercado. A probabilidade é apenas diagnóstica.
+    # A base histórica não contém odds completas de BTTS. Por isso a probabilidade
+    # usa combinação complementar; a camada operacional ainda pode considerá-la
+    # quando o filtro de 2018 for aprovado e o preço apresentar EV final não negativo.
     return float(np.clip(0.65 * market_probability + 0.35 * raw_probability, 0.01, 0.99))
 
 
@@ -390,35 +391,23 @@ def _evaluate_group(
             and str(profile["Confidence"]) in {"MODERADA", "FORTE"}
         )
 
-        if not validated:
-            status = "EXPERIMENTAL"
-            reason = (
-                "Ambas marcam é analisado como sinal complementar, mas não entra automaticamente "
-                "na carteira porque não há histórico completo de cotações para validação financeira equivalente."
-            )
-        elif not in_odd_range:
-            status = "FORA DA FAIXA"
-            reason = f"Cotação efetiva fora da faixa testada ({cfg.min_odd:.2f} a {cfg.max_odd:.2f})."
-        elif not sufficient_profile:
-            status = "AMOSTRA INSUFICIENTE"
-            reason = (
-                f"Amostra histórica da faixa insuficiente ou instável: {profile_sample} registros; "
-                f"confiança estatística {profile['Confidence']}."
-            )
-        elif conservative_expected_value >= cfg.strong_price_ev:
-            status = "CANDIDATA PRINCIPAL"
-            reason = (
-                "A cotação informada atende ao critério principal da análise atual após o desconto operacional de 2%."
-            )
-        elif conservative_expected_value >= cfg.fallback_min_ev:
-            status = "CANDIDATA DE COMPLEMENTO"
-            reason = (
-                "A cotação informada atende ao piso rígido do complemento semanal e só pode ser selecionada "
-                "por ranking, com meia unidade."
-            )
+        if conservative_expected_value >= 0.0:
+            status = "COTAÇÃO FAVORÁVEL"
+            if not validated:
+                reason = (
+                    "Ambas marcam usa uma probabilidade complementar porque a base não contém histórico completo de odds; "
+                    "a seleção continua elegível pela política atual quando o filtro de 2018 for aprovado e o valor esperado final não for negativo."
+                )
+            else:
+                reason = "A cotação informada apresenta valor esperado final não negativo após o desconto operacional de 2%."
         else:
-            status = "DESCARTAR"
-            reason = "A cotação informada não atende ao piso operacional desta análise."
+            status = "SEM VALOR AO PREÇO ATUAL"
+            if not validated:
+                reason = (
+                    "Ambas marcam foi calculado e armazenado, mas a cotação atual não oferece valor esperado final não negativo."
+                )
+            else:
+                reason = "A cotação informada está abaixo do preço mínimo exigido pela probabilidade final."
 
         model_sports_difference = probability - raw_probability
         model_market_difference = probability - market_probability
@@ -520,12 +509,10 @@ def analyze_games(
     existing_week_counts: dict[str, int] | None = None,
     existing_match_ids: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Analisa todos os mercados e monta a carteira semanal por ranking.
+    """Calcula todos os mercados informados sem impor quantidade mínima de entradas.
 
-    A política operacional busca cinco seleções por semana, no máximo uma por
-    partida. A decisão é fechada com as cotações informadas no lote: primeiro usa
-    EV conservador não negativo e, se faltarem jogos, completa por ranking até o
-    piso rígido de -15%, com meia unidade. Não existe estado de espera por cotação.
+    A seleção operacional definitiva é aplicada depois pelo filtro eliminatório de
+    2018. Este núcleo nunca completa quantidade com valor esperado negativo.
     """
     if games.empty:
         empty = pd.DataFrame()
@@ -535,11 +522,9 @@ def analyze_games(
         raise ValueError("A banca deve ser um número não negativo.")
     if not math.isfinite(float(unit_fraction)) or not 0.0 < float(unit_fraction) <= 0.02:
         raise ValueError("A unidade fixa deve ser maior que 0% e no máximo 2% da banca.")
-    try:
-        target = int(max_entries)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("A meta semanal deve ser um número inteiro igual ou superior a 5.") from exc
-    target = max(5, target)
+    # max_entries é aceito apenas para compatibilidade com chamadas antigas e não
+    # limita nem completa a quantidade de oportunidades.
+    _ = max_entries
     registered_by_week: dict[str, int] = {}
     for week, count in (existing_week_counts or {}).items():
         parsed_count = int(count)
@@ -585,7 +570,7 @@ def analyze_games(
                 item["Bookmaker"] = clean_text(row.get("Casa de apostas")) or "Não informada"
             diagnostics.append({
                 "Jogo": f"{home} x {away}", "Liga": LEAGUES[code], "Situação": "ANALISADO",
-                "Detalhe": f"{len(evaluations)-start} seleções avaliadas; meta semanal de {target}, usando 1X2 e gols, uma seleção por jogo."
+                "Detalhe": f"{len(evaluations)-start} seleções avaliadas; sem meta mínima e sem complemento com valor esperado negativo."
             })
         except Exception as exc:
             diagnostics.append({
@@ -599,107 +584,59 @@ def analyze_games(
         empty = pd.DataFrame()
         return empty, empty, empty, diagnostics_frame
 
-    # Política semanal: uma seleção por partida e meta mínima de cinco entradas.
-    # Faixa principal: EV conservador não negativo, com uma unidade.
-    # Complemento: somente quando faltam jogos para a meta, piso rígido de -15% e meia unidade.
-    eligible = all_evaluations[
-        all_evaluations["ValidatedMarket"].eq(True)
-        & all_evaluations["StatusBase"].isin(["CANDIDATA PRINCIPAL", "CANDIDATA DE COMPLEMENTO"])
-        & ~all_evaluations["MatchID"].astype(str).isin(registered_matches)
-        & all_evaluations["ProfileSample"].ge(cfg.minimum_profile_sample)
-        & all_evaluations["SampleConfidence"].isin(["MODERADA", "FORTE"])
-        & all_evaluations["EffectiveOdd"].between(cfg.min_odd, cfg.max_odd)
-    ].copy()
-    best_per_match = (
-        eligible.sort_values(
-            ["MatchID", "ConservativeExpectedValue", "DecisionProbability"],
-            ascending=[True, False, False],
-        ).drop_duplicates("MatchID")
+    # Política-base sem meta mínima. A camada posterior do filtro de 2018 é quem
+    # decide quais partidas podem entrar no universo operacional.
+    all_evaluations["Status"] = np.where(
+        all_evaluations["ConservativeExpectedValue"].ge(0.0),
+        "COTAÇÃO FAVORÁVEL",
+        "SEM VALOR AO PREÇO ATUAL",
+    )
+    all_evaluations["Stake"] = 0.0
+    all_evaluations["StakeMultiplier"] = 0.0
+    all_evaluations["PortfolioTier"] = ""
+    all_evaluations["Reason"] = np.where(
+        all_evaluations["ConservativeExpectedValue"].ge(0.0),
+        "Cotação financeiramente favorável; a partida ainda depende da aprovação no filtro de 2018.",
+        "Cotação sem valor esperado final não negativo ao preço atual.",
     )
 
-    weekly_entries: list[pd.DataFrame] = []
-    for week_id, candidates in best_per_match.groupby("WeekID", sort=True):
-        already_registered = registered_by_week.get(str(week_id), 0)
-        needed = max(0, target - already_registered)
-        if needed <= 0:
-            continue
-        ordered = candidates.sort_values(
-            ["ConservativeExpectedValue", "DecisionProbability", "Reliability"],
-            ascending=[False, False, False],
-        )
-        principal = ordered[
-            ordered["ConservativeExpectedValue"].ge(cfg.strong_price_ev)
-        ].head(needed).copy()
-        if not principal.empty:
-            principal["PortfolioTier"] = "EV CONSERVADOR NÃO NEGATIVO"
-            principal["StakeMultiplier"] = 1.0
-        remaining = needed - len(principal)
-        selected = principal
-        if remaining > 0:
-            used_matches = set(principal.get("MatchID", pd.Series(dtype=str)).astype(str))
-            complement = ordered[
-                ~ordered["MatchID"].astype(str).isin(used_matches)
-                & ordered["ConservativeExpectedValue"].ge(cfg.fallback_min_ev)
-            ].head(remaining).copy()
-            if not complement.empty:
-                complement["PortfolioTier"] = "COMPLEMENTO DE META — MEIA UNIDADE"
-                complement["StakeMultiplier"] = cfg.fallback_stake_fraction
-                selected = pd.concat([principal, complement], ignore_index=False)
-        if not selected.empty:
-            weekly_entries.append(selected)
-
+    favorable = all_evaluations[
+        all_evaluations["ConservativeExpectedValue"].ge(0.0)
+        & ~all_evaluations["MatchID"].astype(str).isin(registered_matches)
+    ].copy()
     entries = (
-        pd.concat(weekly_entries, ignore_index=False)
-        if weekly_entries else best_per_match.iloc[0:0].copy()
+        favorable.sort_values(
+            ["MatchID", "ConservativeExpectedValue", "ConservativeProbability", "Reliability"],
+            ascending=[True, False, False, False],
+        ).drop_duplicates("MatchID")
+        if not favorable.empty else favorable
     )
     if not entries.empty:
         entries["Rank"] = entries.groupby("WeekID")["ConservativeExpectedValue"].rank(
             method="first", ascending=False
         ).astype(int)
         entries["Status"] = "OPERAR"
-        entries["Stake"] = unit_value * entries["StakeMultiplier"].astype(float)
-        entries["Reason"] = np.where(
-            entries["PortfolioTier"].eq("EV CONSERVADOR NÃO NEGATIVO"),
-            "Selecionada entre as prioridades da semana com EV conservador não negativo; uma seleção por partida.",
-            "Selecionada apenas para completar a meta semanal, dentro do piso rígido de -15%; exposição reduzida para meia unidade.",
-        )
+        entries["StakeMultiplier"] = 1.0
+        entries["Stake"] = unit_value
+        entries["PortfolioTier"] = "MELHOR VALOR ESPERADO POSITIVO DA PARTIDA"
+        entries["Reason"] = "Melhor valor esperado final não negativo da partida; nenhuma meta mínima é aplicada."
 
     selected_keys = set(zip(entries.get("MatchID", []), entries.get("Side", [])))
-    selected_tiers = {
-        (str(row.MatchID), str(row.Side)): (str(row.PortfolioTier), float(row.StakeMultiplier))
-        for row in entries.itertuples(index=False)
-    } if not entries.empty else {}
     for idx, row in all_evaluations.iterrows():
-        key = (str(row["MatchID"]), str(row["Side"]))
-        if key in selected_keys:
-            tier, multiplier = selected_tiers[key]
-            all_evaluations.at[idx, "Status"] = "OPERAR"
-            all_evaluations.at[idx, "PortfolioTier"] = tier
-            all_evaluations.at[idx, "StakeMultiplier"] = multiplier
-            all_evaluations.at[idx, "Stake"] = unit_value * multiplier
-            all_evaluations.at[idx, "Reason"] = (
-                "Selecionada com EV conservador não negativo."
-                if tier == "EV CONSERVADOR NÃO NEGATIVO"
-                else "Selecionada para completar a meta semanal, dentro do piso rígido de -15%, com meia unidade."
-            )
-        elif row["StatusBase"] in {"CANDIDATA PRINCIPAL", "CANDIDATA DE COMPLEMENTO"}:
-            all_evaluations.at[idx, "Status"] = "NÃO SELECIONADA"
-            all_evaluations.at[idx, "Stake"] = 0.0
-            if str(row["MatchID"]) in registered_matches:
-                all_evaluations.at[idx, "Reason"] = "Esta partida já possui uma aposta registrada; nenhuma nova entrada foi criada."
-            elif registered_by_week.get(str(row["WeekID"]), 0) >= target:
-                all_evaluations.at[idx, "Reason"] = f"A meta semanal de {target} já foi atingida; esta seleção não entrou na carteira."
-            else:
-                all_evaluations.at[idx, "Reason"] = "Não entrou na carteira final por ficar atrás de outra seleção da mesma partida ou do ranking semanal."
+        if (row.get("MatchID"), row.get("Side")) in selected_keys:
+            match = entries[
+                entries["MatchID"].eq(row.get("MatchID")) & entries["Side"].eq(row.get("Side"))
+            ].iloc[0]
+            for column in ("Status", "StakeMultiplier", "Stake", "PortfolioTier", "Reason"):
+                all_evaluations.at[idx, column] = match[column]
 
-    # Uma leitura experimental nunca deve ocultar um mercado financeiramente validado.
-    order = {"OPERAR": 0, "NÃO SELECIONADA": 1, "CANDIDATA PRINCIPAL": 2,
-             "CANDIDATA DE COMPLEMENTO": 3, "DESCARTAR": 5,
-             "AMOSTRA INSUFICIENTE": 6, "FORA DA FAIXA": 7, "EXPERIMENTAL": 8}
-    all_evaluations["StatusOrder"] = all_evaluations["Status"].map(order).fillna(9)
+    status_order = {"OPERAR": 0, "COTAÇÃO FAVORÁVEL": 1, "SEM VALOR AO PREÇO ATUAL": 2}
+    all_evaluations["StatusOrder"] = all_evaluations["Status"].map(status_order).fillna(9)
     readings = (
-        all_evaluations.sort_values(["MatchID","StatusOrder","ExpectedValue","DecisionProbability"], ascending=[True,True,False,False])
-        .drop_duplicates("MatchID").reset_index(drop=True)
+        all_evaluations.sort_values(
+            ["MatchID", "StatusOrder", "ConservativeExpectedValue", "ConservativeProbability"],
+            ascending=[True, True, False, False],
+        ).drop_duplicates("MatchID").reset_index(drop=True)
     )
     return entries.reset_index(drop=True), readings, all_evaluations.reset_index(drop=True), diagnostics_frame
 
@@ -753,8 +690,8 @@ def build_ai_summary(
         f"RESUMO PARA ANÁLISE — {APP_NAME}",
         "Arquitetura: mercado sem margem, modelo dinâmico de gols e árvores regularizadas, com avaliação fora da amostra.",
         "Protocolo: desconto operacional de 2% na cotação, probabilidade conservadora baseada na faixa histórica e no máximo uma seleção por jogo.",
-        "Política semanal: meta de cinco seleções; EV conservador não negativo usa uma unidade e complementos até o piso rígido de -15% usam meia unidade.",
-        "Ambas marcam é exibido como análise complementar e não entra automaticamente na carteira validada por ausência de histórico completo de cotações.",
+        "Política operacional: não existe meta mínima; nenhuma seleção com valor esperado final negativo é adicionada e há no máximo uma entrada por partida.",
+        "Ambas marcam permanece identificado como probabilidade complementar no motor, mas é elegível na camada operacional quando o filtro de 2018 é aprovado e a cotação é favorável.",
         f"Partidas: {len(games)} | leituras principais: {len(readings)} | seleções avaliadas: {len(evaluations)}",
         "",
     ]

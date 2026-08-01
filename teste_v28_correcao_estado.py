@@ -67,7 +67,7 @@ vasco = {
 games = pd.DataFrame([athletico, santos, vasco], columns=INPUT_COLUMNS)
 
 # 1) A linha real da Pixbet deve ser aceita e normalizada corretamente.
-assert V28_CFG.max_entries == 5
+assert V28_CFG.max_entries == 0
 overround = validate_market_odds("1X2", [1.99, 3.24, 3.87])
 assert 1.069 < overround < 1.070
 
@@ -134,41 +134,39 @@ expected_margin = sum(1.0 / odd for odd in [1.99, 3.24, 3.87]) - 1.0
 assert ath_market["MarketMargin"].nunique() == 1
 assert abs(float(ath_market.iloc[0]["MarketMargin"]) - expected_margin) < 1e-12
 
-# Valores antigos abaixo de cinco são automaticamente elevados para a meta mínima de cinco.
+# max_entries não impõe quantidade mínima nem força complementos.
 legacy_entries, _, _, _ = analyze_games(games, matches, model, 1000, 0.01, 0)
 assert len(legacy_entries) <= len(games)
 
 # 5) Leitura experimental não pode ultrapassar mercado validado na leitura principal.
 assert not readings["Status"].eq("EXPERIMENTAL").any(), readings[["InputID", "Status", "Selection"]].to_string(index=False)
 
-# 6) Apostas já registradas precisam consumir o limite da semana, inclusive em outro lote.
+# 6) A contagem de apostas da semana não cria teto nem meta; somente o ID já registrado
+# pode impedir duplicação no núcleo de compatibilidade.
 permissive_cfg = V28Config(
     unit_fraction=0.01,
-    weekly_target=5,
+    weekly_target=0,
     strong_price_ev=0.0,
     weekly_portfolio_ev_floor=0.0,
-    fallback_min_ev=-1.0,
-    near_conservative_ev=-1.0,
+    fallback_min_ev=0.0,
+    near_conservative_ev=0.0,
     minimum_profile_sample=0,
 )
 open_entries, _, _, _ = analyze_games(
-    games, matches, model, 1000, 0.01, 5, cfg=permissive_cfg
+    games, matches, model, 1000, 0.01, 0, cfg=permissive_cfg
 )
-blocked_entries, _, blocked_evaluations, _ = analyze_games(
+week_count_entries, _, week_count_evaluations, _ = analyze_games(
     games,
     matches,
     model,
     1000,
     0.01,
-    5,
+    0,
     cfg=permissive_cfg,
-    existing_week_counts={"2026-30": 5},
+    existing_week_counts={"2026-30": 999},
 )
-assert not open_entries.empty
-assert blocked_entries.empty
-qualified_reserves = blocked_evaluations[blocked_evaluations["StatusBase"].isin(["CANDIDATA PRINCIPAL", "CANDIDATA DE COMPLEMENTO"])]
-assert qualified_reserves["Status"].eq("NÃO SELECIONADA").all()
-assert qualified_reserves["Reason"].str.contains("já foi atingida", regex=False).all()
+assert set(week_count_entries.get("MatchID", []).astype(str) if "MatchID" in week_count_entries else []) == set(open_entries.get("MatchID", []).astype(str) if "MatchID" in open_entries else [])
+assert not week_count_evaluations["Reason"].astype(str).str.contains("meta semanal|já foi atingida", case=False, regex=True).any()
 
 match_blocked_entries, _, match_blocked_evaluations, _ = analyze_games(
     games,
@@ -183,14 +181,10 @@ match_blocked_entries, _, match_blocked_evaluations, _ = analyze_games(
 assert not match_blocked_entries["MatchID"].astype(str).eq(
     "BRA|2026-07-25|Athletico-PR|Internacional"
 ).any()
-blocked_match_rows = match_blocked_evaluations[
-    match_blocked_evaluations["MatchID"].astype(str).eq(
-        "BRA|2026-07-25|Athletico-PR|Internacional"
-    )
-    & match_blocked_evaluations["StatusBase"].isin(["CANDIDATA PRINCIPAL", "CANDIDATA DE COMPLEMENTO"])
-]
-assert blocked_match_rows["Status"].eq("NÃO SELECIONADA").all()
-assert blocked_match_rows["Reason"].str.contains("já possui uma aposta", regex=False).all()
+assert not match_blocked_entries["MatchID"].astype(str).eq(
+    "BRA|2026-07-25|Athletico-PR|Internacional"
+).any()
+assert not match_blocked_evaluations["Reason"].astype(str).str.contains("completar a meta|-15%", case=False, regex=True).any()
 
-print("TESTE V28.1.5.12 — ESTADO, ISOLAMENTO, COTAÇÕES E META SEMANAL: OK")
+print("TESTE V28.3.12 — ESTADO, ISOLAMENTO, COTAÇÕES E POLÍTICA SEM META: OK")
 print(evaluations[evaluations["Market"].eq("1X2")][["InputID", "Home", "Away", "Side", "Odd", "MarketProbability"]].to_string(index=False))
