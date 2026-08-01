@@ -35,13 +35,13 @@ _operacao_filtrada = _load_required_module("tex_operacao_filtrada")
 _importador = _load_required_module("tex_importador_programacao")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.3.0"
+EXPECTED_STORAGE_API = "28.3.1"
 EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.2.0"
 EXPECTED_OPERATION_API = "28.2.0"
 EXPECTED_IMPORTER_API = "28.3.0"
-INTERFACE_VERSION = "V28.3.0"
-APP_NAME = "Tex Statistics V28.3.0 — Importação inteligente de jogos e cotações 1X2"
+INTERFACE_VERSION = "V28.3.2"
+APP_NAME = "Tex Statistics V28.3.2 — Identificação completa das oportunidades"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -222,7 +222,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.3.0, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.3.2, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -1003,7 +1003,7 @@ st.caption(
 _ = games()
 
 # Migração automática: lotes criados nas versões anteriores podem existir apenas em
-# entrada_jogos. Ao abrir a V28.3.0, todas as odds desse lote são copiadas/atualizadas
+# entrada_jogos. Ao abrir a V28.3.2, todas as odds desse lote são copiadas/atualizadas
 # em catalogo_odds imediatamente, sem exigir o clique em ANALISAR TODO O LOTE.
 if games() and google_configurado(st.secrets) and not st.session_state.get("tex_catalog_backfill_done"):
     try:
@@ -1860,12 +1860,27 @@ else:
                     f"{saved_analysis} probabilidade(s) novas."
                 )
                 st.session_state.pop("tex_analysis_autosave_error", None)
+                st.session_state.pop("tex_analysis_autosave_error_details", None)
             except Exception as exc:
-                st.session_state.tex_analysis_autosave_error = (
-                    "A análise permaneceu na tela, mas o salvamento automático na planilha falhou: "
-                    f"{exc}. A versão atual grava em lote e tenta novamente automaticamente em erros de quota. "
-                    "Caso a quota do Google ainda esteja temporariamente esgotada, aguarde cerca de um minuto e use o botão de repetir salvamento."
-                )
+                detalhe = str(exc)
+                detalhe_minusculo = detalhe.lower()
+                if any(chave in detalhe_minusculo for chave in ("429", "quota", "too many requests", "resource_exhausted")):
+                    resumo = (
+                        "A análise permaneceu na tela, mas a quota temporária do Google Sheets "
+                        "impediu a confirmação do salvamento. Aguarde cerca de um minuto e repita."
+                    )
+                elif "conferência" in detalhe_minusculo or "conferencia" in detalhe_minusculo:
+                    resumo = (
+                        "A análise permaneceu na tela. A gravação foi enviada, mas a conferência "
+                        "dos valores não pôde ser validada. Repita o salvamento nesta versão."
+                    )
+                else:
+                    resumo = (
+                        "A análise permaneceu na tela, mas o salvamento automático não foi concluído. "
+                        "Use o botão de repetir salvamento."
+                    )
+                st.session_state.tex_analysis_autosave_error = resumo
+                st.session_state.tex_analysis_autosave_error_details = detalhe
 
 current_fingerprint = lot_fingerprint(
     games_frame(),
@@ -1891,6 +1906,10 @@ if st.session_state.get("tex_analysis_autosave"):
     st.success(str(st.session_state.pop("tex_analysis_autosave")))
 if st.session_state.get("tex_analysis_autosave_error"):
     st.error(str(st.session_state.get("tex_analysis_autosave_error")))
+    detalhes_salvamento = str(st.session_state.get("tex_analysis_autosave_error_details") or "").strip()
+    if detalhes_salvamento:
+        with st.expander("Detalhes técnicos do salvamento"):
+            st.code(detalhes_salvamento, language=None, wrap_lines=True)
 
 
 def pct(value: float) -> str:
@@ -1912,13 +1931,47 @@ def evaluation_table(frame: pd.DataFrame, *, technical: bool = False) -> pd.Data
         return frame.copy()
 
     source = frame.copy()
+
+    # A oportunidade precisa ser identificável sem o usuário procurar a partida
+    # em outra seção da tela. Mantemos a identificação antes dos dados financeiros.
+    home = (
+        source["Home"].fillna("").astype(str).str.strip()
+        if "Home" in source.columns
+        else pd.Series("", index=source.index, dtype="object")
+    )
+    away = (
+        source["Away"].fillna("").astype(str).str.strip()
+        if "Away" in source.columns
+        else pd.Series("", index=source.index, dtype="object")
+    )
+    source["MatchDisplay"] = home.copy()
+    both_teams = home.ne("") & away.ne("")
+    source.loc[both_teams, "MatchDisplay"] = home[both_teams] + " x " + away[both_teams]
+    source.loc[home.eq("") & away.ne(""), "MatchDisplay"] = away[home.eq("") & away.ne("")]
+    source["LeagueDisplay"] = (
+        source["League"].fillna("").astype(str).str.strip()
+        if "League" in source.columns
+        else ""
+    )
+    if "DateParsed" in source.columns:
+        parsed_dates = pd.to_datetime(source["DateParsed"], errors="coerce")
+        source["GameDateDisplay"] = parsed_dates.dt.strftime("%d/%m/%Y").fillna("")
+    else:
+        source["GameDateDisplay"] = ""
+    source["GameTimeDisplay"] = (
+        source["Time"].fillna("").astype(str).str.strip().str.slice(0, 5)
+        if "Time" in source.columns
+        else ""
+    )
+
     source["FairOdd"] = pd.to_numeric(
         source.get("ConservativeProbability"), errors="coerce"
     ).map(lambda value: _fair_odd_from_probability(value) if pd.notna(value) else float("nan"))
 
     if technical:
         columns = [
-            "Status", "MarketName", "Selection", "Odd", "EffectiveOdd", "FairOdd",
+            "Status", "MatchDisplay", "LeagueDisplay", "GameDateDisplay", "GameTimeDisplay",
+            "MarketName", "Selection", "Odd", "EffectiveOdd", "FairOdd",
             "RequiredOddForOperation", "MarketProbability", "RawSportsProbability",
             "DecisionProbability", "ConservativeProbability", "EmpiricalHitRate",
             "ProfileSample", "SampleConfidence", "Reliability", "ModelMarketDifference",
@@ -1934,7 +1987,9 @@ def evaluation_table(frame: pd.DataFrame, *, technical: bool = False) -> pd.Data
             "ModelSportsDifference", "MaximumComponentDisagreement",
         )
         rename = {
-            "Status": "Situação", "MarketName": "Mercado", "Selection": "Seleção",
+            "Status": "Situação", "MatchDisplay": "Partida", "LeagueDisplay": "Liga",
+            "GameDateDisplay": "Data", "GameTimeDisplay": "Hora",
+            "MarketName": "Mercado", "Selection": "Seleção",
             "Odd": "Cotação atual", "EffectiveOdd": "Cotação após desconto de 2%",
             "FairOdd": "Cotação justa", "RequiredOddForOperation": "Cotação mínima para operar",
             "MarketProbability": "Mercado sem margem",
@@ -1960,13 +2015,16 @@ def evaluation_table(frame: pd.DataFrame, *, technical: bool = False) -> pd.Data
         }
     else:
         columns = [
-            "Status", "MarketName", "Selection", "Odd", "FairOdd",
+            "Status", "MatchDisplay", "LeagueDisplay", "GameDateDisplay", "GameTimeDisplay",
+            "MarketName", "Selection", "Odd", "FairOdd",
             "RequiredOddForOperation", "ConservativeProbability",
             "ConservativeExpectedValue", "OperationalDecision", "Reason",
         ]
         percentage_columns = ("ConservativeProbability", "ConservativeExpectedValue")
         rename = {
-            "Status": "Situação", "MarketName": "Mercado", "Selection": "Seleção",
+            "Status": "Situação", "MatchDisplay": "Partida", "LeagueDisplay": "Liga",
+            "GameDateDisplay": "Data", "GameTimeDisplay": "Hora",
+            "MarketName": "Mercado", "Selection": "Seleção",
             "Odd": "Cotação atual", "FairOdd": "Cotação justa",
             "RequiredOddForOperation": "Cotação mínima para operar",
             "ConservativeProbability": "Probabilidade final",
@@ -2094,6 +2152,9 @@ if not readings.empty or not diagnostics.empty:
         st.success(
             f"{len(entries)} oportunidade(s) individual(is) identificada(s). "
             "Não existe meta mínima nem inclusão de complemento com valor esperado negativo."
+        )
+        st.caption(
+            "Cada oportunidade mostra agora a partida, a liga, a data e o horário antes do mercado recomendado."
         )
         st.dataframe(
             evaluation_table(entries),
@@ -2253,6 +2314,7 @@ if not readings.empty or not diagnostics.empty:
                 saved_odds = salvar_cotacoes(st.secrets, catalog_records)
                 saved_analysis = salvar_analises(st.secrets, analysis_records)
                 st.session_state.pop("tex_analysis_autosave_error", None)
+                st.session_state.pop("tex_analysis_autosave_error_details", None)
                 st.success(
                     f"Gravação concluída: {saved_odds} novo(s) registro(s) de cotações e "
                     f"{saved_analysis} novo(s) registro(s) de probabilidades. Duplicidades foram ignoradas."

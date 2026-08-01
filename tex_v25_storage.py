@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, Iterable
+from numbers import Real
 from types import SimpleNamespace
 from uuid import uuid4
 import json
@@ -11,7 +12,7 @@ import time
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.3.0"
+STORAGE_API_VERSION = "28.3.1"
 
 from tex_v28_finance import COLUNAS_APOSTAS, identificador_registro, liquidar_registro
 
@@ -54,6 +55,18 @@ COLUNAS_NUMERICAS_PLANILHA = {
     "Regra 4 — gols do visitante nas últimas 5", "Fator total da múltipla",
     "Probabilidade conjunta da múltipla %", "Valor esperado da múltipla %",
 }
+
+# O Google devolve números inteiros sem a parte decimal. Ex.: um valor enviado
+# como 17.0 volta como 17 em UNFORMATTED_VALUE. Essas colunas precisam ser
+# comparadas numericamente, sem que 17.0 x 17 seja tratado como falha.
+COLUNAS_INTEIRAS_PLANILHA = {
+    "Temporada", "Posição do mandante", "Posição do visitante",
+    "Pontos do mandante", "Pontos do visitante", "Amostra casa",
+    "Amostra fora", "Amostra histórica",
+    "Regra 3 — gols do mandante nas últimas 5",
+    "Regra 4 — gols do visitante nas últimas 5",
+}
+COLUNAS_NUMERICAS_PLANILHA.update(COLUNAS_INTEIRAS_PLANILHA)
 
 # Mantém a estrutura histórica da planilha antiga e apenas acrescenta campos novos à direita.
 COLUNAS_COTACOES = [
@@ -316,9 +329,10 @@ def _aplicar_formato_numerico(aba: Any, cabecalho: list[str]) -> None:
         if nome not in COLUNAS_NUMERICAS_PLANILHA:
             continue
         letra = _letra_coluna(indice)
+        padrao = "0" if nome in COLUNAS_INTEIRAS_PLANILHA else "0.00"
         formatos.append({
             "range": f"{letra}2:{letra}{row_count}",
-            "format": {"numberFormat": {"type": "NUMBER", "pattern": "0.00"}},
+            "format": {"numberFormat": {"type": "NUMBER", "pattern": padrao}},
         })
     if not formatos:
         return
@@ -1004,6 +1018,13 @@ def _celula_equivalente(esperado: Any, real: Any, *, numerico: bool = False) -> 
     if numerico:
         if str(esperado).strip() == "" and str(real).strip() == "":
             return True
+        return _numero_equivalente(esperado, real)
+
+    # Proteção adicional para respostas UNFORMATTED_VALUE do Google Sheets:
+    # números equivalentes podem mudar apenas de tipo (17.0 -> 17).
+    esperado_numero = isinstance(esperado, Real) and not isinstance(esperado, bool)
+    real_numero = isinstance(real, Real) and not isinstance(real, bool)
+    if esperado_numero and real_numero:
         return _numero_equivalente(esperado, real)
     return str(esperado).strip() == str(real).strip()
 

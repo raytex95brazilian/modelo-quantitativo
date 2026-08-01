@@ -112,7 +112,7 @@ update_stub = types.ModuleType("tex_v25_atualizacao")
 sys.modules["tex_v25_atualizacao"] = update_stub
 
 app = importlib.import_module("app")
-assert app.INTERFACE_VERSION == "V28.3.0"
+assert app.INTERFACE_VERSION == "V28.3.2"
 assert app.EXPECTED_CORE_API == "28.1.2"
 assert app.max_entries == 5
 
@@ -200,6 +200,31 @@ with TemporaryDirectory() as temp_dir:
     app.google_configurado = original_google_configurado
     st.session_state.pop("tex_games", None)
 
+
+# A tabela de apostas individuais deve identificar inequivocamente o confronto.
+sample_entry = pd.DataFrame([{
+    "Status": "OPERAR",
+    "Home": "Grêmio",
+    "Away": "São Paulo",
+    "League": "Brasileirão Série A",
+    "DateParsed": "2026-08-08",
+    "Time": "16:00",
+    "MarketName": "Ambas marcam",
+    "Selection": "Ambas marcam — Sim",
+    "Odd": 4.90,
+    "ConservativeProbability": 0.29,
+    "RequiredOddForOperation": 3.52,
+    "ConservativeExpectedValue": 0.392,
+    "OperationalDecision": "COTAÇÃO FAVORÁVEL",
+    "Reason": "Teste",
+}])
+identified = app.evaluation_table(sample_entry)
+assert list(identified.columns[:5]) == ["Situação", "Partida", "Liga", "Data", "Hora"]
+assert identified.iloc[0]["Partida"] == "Grêmio x São Paulo"
+assert identified.iloc[0]["Liga"] == "Brasileirão Série A"
+assert identified.iloc[0]["Data"] == "08/08/2026"
+assert identified.iloc[0]["Hora"] == "16:00"
+
 from tex_v25_core import normalize_zip
 from tex_v28_core_2812 import INPUT_COLUMNS, analyze_games, load_v28_model
 
@@ -237,10 +262,10 @@ assert abs(float(catalog[catalog["Grupo do mercado"].eq("1X2")].iloc[0]["Margem 
 config = json.loads(str(analysis.iloc[0]["Configuração JSON"]))
 assert config["api_nucleo"] == "28.1.2"
 assert config["percentual_unidade"] == 0.01
-assert catalog.iloc[0]["Versão da interface"] == "V28.3.0"
-assert analysis.iloc[0]["Versão da interface"] == "V28.3.0"
+assert catalog.iloc[0]["Versão da interface"] == "V28.3.2"
+assert analysis.iloc[0]["Versão da interface"] == "V28.3.2"
 summary_text = app.build_ai_summary(games, evaluations.sort_values(["MatchID", "StatusOrder"]).drop_duplicates("MatchID"), evaluations, diagnostics, matches)
 for forbidden in ("AGUARDAR PREÇO", "PREÇO FORTE", "ELEGÍVEL PARA META", "RESERVA", "mínima de admissibilidade da meta", "equilíbrio individual"):
     assert forbidden not in summary_text, forbidden
 
-print("TESTE DO APP SEM INTERFACE GRÁFICA V28.3.0: OK")
+print("TESTE DO APP SEM INTERFACE GRÁFICA V28.3.2: OK")

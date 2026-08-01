@@ -1,6 +1,6 @@
-# Tex Statistics V28.3.0 — Importação inteligente de jogos e cotações 1X2
+# Tex Statistics V28.3.2 — Identificação completa das apostas individuais
 
-Esta versão foi construída diretamente sobre a V28.2.1 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
+Esta versão foi construída diretamente sobre a V28.3.1 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
 
 ## Novo modo de cadastro
 
@@ -106,8 +106,37 @@ Substitua todo o conteúdo do projeto pelo conteúdo deste pacote. Não misture 
 
 Versões esperadas:
 
-- interface: `V28.3.0`;
-- armazenamento: `28.3.0`;
+- interface: `V28.3.2`;
+- armazenamento: `28.3.1`;
 - importador: `28.3.0`;
 - núcleo preditivo: `28.1.2`;
 - filtro de 2018: `28.2.0`.
+
+
+## Correção V28.3.1 — conferência numérica do Google Sheets
+
+A API do Google Sheets pode devolver um inteiro sem a parte decimal mesmo quando o aplicativo enviou um número de ponto flutuante. Por exemplo, uma posição enviada como `17.0` retorna como `17`. A V28.3.0 interpretava isso incorretamente como divergência e exibia falha, embora a linha já tivesse sido gravada.
+
+A V28.3.1:
+
+- compara numericamente temporada, posições, pontos e amostras;
+- aceita `17.0` e `17` como o mesmo valor;
+- mantém comparação rígida para nomes, IDs, datas e textos;
+- usa formato inteiro nas colunas de posição, pontos e amostras;
+- apresenta uma mensagem curta na tela e deixa detalhes técnicos recolhidos.
+
+Ao repetir o salvamento, os IDs determinísticos atualizam as mesmas linhas de cotações, sem criar duplicatas.
+
+
+## Correção V28.3.2 — identificação da partida nas apostas individuais
+
+A tabela **Apostas individuais** passa a exibir, antes do mercado e das cotações:
+
+- partida (`Mandante x Visitante`);
+- liga;
+- data;
+- horário.
+
+Assim, uma indicação como `Ambas marcam — Sim` não aparece mais isolada. O usuário consegue identificar imediatamente a qual confronto a oportunidade pertence. A mesma identificação também está disponível no quadro técnico detalhado.
+
+Esta correção altera apenas a apresentação e a versão registrada da interface. O motor estatístico, o filtro de 2018, as regras financeiras, a importação 1X2 e as colunas das planilhas permanecem inalterados.
