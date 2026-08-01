@@ -1,5 +1,14 @@
-# Tex Statistics V28.3.8 — Reconhecimento atualizado da 2. Bundesliga
+# Tex Statistics V28.3.9 — Correção da validação final da 2. Bundesliga
 
+## Correção V28.3.9 — prévia reconhecia, gravação rejeitava
+
+A V28.3.8 já usava o elenco sazonal de 2026/27 durante a pré-visualização. Porém, ao clicar em **GRAVAR PARTIDAS E COTAÇÕES 1X2**, a validação final chamava novamente o reconhecedor sem informar a data da partida. Com isso, clubes promovidos ou rebaixados eram aceitos na prévia e recusados na confirmação.
+
+A V28.3.9 unifica as duas etapas: tanto a prévia quanto a gravação usam a data do jogo e o mesmo catálogo sazonal. Foram reproduzidos e corrigidos os quatro nomes que apareciam no erro: `Heidenheim`, `Wolfsburg`, `Cottbus` e `St Pauli`.
+
+Nenhuma regra do filtro de 2018, cálculo estatístico, decisão financeira, coluna da planilha ou rotina de lotes foi alterada.
+
+---
 
 ## Correção V28.3.8 — clubes promovidos, rebaixados e nomes alternativos
 

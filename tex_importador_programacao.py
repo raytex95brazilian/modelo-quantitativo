@@ -8,7 +8,7 @@ import math
 import re
 import unicodedata
 
-IMPORTER_API_VERSION = "28.3.8"
+IMPORTER_API_VERSION = "28.3.9"
 
 _DATE_RE = re.compile(r"^(?P<day>\d{1,2})/(?P<month>\d{1,2})(?:/(?P<year>\d{2}|\d{4}))?$")
 _TIME_RE = re.compile(r"^(?P<hour>\d{1,2}):(?P<minute>\d{2})$")
@@ -340,8 +340,16 @@ def resolve_team_in_league(
     teams_by_code: dict[str, list[str]],
     *,
     extra_candidates: Iterable[str] | None = None,
+    match_date: Any = None,
 ) -> tuple[str, float]:
     candidates = list(teams_by_code.get(str(league_code), []))
+    season = _season_from_imported_date(match_date) if match_date is not None else None
+    seasonal_candidates = (
+        _SEASONAL_ROSTER_OVERLAYS.get((str(league_code), int(season)))
+        if season is not None else None
+    )
+    if seasonal_candidates:
+        candidates = sorted(set(candidates) | {str(item) for item in seasonal_candidates if str(item).strip()})
     if extra_candidates:
         candidates = sorted(set(candidates) | {str(item) for item in extra_candidates if str(item).strip()})
     if not candidates:
@@ -380,10 +388,10 @@ def infer_league_and_teams(
     for code, league_name in leagues.items():
         overlay = _SEASONAL_ROSTER_OVERLAYS.get((str(code), int(season))) if season is not None else None
         home, home_score = resolve_team_in_league(
-            home_raw, code, teams_by_code, extra_candidates=overlay
+            home_raw, code, teams_by_code, extra_candidates=overlay, match_date=match_date
         )
         away, away_score = resolve_team_in_league(
-            away_raw, code, teams_by_code, extra_candidates=overlay
+            away_raw, code, teams_by_code, extra_candidates=overlay, match_date=match_date
         )
         pair_score = min(home_score, away_score) * 0.65 + ((home_score + away_score) / 2.0) * 0.35
         ranking.append((code, league_name, home, home_score, away_score, pair_score))
@@ -396,7 +404,9 @@ def infer_league_and_teams(
         if code and season is not None else None
     )
     away, _ = (
-        resolve_team_in_league(away_raw, code, teams_by_code, extra_candidates=best_overlay)
+        resolve_team_in_league(
+            away_raw, code, teams_by_code, extra_candidates=best_overlay, match_date=match_date
+        )
         if code else ("", 0.0)
     )
     margin = pair_score - runner_score

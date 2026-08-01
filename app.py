@@ -40,9 +40,9 @@ EXPECTED_STORAGE_API = "28.3.6"
 EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.3.3"
 EXPECTED_OPERATION_API = "28.2.0"
-EXPECTED_IMPORTER_API = "28.3.8"
-INTERFACE_VERSION = "V28.3.8"
-APP_NAME = "Tex Statistics V28.3.8 — Reconhecimento atualizado de ligas"
+EXPECTED_IMPORTER_API = "28.3.9"
+INTERFACE_VERSION = "V28.3.9"
+APP_NAME = "Tex Statistics V28.3.9 — Validação sazonal consistente"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -224,7 +224,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.3.8, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.3.9, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -1588,8 +1588,22 @@ def render_bulk_import() -> None:
             if not code:
                 errors.append(f"{label}: selecione uma liga válida.")
                 continue
-            home, home_score = resolve_team_in_league(str(row.get("Mandante", "")), code, teams_by_code)
-            away, away_score = resolve_team_in_league(str(row.get("Visitante", "")), code, teams_by_code)
+            try:
+                game_date = pd.Timestamp(str(row.get("Data", ""))).date()
+                game_time = datetime.strptime(str(row.get("Hora", "")), "%H:%M").time()
+                kickoff = datetime.combine(game_date, game_time, tzinfo=FUSO)
+            except Exception:
+                errors.append(f"{label}: data ou horário inválido.")
+                continue
+            # A prévia e a confirmação final devem usar o mesmo catálogo sazonal.
+            # Sem a data, clubes promovidos/rebaixados reconhecidos na prévia eram
+            # rejeitados no clique de gravação.
+            home, home_score = resolve_team_in_league(
+                str(row.get("Mandante", "")), code, teams_by_code, match_date=game_date
+            )
+            away, away_score = resolve_team_in_league(
+                str(row.get("Visitante", "")), code, teams_by_code, match_date=game_date
+            )
             if not home or home_score < 0.72:
                 errors.append(f"{label}: mandante não reconhecido em {league_name}: {row.get('Mandante', '')!r}.")
                 continue
@@ -1598,13 +1612,6 @@ def render_bulk_import() -> None:
                 continue
             if home == away:
                 errors.append(f"{label}: mandante e visitante foram resolvidos como a mesma equipe.")
-                continue
-            try:
-                game_date = pd.Timestamp(str(row.get("Data", ""))).date()
-                game_time = datetime.strptime(str(row.get("Hora", "")), "%H:%M").time()
-                kickoff = datetime.combine(game_date, game_time, tzinfo=FUSO)
-            except Exception:
-                errors.append(f"{label}: data ou horário inválido.")
                 continue
             if kickoff <= now_br():
                 errors.append(f"{label}: {home} x {away} não está em horário futuro.")

@@ -69,7 +69,7 @@ try:
     }]
 
     result = storage.registrar_eventos_lote(
-        {}, games, interface_version="V28.3.8", substituir_lote=True
+        {}, games, interface_version="V28.3.9", substituir_lote=True
     )
     assert result["Eventos confirmados"] == 2, result
     assert result["Partidas confirmadas"] == 1, result
@@ -84,4 +84,4 @@ finally:
     storage._obter_aba_cacheada = old_get
     storage.url_planilha_configurada = old_url
 
-print("TESTE DE SUBSTITUIÇÃO DE LOTE V28.3.8: OK")
+print("TESTE DE SUBSTITUIÇÃO DE LOTE V28.3.9: OK")
