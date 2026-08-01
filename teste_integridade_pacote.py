@@ -48,11 +48,11 @@ ast.parse(core_source)
 assert '_v28 = _load_required_module("tex_v28_core_2812")' in app_source
 assert "import tex_v28_core as _v28" not in app_source
 assert 'EXPECTED_CORE_API = "28.1.2"' in app_source
-assert 'EXPECTED_FILTER_API = "28.3.10"' in app_source
+assert 'EXPECTED_FILTER_API = "28.3.11"' in app_source
 assert 'evaluate_lot_2018(current_games, matches)' in app_source
 assert 'build_operational_outputs(' in app_source
 assert 'Somente jogos aprovados no filtro de 2018' in app_source
-assert 'INTERFACE_VERSION = "V28.3.10"' in app_source
+assert 'INTERFACE_VERSION = "V28.3.11"' in app_source
 assert 'Partida e cotações — etapa única' in app_source
 assert 'CONFIRMAR CONFRONTO' not in app_source
 assert 'Etapa 1 de 2' not in app_source
@@ -191,4 +191,4 @@ for relative, path in distributed_files.items():
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert manifest_entries[relative] == digest, f"SHA-256 divergente: {relative}"
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.3.10: OK")
+print("TESTE DE INTEGRIDADE DO PACOTE V28.3.11: OK")

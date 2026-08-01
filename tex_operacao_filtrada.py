@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pandas as pd
 
-OPERATION_API_VERSION = "28.3.10"
+OPERATION_API_VERSION = "28.3.11"
 
 
 @dataclass(frozen=True)

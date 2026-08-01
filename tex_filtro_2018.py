@@ -9,7 +9,7 @@ import pandas as pd
 
 from tex_operacional_core import clean_text, parse_date, standings_context
 
-FILTER_API_VERSION = "28.3.10"
+FILTER_API_VERSION = "28.3.11"
 FILTER_NAME = "Filtro eliminatório de 2018"
 
 

@@ -118,10 +118,71 @@ def parse_date(value: Any) -> date:
     return stamp.date()
 
 
+# Códigos cuja competição usa temporada de ano-calendário na operação atual.
+# ANNUAL_CODES não pode ser reutilizado aqui: ele também descreve o formato dos
+# arquivos-fonte e inclui a Liga MX, cuja temporada esportiva atravessa dois anos.
+CALENDAR_SEASON_CODES = {"BRA", "USA", "JPN", "CHN", "SWE", "NOR", "FIN", "IRL"}
+_SEASON_RANGE_CACHE: dict[tuple[int, int, str], list[tuple[int, date, date]]] = {}
+
+
+def _season_ranges(matches: list[dict[str, Any]], code: str) -> list[tuple[int, date, date]]:
+    key = (id(matches), len(matches), code)
+    cached = _SEASON_RANGE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    grouped: dict[int, list[date]] = {}
+    for item in matches:
+        if clean_text(item.get("Code")) != code:
+            continue
+        item_date = item.get("DateParsed")
+        if not isinstance(item_date, date):
+            continue
+        try:
+            season = int(item.get("Season"))
+        except (TypeError, ValueError):
+            continue
+        grouped.setdefault(season, []).append(item_date)
+    ranges = sorted((season, min(dates), max(dates)) for season, dates in grouped.items() if dates)
+    _SEASON_RANGE_CACHE[key] = ranges
+    return ranges
+
+
+def _calendar_year_season(code: str, match_date: date) -> bool:
+    # A Argentina migrou para temporada de ano-calendário a partir de 2021.
+    if code == "ARG":
+        return match_date.year >= 2021
+    return code in CALENDAR_SEASON_CODES
+
+
 def season_for_match(code: str, match_date: date) -> int:
-    if code in ANNUAL_CODES:
+    """Inferência de contingência quando a base histórica não está disponível."""
+    if _calendar_year_season(code, match_date):
         return match_date.year
     return match_date.year if match_date.month >= 7 else match_date.year - 1
+
+
+def resolve_season_for_match(matches: list[dict[str, Any]], code: str, match_date: date) -> int:
+    """Resolve a temporada usando primeiro os intervalos reais existentes na base.
+
+    Isso evita reinícios falsos de classificação em competições como Liga MX e
+    Argentina histórica, além de temporadas excepcionalmente estendidas, como
+    2019/20 na Europa, Brasileirão 2020 e China 2021.
+    """
+    for season, start, end in _season_ranges(matches, code):
+        if start <= match_date <= end:
+            return season
+    return season_for_match(code, match_date)
+
+
+def season_label_for_match(
+    matches: list[dict[str, Any]], code: str, match_date: date, season: int
+) -> str:
+    for known_season, start, end in _season_ranges(matches, code):
+        if known_season == season and start.year != end.year:
+            return f"{season}/{str(season + 1)[-2:]}"
+    if _calendar_year_season(code, match_date):
+        return str(season)
+    return f"{season}/{str(season + 1)[-2:]}"
 
 
 def latest_team_catalog(matches: list[dict[str, Any]]) -> tuple[dict[str, list[str]], dict[str, int]]:
@@ -661,7 +722,7 @@ def display_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 def standings_before_match(matches: list[dict[str, Any]], code: str, match_date: date) -> pd.DataFrame:
     """Reconstrói a classificação da temporada corrente usando apenas jogos anteriores à partida."""
-    season = season_for_match(code, match_date)
+    season = resolve_season_for_match(matches, code, match_date)
     table: dict[str, dict[str, float]] = {}
 
     def row_for(team: str) -> dict[str, float]:
@@ -715,8 +776,8 @@ def standings_before_match(matches: list[dict[str, Any]], code: str, match_date:
 
 
 def standings_context(matches: list[dict[str, Any]], code: str, match_date: date, home: str, away: str) -> dict[str, Any]:
-    season = season_for_match(code, match_date)
-    season_label = str(season) if code in ANNUAL_CODES else f"{season}/{str(season + 1)[-2:]}"
+    season = resolve_season_for_match(matches, code, match_date)
+    season_label = season_label_for_match(matches, code, match_date, season)
     table = standings_before_match(matches, code, match_date)
     league_before = [
         m for m in matches
