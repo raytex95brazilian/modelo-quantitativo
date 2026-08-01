@@ -9,10 +9,11 @@ from uuid import uuid4
 import json
 import re
 import time
+import random
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.3.1"
+STORAGE_API_VERSION = "28.3.5"
 
 from tex_v28_finance import COLUNAS_APOSTAS, identificador_registro, liquidar_registro
 
@@ -273,7 +274,11 @@ def _abrir_planilha(secrets: Any):
         )
     chave = (cfg["spreadsheet_id"], cfg["client_email"])
     if chave not in _PLANILHAS_GOOGLE:
-        _PLANILHAS_GOOGLE[chave] = _cliente_google(cfg["conta"]).open_by_key(cfg["spreadsheet_id"])
+        cliente = _cliente_google(cfg["conta"])
+        _PLANILHAS_GOOGLE[chave] = _executar_com_backoff(
+            lambda: cliente.open_by_key(cfg["spreadsheet_id"]),
+            operacao="abertura da planilha",
+        )
     return _PLANILHAS_GOOGLE[chave]
 
 
@@ -286,24 +291,25 @@ def _letra_coluna(numero: int) -> str:
 
 
 def _ler_intervalo_sem_formatacao(aba: Any, intervalo: str) -> list[list[Any]]:
-    """Lê valores brutos, ignorando a máscara visual da célula.
-
-    O Google Sheets pode exibir um número como data quando a coluna herdou
-    formatação antiga. A validação deve comparar o valor armazenado, não o texto
-    formatado mostrado na grade.
-    """
+    """Lê valores brutos, com nova tentativa em falhas temporárias da API."""
     getter = getattr(aba, "get", None)
-    if callable(getter):
+    if not callable(getter):
+        return []
+
+    def chamada():
         try:
-            valores = getter(
+            return getter(
                 intervalo,
                 value_render_option="UNFORMATTED_VALUE",
                 date_time_render_option="SERIAL_NUMBER",
             )
         except TypeError:
-            valores = getter(intervalo)
-        return [list(linha) for linha in (valores or [])]
-    return []
+            return getter(intervalo)
+
+    valores = _executar_com_backoff(
+        chamada, operacao=f"leitura do intervalo {intervalo}"
+    )
+    return [list(linha) for linha in (valores or [])]
 
 
 def _ler_linha_sem_formatacao(aba: Any, numero_linha: int, largura: int) -> list[Any]:
@@ -360,7 +366,10 @@ def _obter_aba_cacheada(secrets: Any, titulo: str, colunas: list[str]):
 
     planilha = _abrir_planilha(secrets)
     try:
-        aba = planilha.worksheet(str(titulo))
+        aba = _executar_com_backoff(
+            lambda: planilha.worksheet(str(titulo)),
+            operacao=f"abertura da aba {titulo}",
+        )
     except Exception as exc:
         # Só cria quando a aba realmente não existe. A planilha antiga já possui as abas principais.
         if "not found" not in str(exc).lower() and "não encontr" not in str(exc).lower():
@@ -370,13 +379,26 @@ def _obter_aba_cacheada(secrets: Any, titulo: str, colunas: list[str]):
                     raise
             except ImportError:
                 raise
-        aba = planilha.add_worksheet(title=str(titulo), rows=20000, cols=max(80, len(colunas) + 5))
-        aba.append_row(colunas, value_input_option="RAW")
+        aba = _executar_com_backoff(
+            lambda: planilha.add_worksheet(
+                title=str(titulo), rows=20000, cols=max(80, len(colunas) + 5)
+            ),
+            operacao=f"criação da aba {titulo}",
+        )
+        _executar_com_backoff(
+            lambda: aba.append_row(colunas, value_input_option="RAW"),
+            operacao=f"criação do cabeçalho de {titulo}",
+        )
 
     if chave not in _CABECALHOS_SINCRONIZADOS:
-        cabecalho = aba.row_values(1)
+        cabecalho = _executar_com_backoff(
+            lambda: aba.row_values(1), operacao=f"leitura do cabeçalho de {titulo}"
+        )
         if not cabecalho:
-            aba.append_row(colunas, value_input_option="RAW")
+            _executar_com_backoff(
+                lambda: aba.append_row(colunas, value_input_option="RAW"),
+                operacao=f"gravação do cabeçalho de {titulo}",
+            )
             cabecalho = list(colunas)
         elif cabecalho != colunas:
             # Preserva as colunas antigas e acrescenta somente as ausentes à direita.
@@ -386,7 +408,12 @@ def _obter_aba_cacheada(secrets: Any, titulo: str, colunas: list[str]):
                     atualizado.append(coluna)
             if atualizado != cabecalho:
                 ultima = _letra_coluna(len(atualizado))
-                aba.update(f"A1:{ultima}1", [atualizado], value_input_option="RAW")
+                _executar_com_backoff(
+                    lambda: aba.update(
+                        f"A1:{ultima}1", [atualizado], value_input_option="RAW"
+                    ),
+                    operacao=f"atualização do cabeçalho de {titulo}",
+                )
                 cabecalho = atualizado
         _CABECALHOS_ATUAIS[chave] = list(cabecalho)
         _CABECALHOS_SINCRONIZADOS.add(chave)
@@ -460,7 +487,10 @@ def _acrescentar_sem_leitura(
         coluna_id = cabecalho_real.index(campos_chave[0]) + 1
         ids_remotos = {
             str(valor).strip()
-            for valor in list(aba.col_values(coluna_id))[1:]
+            for valor in _executar_com_backoff(
+                lambda: list(aba.col_values(coluna_id)),
+                operacao=f"leitura dos IDs em {titulo}",
+            )[1:]
             if str(valor).strip()
         }
         filtradas: list[dict[str, Any]] = []
@@ -475,42 +505,28 @@ def _acrescentar_sem_leitura(
         if not novas:
             return 0
 
+    campo_busca = campos_chave[0]
+    if campo_busca not in cabecalho_real:
+        raise RuntimeError(f"Coluna de confirmação ausente: {campo_busca!r}.")
+    idx_busca = cabecalho_real.index(campo_busca)
     linhas = [[registro.get(coluna, "") for coluna in cabecalho_real] for registro in novas]
-    resposta = aba.append_rows(linhas, value_input_option="RAW")
-
-    intervalo = ""
-    if isinstance(resposta, dict):
-        intervalo = str(
-            resposta.get("updates", {}).get("updatedRange")
-            or resposta.get("updatedRange")
-            or ""
-        )
-    valores_lidos: list[list[Any]] = []
-    if intervalo and "!" in intervalo:
-        a1 = intervalo.split("!", 1)[1]
-        valores_lidos = _ler_intervalo_sem_formatacao(aba, a1)
-
-    # Fallback controlado para mocks ou respostas sem updatedRange: localiza cada
-    # chave na planilha e lê apenas as linhas correspondentes.
-    if len(valores_lidos) != len(novas):
-        valores_lidos = []
-        campo_busca = campos_chave[0]
-        if campo_busca not in cabecalho_real:
-            raise RuntimeError(f"Coluna de confirmação ausente: {campo_busca!r}.")
-        idx_busca = cabecalho_real.index(campo_busca)
-        ids = list(aba.col_values(idx_busca + 1))
-        for registro in novas:
-            alvo = str(registro.get(campo_busca, "")).strip()
-            linha_numero = None
-            for posicao in range(len(ids) - 1, 0, -1):
-                if str(ids[posicao]).strip() == alvo:
-                    linha_numero = posicao + 1
-                    break
-            if linha_numero is None:
-                raise RuntimeError(
-                    f"O registro {alvo!r} não foi encontrado em {titulo!r} após o append."
-                )
-            valores_lidos.append(_ler_linha_sem_formatacao(aba, linha_numero, len(cabecalho_real)))
+    linhas_por_id = [
+        (str(registro.get(campo_busca, "")).strip(), linha)
+        for registro, linha in zip(novas, linhas)
+    ]
+    row_by_id, _ = _append_rows_idempotente(
+        aba,
+        linhas_por_id,
+        coluna_id=idx_busca + 1,
+        operacao=f"inclusão em lote em {titulo}",
+    )
+    valores_lidos = _batch_get_linhas_sem_formatacao(
+        aba,
+        [
+            f"A{row_by_id[identifier]}:{_letra_coluna(len(cabecalho_real))}{row_by_id[identifier]}"
+            for identifier, _ in linhas_por_id
+        ],
+    )
 
     divergencias: list[str] = []
     for indice, (esperado, valores) in enumerate(zip(novas, valores_lidos), start=1):
@@ -686,35 +702,163 @@ def criar_registros_cotacoes_digitadas(
     return records
 
 
+def _codigo_http_erro(exc: Exception) -> int | None:
+    """Extrai o código HTTP de gspread/APIError sem depender da classe concreta."""
+    for objeto in (exc, getattr(exc, "response", None)):
+        if objeto is None:
+            continue
+        for atributo in ("status_code", "status", "code"):
+            valor = getattr(objeto, atributo, None)
+            try:
+                if valor is not None:
+                    return int(valor)
+            except (TypeError, ValueError):
+                pass
+    match = re.search(r"(?:APIError:\s*)?\[(\d{3})\]", str(exc or ""))
+    return int(match.group(1)) if match else None
+
+
 def _erro_de_quota(exc: Exception) -> bool:
     texto = str(exc or "").lower()
-    return any(
+    return _codigo_http_erro(exc) == 429 or any(
         trecho in texto
         for trecho in (
-            "429", "quota exceeded", "resource_exhausted",
-            "too many requests", "write requests per minute",
-            "read requests per minute",
+            "quota exceeded", "resource_exhausted", "too many requests",
+            "write requests per minute", "read requests per minute",
         )
     )
 
 
-def _executar_com_backoff(func, *, operacao: str, tentativas: int = 4):
-    """Executa uma chamada da API com espera exponencial curta para erros 429.
+def _erro_transitorio(exc: Exception) -> bool:
+    """Erros em que uma nova tentativa é apropriada para operações idempotentes."""
+    codigo = _codigo_http_erro(exc)
+    if codigo in {408, 425, 429, 500, 502, 503, 504}:
+        return True
+    texto = str(exc or "").lower()
+    return any(
+        trecho in texto
+        for trecho in (
+            "service unavailable", "temporarily unavailable", "backend error",
+            "internal server error", "gateway timeout", "bad gateway",
+            "connection reset", "connection aborted", "connection error",
+            "read timed out", "timed out", "timeout", "resource_exhausted",
+            "too many requests", "quota exceeded",
+        )
+    )
 
-    O backoff é apenas uma proteção adicional. A prevenção principal é agrupar
-    centenas de linhas em uma única chamada batch_update/batch_get.
+
+def _esperar_backoff(tentativa: int) -> None:
+    atrasos = (0.8, 1.6, 3.2, 6.4)
+    base = atrasos[min(tentativa, len(atrasos) - 1)]
+    # Pequeno jitter evita que vários usuários repitam a chamada no mesmo instante.
+    time.sleep(base + random.uniform(0.0, min(0.4, base * 0.20)))
+
+
+def _executar_com_backoff(func, *, operacao: str, tentativas: int = 5):
+    """Repete operações seguras em 429 e falhas temporárias 5xx/timeout.
+
+    Esta função deve envolver apenas leituras ou escritas idempotentes. Append
+    usa ``_append_rows_idempotente`` porque um 503 pode ocorrer após o Google já
+    ter gravado as linhas, tornando uma repetição cega capaz de duplicá-las.
     """
-    atrasos = (1.0, 2.0, 4.0)
     ultimo: Exception | None = None
     for tentativa in range(tentativas):
         try:
             return func()
         except Exception as exc:  # gspread.APIError sem dependência rígida
             ultimo = exc
-            if not _erro_de_quota(exc) or tentativa >= tentativas - 1:
+            if not _erro_transitorio(exc) or tentativa >= tentativas - 1:
                 raise
-            time.sleep(atrasos[min(tentativa, len(atrasos) - 1)])
+            _esperar_backoff(tentativa)
     raise RuntimeError(f"Falha em {operacao}: {ultimo}")
+
+
+def _localizar_ids_na_coluna(
+    aba: Any, coluna_id: int, identificadores: Iterable[str], *, operacao: str
+) -> dict[str, int]:
+    desejados = {str(item).strip() for item in identificadores if str(item).strip()}
+    if not desejados:
+        return {}
+    valores = _executar_com_backoff(
+        lambda: list(aba.col_values(coluna_id)), operacao=operacao
+    )
+    encontrados: dict[str, int] = {}
+    for posicao in range(1, len(valores)):
+        valor = str(valores[posicao]).strip()
+        if valor in desejados:
+            encontrados[valor] = posicao + 1
+    return encontrados
+
+
+def _append_rows_idempotente(
+    aba: Any,
+    linhas_por_id: list[tuple[str, list[Any]]],
+    *,
+    coluna_id: int,
+    operacao: str,
+    tentativas: int = 5,
+) -> tuple[dict[str, int], Any]:
+    """Faz append sem duplicar quando a resposta falha depois da gravação.
+
+    Em um HTTP 503 não é possível saber, apenas pela exceção, se o Google gravou
+    ou não. Antes de repetir, a função procura os mesmos IDs. Se todos já estiverem
+    presentes, considera a operação concluída; se apenas parte estiver presente,
+    anexa somente os ausentes.
+    """
+    pendentes = [(str(identifier).strip(), list(row)) for identifier, row in linhas_por_id]
+    if not pendentes:
+        return {}, None
+    if any(not identifier for identifier, _ in pendentes):
+        raise ValueError("Append idempotente exige identificadores não vazios.")
+
+    encontrados: dict[str, int] = {}
+    ultima_resposta: Any = None
+    ultimo_erro: Exception | None = None
+
+    for tentativa in range(tentativas):
+        ids_tentativa = [identifier for identifier, _ in pendentes]
+        try:
+            ultima_resposta = aba.append_rows(
+                [row for _, row in pendentes], value_input_option="RAW"
+            )
+            intervalo = _intervalo_linhas_append(ultima_resposta)
+            if intervalo and intervalo[1] - intervalo[0] + 1 == len(pendentes):
+                for offset, (identifier, _) in enumerate(pendentes):
+                    encontrados[identifier] = intervalo[0] + offset
+                return encontrados, ultima_resposta
+
+            localizados = _localizar_ids_na_coluna(
+                aba, coluna_id, ids_tentativa, operacao=f"confirmação após {operacao}"
+            )
+            encontrados.update(localizados)
+            faltantes = [item for item in pendentes if item[0] not in encontrados]
+            if not faltantes:
+                return encontrados, ultima_resposta
+            pendentes = faltantes
+            ultimo_erro = RuntimeError(
+                f"{len(pendentes)} registro(s) não foram localizados após {operacao}."
+            )
+        except Exception as exc:
+            ultimo_erro = exc
+            if not _erro_transitorio(exc):
+                raise
+            # A requisição pode ter sido aplicada apesar do 503. Confere antes de repetir.
+            localizados = _localizar_ids_na_coluna(
+                aba, coluna_id, ids_tentativa, operacao=f"verificação de {operacao} após erro temporário"
+            )
+            encontrados.update(localizados)
+            pendentes = [item for item in pendentes if item[0] not in encontrados]
+            if not pendentes:
+                return encontrados, ultima_resposta
+
+        if tentativa >= tentativas - 1:
+            break
+        _esperar_backoff(tentativa)
+
+    raise RuntimeError(
+        f"Falha temporária persistente em {operacao}; "
+        f"{len(pendentes)} registro(s) não foram confirmados. Detalhe: {ultimo_erro}"
+    ) from ultimo_erro
 
 
 def _intervalo_linhas_append(resposta: Any) -> tuple[int, int] | None:
@@ -760,10 +904,15 @@ def _batch_get_linhas_sem_formatacao(
         return saida
     # Compatibilidade com mocks/implementações antigas. Em produção (gspread 6)
     # o caminho acima é usado e consome uma única requisição de leitura.
-    return [
-        (_ler_intervalo_sem_formatacao(aba, intervalo) or [[]])[0]
-        for intervalo in intervalos
-    ]
+    saida: list[list[Any]] = []
+    for intervalo in intervalos:
+        match = re.fullmatch(r"[A-Z]+(\d+):[A-Z]+(\d+)", intervalo)
+        if match and match.group(1) == match.group(2):
+            saida.append(_ler_linha_sem_formatacao(aba, int(match.group(1)), 1))
+        else:
+            bloco = _ler_intervalo_sem_formatacao(aba, intervalo)
+            saida.append(list(bloco[0]) if bloco else [])
+    return saida
 
 
 def _salvar_cotacoes_upsert(secrets: Any, registros: Iterable[dict[str, Any]]) -> int:
@@ -833,28 +982,23 @@ def _salvar_cotacoes_upsert(secrets: Any, registros: Iterable[dict[str, Any]]) -
             for item in updates:
                 aba.update(item["range"], item["values"], value_input_option="RAW")
 
-    # Uma única solicitação de escrita para todas as linhas novas.
+    # Uma única inclusão lógica para todas as linhas novas. Em erro 503,
+    # confirma os IDs antes de repetir para não duplicar cotações.
     if appends:
-        rows = [[record.get(column, "") for column in header] for record in appends]
-        resposta = _executar_com_backoff(
-            lambda: aba.append_rows(rows, value_input_option="RAW"),
+        linhas_por_id = [
+            (
+                str(record.get("ID Coleta", "")).strip(),
+                [record.get(column, "") for column in header],
+            )
+            for record in appends
+        ]
+        linhas_confirmadas, _ = _append_rows_idempotente(
+            aba,
+            linhas_por_id,
+            coluna_id=id_index + 1,
             operacao="inclusão em lote de cotações",
         )
-        intervalo_linhas = _intervalo_linhas_append(resposta)
-        if intervalo_linhas and intervalo_linhas[1] - intervalo_linhas[0] + 1 == len(appends):
-            for offset, record in enumerate(appends):
-                row_by_id[str(record.get("ID Coleta", "")).strip()] = intervalo_linhas[0] + offset
-        else:
-            # Resposta sem updatedRange: uma única leitura da coluna resolve
-            # todas as linhas anexadas; nunca há uma leitura por registro.
-            ids_depois = _executar_com_backoff(
-                lambda: list(aba.col_values(id_index + 1)),
-                operacao="confirmação dos IDs anexados",
-            )
-            for position in range(1, len(ids_depois)):
-                value = str(ids_depois[position]).strip()
-                if value:
-                    row_by_id[value] = position + 1
+        row_by_id.update(linhas_confirmadas)
 
     faltantes = [identifier for identifier in record_by_id if identifier not in row_by_id]
     if faltantes:
@@ -1115,11 +1259,17 @@ def registrar_evento_lote(
     cabecalho = _CABECALHOS_ATUAIS.get(chave_aba, list(COLUNAS_EVENTOS_LOTE))
     linha = [normalizado.get(coluna, "") for coluna in cabecalho]
 
-    resposta = aba.append_rows([linha], value_input_option="RAW")
-    linha_api = _numero_linha_append(resposta)
-    numero_linha, valores_reais = _ler_linha_por_id(
-        aba, cabecalho, "ID Evento", registro["ID Evento"], linha_api
+    if "ID Evento" not in cabecalho:
+        raise RuntimeError("A aba entrada_jogos não contém a coluna 'ID Evento'.")
+    id_index = cabecalho.index("ID Evento")
+    linhas_confirmadas, _ = _append_rows_idempotente(
+        aba,
+        [(str(registro["ID Evento"]), linha)],
+        coluna_id=id_index + 1,
+        operacao="inclusão da partida",
     )
+    numero_linha = linhas_confirmadas[str(registro["ID Evento"])]
+    valores_reais = _ler_linha_sem_formatacao(aba, numero_linha, len(cabecalho))
     valores_reais += [""] * max(0, len(cabecalho) - len(valores_reais))
     real = dict(zip(cabecalho, valores_reais))
 
@@ -1234,28 +1384,18 @@ def registrar_eventos_lote(
     cabecalho = _CABECALHOS_ATUAIS.get(chave_aba, list(COLUNAS_EVENTOS_LOTE))
     linhas = [[registro.get(coluna, "") for coluna in cabecalho] for registro in normalizados]
 
-    resposta = _executar_com_backoff(
-        lambda: aba.append_rows(linhas, value_input_option="RAW"),
+    if "ID Evento" not in cabecalho:
+        raise RuntimeError("A aba entrada_jogos não contém a coluna 'ID Evento'.")
+    id_index = cabecalho.index("ID Evento")
+    row_by_event, _ = _append_rows_idempotente(
+        aba,
+        [
+            (str(registro["ID Evento"]), linha)
+            for registro, linha in zip(normalizados, linhas)
+        ],
+        coluna_id=id_index + 1,
         operacao="inclusão em lote de partidas",
     )
-    intervalo = _intervalo_linhas_append(resposta)
-    row_by_event: dict[str, int] = {}
-    if intervalo and intervalo[1] - intervalo[0] + 1 == len(normalizados):
-        for offset, registro in enumerate(normalizados):
-            row_by_event[str(registro["ID Evento"])] = intervalo[0] + offset
-    else:
-        if "ID Evento" not in cabecalho:
-            raise RuntimeError("A aba entrada_jogos não contém a coluna 'ID Evento'.")
-        id_index = cabecalho.index("ID Evento")
-        ids = _executar_com_backoff(
-            lambda: list(aba.col_values(id_index + 1)),
-            operacao="confirmação dos IDs de partidas importadas",
-        )
-        wanted = {str(registro["ID Evento"]) for registro in normalizados}
-        for position in range(1, len(ids)):
-            value = str(ids[position]).strip()
-            if value in wanted:
-                row_by_event[value] = position + 1
 
     missing = [str(registro["ID Evento"]) for registro in normalizados if str(registro["ID Evento"]) not in row_by_event]
     if missing:
@@ -1422,7 +1562,10 @@ def salvar_lote_pendente(
     cabecalho = _CABECALHOS_ATUAIS.get(chave, list(COLUNAS_LOTE_PENDENTE))
     linha = [registro.get(coluna, "") for coluna in cabecalho]
     ultima = _letra_coluna(len(cabecalho))
-    aba.update(f"A2:{ultima}2", [linha], value_input_option="RAW")
+    _executar_com_backoff(
+        lambda: aba.update(f"A2:{ultima}2", [linha], value_input_option="RAW"),
+        operacao="atualização do snapshot do lote",
+    )
     return registro
 
 

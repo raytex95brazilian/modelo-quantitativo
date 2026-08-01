@@ -1,6 +1,6 @@
-# Tex Statistics V28.3.4 — Gols esperados restaurados
+# Tex Statistics V28.3.5 — Correção de indisponibilidade 503
 
-Esta versão foi construída diretamente sobre a V28.3.3 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
+Esta versão foi construída diretamente sobre a V28.3.4 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
 
 ## Novo modo de cadastro
 
@@ -106,8 +106,8 @@ Substitua todo o conteúdo do projeto pelo conteúdo deste pacote. Não misture 
 
 Versões esperadas:
 
-- interface: `V28.3.4`;
-- armazenamento: `28.3.1`;
+- interface: `V28.3.5`;
+- armazenamento: `28.3.5`;
 - importador: `28.3.0`;
 - núcleo preditivo: `28.1.2`;
 - filtro de 2018 e contexto esportivo: `28.3.3`.
@@ -173,3 +173,23 @@ O quadro **Projeção de gols do modelo** mostra:
 Os valores são apresentados antes da recomendação estatística e financeira. Uma observação na própria tela esclarece que se tratam de médias probabilísticas do modelo de Poisson, e não de previsão de placar exato.
 
 Nenhuma regra do filtro de 2018, probabilidade, cotação, operação, importação ou estrutura de planilha foi modificada.
+
+
+## Correção V28.3.5 — erro 503 do Google Sheets
+
+A mensagem `APIError: [503]: The service is currently unavailable` significa que o serviço remoto do Google Sheets ficou temporariamente indisponível. Ela não é um erro de cota 429.
+
+A V28.3.4 repetia automaticamente apenas erros 429. Um 503 era encerrado imediatamente, mesmo sendo temporário. A V28.3.5 passa a:
+
+- reconhecer 408, 425, 429, 500, 502, 503 e 504 como falhas temporárias;
+- repetir leituras e atualizações idempotentes com espera exponencial curta e jitter;
+- tratar `append_rows` de forma idempotente;
+- quando um 503 ocorre após o Google possivelmente já ter gravado, procurar os mesmos IDs antes de repetir;
+- anexar apenas os registros ainda ausentes, evitando duplicações;
+- preservar os campos preenchidos na tela quando a gravação não puder ser confirmada;
+- exibir mensagem amigável e deixar o erro técnico em um painel recolhido;
+- mostrar o andamento da gravação em lote na interface.
+
+A proteção foi testada com uma simulação específica em que o servidor grava as linhas e, em seguida, devolve 503. O teste confirma que o aplicativo encontra os IDs gravados e não executa um segundo append.
+
+A correção não elimina indisponibilidades reais do Google, mas impede que uma falha temporária isolada seja tratada como definitiva e reduz o risco de linhas duplicadas durante novas tentativas.

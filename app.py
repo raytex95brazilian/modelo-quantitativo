@@ -36,13 +36,13 @@ _operacao_filtrada = _load_required_module("tex_operacao_filtrada")
 _importador = _load_required_module("tex_importador_programacao")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.3.1"
+EXPECTED_STORAGE_API = "28.3.5"
 EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.3.3"
 EXPECTED_OPERATION_API = "28.2.0"
 EXPECTED_IMPORTER_API = "28.3.0"
-INTERFACE_VERSION = "V28.3.4"
-APP_NAME = "Tex Statistics V28.3.4 — Gols esperados restaurados"
+INTERFACE_VERSION = "V28.3.5"
+APP_NAME = "Tex Statistics V28.3.5 — Correção de indisponibilidade 503"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -1597,9 +1597,33 @@ def render_bulk_import() -> None:
                 st.write("• " + error)
             return
         try:
-            result = upsert_games_batch(prepared, bankroll)
+            with st.status("Gravando partidas no Google Sheets...", expanded=True) as status:
+                st.write(f"Enviando {len(prepared)} partida(s) e as respectivas cotações 1X2 em lote.")
+                result = upsert_games_batch(prepared, bankroll)
+                status.update(label="Partidas gravadas e confirmadas.", state="complete", expanded=False)
         except Exception as exc:
-            st.error(str(exc))
+            detalhe = str(exc)
+            detalhe_minusculo = detalhe.lower()
+            if any(chave in detalhe_minusculo for chave in (
+                "[503]", "service unavailable", "temporarily unavailable",
+                "backend error", "gateway timeout", "timed out", "timeout",
+            )):
+                st.error(
+                    "O Google Sheets ficou temporariamente indisponível durante a gravação. "
+                    "As partidas continuam preenchidas na tela. Esta versão verifica os IDs "
+                    "antes de repetir a operação, evitando duplicações."
+                )
+            elif any(chave in detalhe_minusculo for chave in (
+                "[429]", "quota", "too many requests", "resource_exhausted",
+            )):
+                st.error(
+                    "O Google Sheets recusou temporariamente a gravação por limite de requisições. "
+                    "As partidas continuam preenchidas; aguarde um instante e tente novamente."
+                )
+            else:
+                st.error("A gravação não foi concluída. As partidas continuam preenchidas na tela.")
+            with st.expander("Detalhes técnicos do erro"):
+                st.code(detalhe)
             return
         st.session_state.pop("tex_import_preview", None)
         st.session_state.tex_flash = True
