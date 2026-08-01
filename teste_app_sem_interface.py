@@ -56,6 +56,18 @@ class ColumnConfig:
         def __init__(self, *args, **kwargs):
             pass
 
+    class CheckboxColumn:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class SelectboxColumn:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class TextColumn:
+        def __init__(self, *args, **kwargs):
+            pass
+
 
 def decorator_passthrough(*args, **kwargs):
     if args and callable(args[0]) and len(args) == 1 and not kwargs:
@@ -82,6 +94,8 @@ st.date_input = lambda *args, **kwargs: kwargs.get("value", date.today())
 st.time_input = lambda *args, **kwargs: kwargs.get("value", time(0, 0))
 st.selectbox = lambda label, options, **kwargs: list(options)[0] if options else None
 st.text_input = lambda *args, **kwargs: kwargs.get("value", "")
+st.text_area = lambda *args, **kwargs: kwargs.get("value", "")
+st.data_editor = lambda data, *args, **kwargs: data
 st.checkbox = lambda *args, **kwargs: kwargs.get("value", False)
 st.button = lambda *args, **kwargs: False
 st.form_submit_button = lambda *args, **kwargs: False
@@ -98,7 +112,7 @@ update_stub = types.ModuleType("tex_v25_atualizacao")
 sys.modules["tex_v25_atualizacao"] = update_stub
 
 app = importlib.import_module("app")
-assert app.INTERFACE_VERSION == "V28.2.1"
+assert app.INTERFACE_VERSION == "V28.3.0"
 assert app.EXPECTED_CORE_API == "28.1.2"
 assert app.max_entries == 5
 
@@ -145,6 +159,43 @@ with TemporaryDirectory() as temp_dir:
     app.upsert_game(sample_lot[0], 1000.0)
     assert remote_calls and remote_calls[-1][0] == "UPSERT" and remote_calls[-1][1]["Mandante"] == "Club America"
 
+    # A nova importação 1X2 em lote não pode apagar mercados complementares existentes.
+    existing = dict(sample_lot[0])
+    existing.update({
+        "Odd mandante": 1.90,
+        "Odd empate": 3.20,
+        "Odd visitante": 4.00,
+        "Odd mais de 2,5": 1.85,
+        "Odd menos de 2,5": 1.95,
+        "Odd ambas marcam — Sim": 1.80,
+        "Odd ambas marcam — Não": 2.00,
+    })
+    st.session_state.tex_games = [existing]
+    app.registrar_eventos_lote = lambda secrets, jogos, interface_version="": {
+        "Eventos confirmados": len(list(jogos)),
+        "Primeira linha": 2,
+        "Última linha": 2,
+        "Aba": "entrada_jogos",
+        "Verificação": "GRAVADO E RELIDO EM LOTE",
+    }
+    app.criar_registros_cotacoes_digitadas = lambda jogo, **kwargs: [{"ID Coleta": jogo["ID"]}]
+    app.salvar_cotacoes = lambda secrets, registros: len(list(registros))
+    imported = dict(existing)
+    imported.update({
+        "Odd mandante": 2.05,
+        "Odd empate": 3.10,
+        "Odd visitante": 3.55,
+        "Odd mais de 2,5": None,
+        "Odd menos de 2,5": None,
+        "Odd ambas marcam — Sim": None,
+        "Odd ambas marcam — Não": None,
+    })
+    app.upsert_games_batch([imported], 1000.0)
+    merged = st.session_state.tex_games[0]
+    assert merged["Odd mandante"] == 2.05
+    assert merged["Odd mais de 2,5"] == 1.85
+    assert merged["Odd ambas marcam — Sim"] == 1.80
+
     app.LOCAL_PENDING_LOT_PATH = original_path
     app.google_configurado = original_google_configurado
     st.session_state.pop("tex_games", None)
@@ -186,10 +237,10 @@ assert abs(float(catalog[catalog["Grupo do mercado"].eq("1X2")].iloc[0]["Margem 
 config = json.loads(str(analysis.iloc[0]["Configuração JSON"]))
 assert config["api_nucleo"] == "28.1.2"
 assert config["percentual_unidade"] == 0.01
-assert catalog.iloc[0]["Versão da interface"] == "V28.2.1"
-assert analysis.iloc[0]["Versão da interface"] == "V28.2.1"
+assert catalog.iloc[0]["Versão da interface"] == "V28.3.0"
+assert analysis.iloc[0]["Versão da interface"] == "V28.3.0"
 summary_text = app.build_ai_summary(games, evaluations.sort_values(["MatchID", "StatusOrder"]).drop_duplicates("MatchID"), evaluations, diagnostics, matches)
 for forbidden in ("AGUARDAR PREÇO", "PREÇO FORTE", "ELEGÍVEL PARA META", "RESERVA", "mínima de admissibilidade da meta", "equilíbrio individual"):
     assert forbidden not in summary_text, forbidden
 
-print("TESTE DO APP SEM INTERFACE GRÁFICA V28.2.1: OK")
+print("TESTE DO APP SEM INTERFACE GRÁFICA V28.3.0: OK")

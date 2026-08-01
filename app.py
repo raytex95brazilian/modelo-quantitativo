@@ -32,14 +32,16 @@ _v28 = _load_required_module("tex_v28_core_2812")
 _operacional = _load_required_module("tex_operacional_core")
 _filtro2018 = _load_required_module("tex_filtro_2018")
 _operacao_filtrada = _load_required_module("tex_operacao_filtrada")
+_importador = _load_required_module("tex_importador_programacao")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.2.1"
+EXPECTED_STORAGE_API = "28.3.0"
 EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.2.0"
 EXPECTED_OPERATION_API = "28.2.0"
-INTERFACE_VERSION = "V28.2.1"
-APP_NAME = "Tex Statistics V28.2.1 — Interface limpa e gravação em lote"
+EXPECTED_IMPORTER_API = "28.3.0"
+INTERFACE_VERSION = "V28.3.0"
+APP_NAME = "Tex Statistics V28.3.0 — Importação inteligente de jogos e cotações 1X2"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -49,7 +51,7 @@ _REQUIRED_V25 = ("LEAGUES", "normalize_zip")
 _REQUIRED_STORAGE = (
     "COLUNAS_ANALISES", "COLUNAS_COTACOES", "carregar_apostas",
     "criar_registros_cotacoes_digitadas",
-    "carregar_lote_pendente", "registrar_evento_lote", "diagnostico_google",
+    "carregar_lote_pendente", "registrar_evento_lote", "registrar_eventos_lote", "diagnostico_google",
     "google_configurado", "identificadores_analises", "identificadores_apostas",
     "identificadores_cotacoes", "liquidar_aposta", "salvar_analises",
     "salvar_apostas", "salvar_cotacoes", "salvar_lote_pendente",
@@ -72,6 +74,10 @@ _REQUIRED_OPERACIONAL = (
 )
 _REQUIRED_FILTER_2018 = ("evaluate_lot_2018",)
 _REQUIRED_OPERATION_FILTERED = ("attach_filter_results", "build_operational_outputs")
+_REQUIRED_IMPORTER = (
+    "parse_pasted_schedule", "resolve_imported_matches",
+    "resolve_team_in_league",
+)
 
 _IMPORT_PROBLEMS = list(_MODULE_IMPORT_ERRORS)
 for module_name, module, required in (
@@ -82,6 +88,7 @@ for module_name, module, required in (
     ("tex_operacional_core", _operacional, _REQUIRED_OPERACIONAL),
     ("tex_filtro_2018", _filtro2018, _REQUIRED_FILTER_2018),
     ("tex_operacao_filtrada", _operacao_filtrada, _REQUIRED_OPERATION_FILTERED),
+    ("tex_importador_programacao", _importador, _REQUIRED_IMPORTER),
 ):
     if module is not None:
         _IMPORT_PROBLEMS.extend(
@@ -113,6 +120,11 @@ if _operacao_filtrada is not None and getattr(_operacao_filtrada, "OPERATION_API
         f"OPERATION_API_VERSION esperado {EXPECTED_OPERATION_API}; encontrado "
         f"{getattr(_operacao_filtrada, 'OPERATION_API_VERSION', 'ausente')}"
     )
+if _importador is not None and getattr(_importador, "IMPORTER_API_VERSION", None) != EXPECTED_IMPORTER_API:
+    _IMPORT_PROBLEMS.append(
+        f"IMPORTER_API_VERSION esperado {EXPECTED_IMPORTER_API}; encontrado "
+        f"{getattr(_importador, 'IMPORTER_API_VERSION', 'ausente')}"
+    )
 
 LEAGUES = getattr(_v25, "LEAGUES", {})
 normalize_zip = getattr(_v25, "normalize_zip", None)
@@ -131,6 +143,7 @@ salvar_apostas = getattr(_storage, "salvar_apostas", None)
 salvar_cotacoes = getattr(_storage, "salvar_cotacoes", None)
 salvar_lote_pendente = getattr(_storage, "salvar_lote_pendente", None)
 registrar_evento_lote = getattr(_storage, "registrar_evento_lote", None)
+registrar_eventos_lote = getattr(_storage, "registrar_eventos_lote", None)
 diagnostico_google = getattr(_storage, "diagnostico_google", None)
 url_planilha_configurada = getattr(_storage, "url_planilha_configurada", None)
 COLUNAS_APOSTAS = getattr(_finance, "COLUNAS_APOSTAS", [])
@@ -160,6 +173,9 @@ standings_context = getattr(_operacional, "standings_context", None)
 evaluate_lot_2018 = getattr(_filtro2018, "evaluate_lot_2018", None)
 attach_filter_results = getattr(_operacao_filtrada, "attach_filter_results", None)
 build_operational_outputs = getattr(_operacao_filtrada, "build_operational_outputs", None)
+parse_pasted_schedule = getattr(_importador, "parse_pasted_schedule", None)
+resolve_imported_matches = getattr(_importador, "resolve_imported_matches", None)
+resolve_team_in_league = getattr(_importador, "resolve_team_in_league", None)
 
 
 def build_ai_summary(
@@ -206,7 +222,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.2.1, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.3.0, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -245,12 +261,19 @@ def apply_style() -> None:
         .stButton>button:hover,.stDownloadButton>button:hover,.stLinkButton>a:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(8,145,178,.18)}
         button[kind="primary"]{background:linear-gradient(135deg,#0891b2,#0f766e)!important;border:0!important;color:white!important}
         [data-baseweb="input"]>div,[data-baseweb="select"]>div{border-radius:12px!important}
+        [data-baseweb="tab-list"]{gap:.45rem;background:rgba(8,145,178,.06);padding:.35rem;border-radius:16px}
+        [data-baseweb="tab"]{min-height:46px;border-radius:12px;padding:.55rem 1rem;font-weight:750}
+        [aria-selected="true"][data-baseweb="tab"]{background:linear-gradient(135deg,rgba(8,145,178,.16),rgba(15,118,110,.14))}
+        [data-testid="stTextArea"] textarea{border-radius:14px!important;line-height:1.45}
         .game-card{padding:.95rem 1rem;border:1px solid rgba(120,120,120,.20);border-radius:15px;margin:.4rem 0}
         @media(max-width:768px){
           .block-container{padding:.65rem .75rem 4.5rem}.tex-head{padding:1rem;border-radius:17px}.tex-head h1{font-size:1.45rem}.tex-head p{font-size:.9rem}
           [data-testid="stMetric"]{padding:.35rem}.stButton>button,.stDownloadButton>button,.stLinkButton>a{min-height:50px;font-size:.96rem}
           .rule-box,.tex-info-card,.multiple-card{border-radius:14px;padding:.85rem}
           [data-testid="stDataFrame"]{overflow-x:auto}
+          [data-baseweb="tab-list"]{display:grid;grid-template-columns:1fr 1fr;width:100%}
+          [data-baseweb="tab"]{font-size:.86rem;padding:.45rem .35rem;text-align:center}
+          [data-testid="stTextArea"] textarea{min-height:260px!important;font-size:.92rem}
         }
         </style>
         """,
@@ -537,6 +560,108 @@ def upsert_game(game: dict, bankroll_value: float) -> str:
     st.session_state.tex_last_sheet_confirmation = confirmacao
     return action
 
+
+
+def _merge_imported_game(existing: dict | None, incoming: dict) -> dict:
+    """Preserva cotações complementares já digitadas quando a importação traz só 1X2."""
+    merged = dict(existing or {})
+    merged.update({key: value for key, value in dict(incoming).items() if value is not None})
+    for column in INPUT_COLUMNS:
+        merged.setdefault(column, None if str(column).startswith("Odd ") else "")
+    return merged
+
+
+def upsert_games_batch(imported_games: list[dict], bankroll_value: float) -> dict:
+    """Persiste uma rodada inteira sem gerar uma requisição por partida."""
+    if not imported_games:
+        return {"adicionadas": 0, "atualizadas": 0, "cotacoes": 0}
+    if not google_configurado(st.secrets):
+        detalhe = diagnostico_google(st.secrets) if callable(diagnostico_google) else {}
+        raise RuntimeError(
+            "O lote NÃO foi aceito porque não existe uma planilha de destino configurada. "
+            + str(detalhe.get("erro") or "Informe spreadsheet_id ou spreadsheet_url nos Secrets.")
+        )
+
+    current = [dict(item) for item in games()]
+    index_by_key = {
+        (item.get("Data"), item.get("Código da liga"), item.get("Mandante"), item.get("Visitante")): index
+        for index, item in enumerate(current)
+    }
+    prepared: list[dict] = []
+    added = 0
+    updated = 0
+    for raw in imported_games:
+        incoming = dict(raw)
+        key = (
+            incoming.get("Data"), incoming.get("Código da liga"),
+            incoming.get("Mandante"), incoming.get("Visitante"),
+        )
+        existing_index = index_by_key.get(key)
+        existing = current[existing_index] if existing_index is not None else None
+        candidate = _merge_imported_game(existing, incoming)
+        if existing is not None:
+            candidate["ID"] = existing.get("ID") or incoming.get("ID")
+            updated += 1
+        else:
+            added += 1
+        prepared.append(candidate)
+
+    event_confirmation = registrar_eventos_lote(
+        st.secrets,
+        prepared,
+        interface_version=INTERFACE_VERSION,
+    )
+    if str(event_confirmation.get("Verificação", "")) != "GRAVADO E RELIDO EM LOTE":
+        raise RuntimeError("A leitura pós-gravação do lote não foi confirmada.")
+
+    catalog_records: list[dict] = []
+    for candidate in prepared:
+        catalog_records.extend(
+            criar_registros_cotacoes_digitadas(
+                candidate,
+                bankroll=float(bankroll_value),
+                interface_version=INTERFACE_VERSION,
+                core_api_version=EXPECTED_CORE_API,
+                model_version=MODEL_VERSION,
+                core_name=CORE_NAME,
+                app_name=APP_NAME,
+            )
+        )
+    confirmed_odds = salvar_cotacoes(st.secrets, catalog_records)
+    if confirmed_odds != len(catalog_records):
+        raise RuntimeError(
+            f"Foram esperadas {len(catalog_records)} cotações e confirmadas {confirmed_odds}."
+        )
+
+    # Atualiza a sessão apenas depois de as duas abas terem sido gravadas e relidas.
+    result = current
+    index_by_key = {
+        (item.get("Data"), item.get("Código da liga"), item.get("Mandante"), item.get("Visitante")): index
+        for index, item in enumerate(result)
+    }
+    for candidate in prepared:
+        key = (
+            candidate.get("Data"), candidate.get("Código da liga"),
+            candidate.get("Mandante"), candidate.get("Visitante"),
+        )
+        existing_index = index_by_key.get(key)
+        if existing_index is None:
+            index_by_key[key] = len(result)
+            result.append(candidate)
+        else:
+            result[existing_index] = candidate
+    st.session_state.tex_games = result
+    invalidate_analysis()
+    _persist_snapshot_best_effort(
+        f"importação em lote: {added} nova(s), {updated} atualizada(s)"
+    )
+    st.session_state.tex_last_batch_confirmation = {
+        **event_confirmation,
+        "Partidas adicionadas": added,
+        "Partidas atualizadas": updated,
+        "Cotações no catálogo": confirmed_odds,
+    }
+    return {"adicionadas": added, "atualizadas": updated, "cotacoes": confirmed_odds}
 
 def remove_game(index: int) -> dict:
     target = dict(games()[index])
@@ -878,7 +1003,7 @@ st.caption(
 _ = games()
 
 # Migração automática: lotes criados nas versões anteriores podem existir apenas em
-# entrada_jogos. Ao abrir a V28.2.1, todas as odds desse lote são copiadas/atualizadas
+# entrada_jogos. Ao abrir a V28.3.0, todas as odds desse lote são copiadas/atualizadas
 # em catalogo_odds imediatamente, sem exigir o clique em ANALISAR TODO O LOTE.
 if games() and google_configurado(st.secrets) and not st.session_state.get("tex_catalog_backfill_done"):
     try:
@@ -935,6 +1060,17 @@ if isinstance(last_confirmation, dict) and last_confirmation:
         "Casa": last_confirmation.get("Casa de apostas", ""),
         "Cotações lidas de volta": last_confirmation.get("Cotações verificadas", {}),
     }, expanded=False)
+last_batch = st.session_state.get("tex_last_batch_confirmation")
+if isinstance(last_batch, dict) and last_batch:
+    st.success(
+        "Última gravação em lote comprovada: "
+        f"{last_batch.get('Eventos confirmados', 0)} partida(s), linhas "
+        f"{last_batch.get('Primeira linha', '?')}–{last_batch.get('Última linha', '?')} da aba "
+        f"{last_batch.get('Aba', 'entrada_jogos')}; "
+        f"{last_batch.get('Cotações no catálogo', 0)} cotação(ões) no catálogo."
+    )
+    if last_batch.get("Planilha URL"):
+        st.link_button("Abrir o lote confirmado na planilha", str(last_batch.get("Planilha URL")))
 if google_configurado(st.secrets):
     st.success("Persistência obrigatória ativa: cada partida e cada cotação são gravadas imediatamente em entrada_jogos e catalogo_odds, antes da análise.")
 else:
@@ -1255,7 +1391,346 @@ def render_game_entry() -> None:
         st.rerun()
 
 
-render_game_entry()
+
+def _format_import_date(value: object) -> str:
+    try:
+        return pd.Timestamp(str(value)).strftime("%d/%m/%Y")
+    except Exception:
+        return str(value or "")
+
+
+def render_bulk_import() -> None:
+    """Importa a listagem visual: data, hora, equipes e Resultado Final 1X2."""
+    with st.container(border=True):
+        st.markdown("**Importar programação e cotações 1X2**")
+        st.caption(
+            "Cole a listagem principal da casa de apostas. O leitor extrai somente os dados "
+            "seguros: data, horário, mandante, visitante e as três cotações de Resultado Final. "
+            "Mais/Menos de 2,5 e Ambas Marcam serão complementados manualmente depois."
+        )
+        controls = st.columns([0.8, 1.5])
+        import_year = controls[0].number_input(
+            "Ano das partidas",
+            min_value=2020,
+            max_value=2100,
+            value=int(date.today().year),
+            step=1,
+            key="tex_import_year",
+        )
+        bookmaker = controls[1].text_input(
+            "Casa de apostas",
+            value="PIXBET",
+            key="tex_import_bookmaker",
+        )
+        raw_text = st.text_area(
+            "Programação copiada",
+            height=300,
+            placeholder=(
+                "08/08\n16:00\nGrêmio\nSão Paulo SP\n\n"
+                "Grêmio\n2.32\n\nEmpate\n3.09\n\nSão Paulo SP\n2.92"
+            ),
+            key="tex_import_text",
+        )
+        if st.button(
+            "INTERPRETAR E PREENCHER AUTOMATICAMENTE",
+            type="primary",
+            use_container_width=True,
+            key="tex_parse_import",
+        ):
+            parsed = parse_pasted_schedule(raw_text, default_year=int(import_year))
+            if not parsed:
+                st.session_state.pop("tex_import_preview", None)
+                st.error(
+                    "Nenhuma partida foi reconhecida. O texto precisa conter, nessa ordem: "
+                    "data, horário, mandante, visitante e o primeiro bloco de Resultado Final."
+                )
+            else:
+                resolved = resolve_imported_matches(
+                    parsed,
+                    teams_by_code=teams_by_code,
+                    leagues=LEAGUES,
+                )
+                for item in resolved:
+                    try:
+                        kickoff = datetime.fromisoformat(
+                            f"{item['Data']}T{item['Hora']}:00"
+                        ).replace(tzinfo=FUSO)
+                    except Exception:
+                        kickoff = None
+                    if kickoff is None or kickoff <= now_br():
+                        item["Usar"] = False
+                        item["Status"] = "REVISAR"
+                        item["Diagnóstico"] = (
+                            str(item.get("Diagnóstico", ""))
+                            + " Data ou horário inválido/passado para uma análise pré-jogo."
+                        ).strip()
+                st.session_state.tex_import_preview = resolved
+                st.success(
+                    f"{len(resolved)} partida(s) identificada(s). Confira a prévia antes de gravar."
+                )
+
+        preview = st.session_state.get("tex_import_preview")
+        if not preview:
+            return
+
+        preview_frame = pd.DataFrame(preview)
+        recognized = int(preview_frame["Status"].eq("RECONHECIDO").sum())
+        review = int(len(preview_frame) - recognized)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Partidas encontradas", len(preview_frame))
+        c2.metric("Reconhecidas automaticamente", recognized)
+        c3.metric("Precisam de revisão", review)
+        st.caption(
+            "A liga é inferida pelas duas equipes em conjunto. Ex.: Flamengo + São Paulo → "
+            "Brasileirão Série A; NY City + Inter Miami → EUA - MLS. Você pode corrigir "
+            "liga, nomes, data, horário ou cotações diretamente na tabela."
+        )
+
+        editable_columns = [
+            "Usar", "Status", "Confiança", "Liga", "Data", "Hora",
+            "Mandante", "Visitante", "Odd mandante", "Odd empate", "Odd visitante",
+            "Diagnóstico",
+        ]
+        edited = st.data_editor(
+            preview_frame[editable_columns],
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+            disabled=["Status", "Confiança", "Diagnóstico"],
+            column_config={
+                "Usar": st.column_config.CheckboxColumn("Importar", default=True),
+                "Liga": st.column_config.SelectboxColumn(
+                    "Liga detectada",
+                    options=league_names,
+                    required=True,
+                ),
+                "Data": st.column_config.TextColumn("Data", help="AAAA-MM-DD"),
+                "Hora": st.column_config.TextColumn("Hora", help="HH:MM"),
+                "Odd mandante": st.column_config.NumberColumn("Casa", min_value=1.01, max_value=100.0, format="%.2f"),
+                "Odd empate": st.column_config.NumberColumn("Empate", min_value=1.01, max_value=100.0, format="%.2f"),
+                "Odd visitante": st.column_config.NumberColumn("Fora", min_value=1.01, max_value=100.0, format="%.2f"),
+                "Diagnóstico": st.column_config.TextColumn("Diagnóstico", width="large"),
+            },
+            key="tex_import_editor",
+        )
+
+        selected = edited[edited["Usar"].fillna(False).astype(bool)].copy()
+        st.info(
+            f"{len(selected)} partida(s) marcada(s) para importação. "
+            "Os mercados adicionais permanecerão vazios até o preenchimento manual."
+        )
+        if not st.button(
+            "GRAVAR PARTIDAS E COTAÇÕES 1X2",
+            type="primary",
+            use_container_width=True,
+            disabled=selected.empty,
+            key="tex_commit_import",
+        ):
+            return
+
+        prepared: list[dict] = []
+        errors: list[str] = []
+        for position, row in selected.reset_index(drop=True).iterrows():
+            label = f"Linha {position + 1}"
+            league_name = str(row.get("Liga", "") or "").strip()
+            code = name_to_code.get(league_name)
+            if not code:
+                errors.append(f"{label}: selecione uma liga válida.")
+                continue
+            home, home_score = resolve_team_in_league(str(row.get("Mandante", "")), code, teams_by_code)
+            away, away_score = resolve_team_in_league(str(row.get("Visitante", "")), code, teams_by_code)
+            if not home or home_score < 0.72:
+                errors.append(f"{label}: mandante não reconhecido em {league_name}: {row.get('Mandante', '')!r}.")
+                continue
+            if not away or away_score < 0.72:
+                errors.append(f"{label}: visitante não reconhecido em {league_name}: {row.get('Visitante', '')!r}.")
+                continue
+            if home == away:
+                errors.append(f"{label}: mandante e visitante foram resolvidos como a mesma equipe.")
+                continue
+            try:
+                game_date = pd.Timestamp(str(row.get("Data", ""))).date()
+                game_time = datetime.strptime(str(row.get("Hora", "")), "%H:%M").time()
+                kickoff = datetime.combine(game_date, game_time, tzinfo=FUSO)
+            except Exception:
+                errors.append(f"{label}: data ou horário inválido.")
+                continue
+            if kickoff <= now_br():
+                errors.append(f"{label}: {home} x {away} não está em horário futuro.")
+                continue
+            odds = [parse_odd(row.get(column)) for column in ("Odd mandante", "Odd empate", "Odd visitante")]
+            if any(value is None for value in odds):
+                errors.append(f"{label}: complete as três cotações de Resultado Final.")
+                continue
+            try:
+                validate_market_odds("1X2", [float(value) for value in odds])
+            except ValueError as exc:
+                errors.append(f"{label}: {exc}")
+                continue
+            prepared.append({
+                "ID": _stable_game_id(game_date.isoformat(), code, home, away),
+                "Data": game_date.isoformat(),
+                "Hora": game_time.strftime("%H:%M"),
+                "Código da liga": code,
+                "Liga": league_name,
+                "Mandante": home,
+                "Visitante": away,
+                "Casa de apostas": bookmaker.strip() or "PIXBET",
+                "Odd mandante": float(odds[0]),
+                "Odd empate": float(odds[1]),
+                "Odd visitante": float(odds[2]),
+                "Odd mais de 2,5": None,
+                "Odd menos de 2,5": None,
+                "Odd ambas marcam — Sim": None,
+                "Odd ambas marcam — Não": None,
+            })
+        if errors:
+            st.error("A importação foi bloqueada para evitar registros incorretos.")
+            for error in errors[:20]:
+                st.write("• " + error)
+            return
+        try:
+            result = upsert_games_batch(prepared, bankroll)
+        except Exception as exc:
+            st.error(str(exc))
+            return
+        st.session_state.pop("tex_import_preview", None)
+        st.session_state.tex_flash = True
+        st.session_state.tex_flash_message = (
+            f"Importação concluída: {result['adicionadas']} partida(s) adicionada(s), "
+            f"{result['atualizadas']} atualizada(s) e {result['cotacoes']} cotação(ões) "
+            "1X2 confirmada(s) na planilha."
+        )
+        st.rerun()
+
+
+def render_bulk_odds_completion() -> None:
+    """Complementação manual, móvel e em lote dos mercados não presentes na tela principal."""
+    if not games():
+        return
+    with st.container(border=True):
+        st.markdown("**Completar Mais/Menos de 2,5 e Ambas Marcam em lote**")
+        st.caption(
+            "Os valores importados de Resultado Final são preservados. Abra apenas os jogos "
+            "que deseja completar. O salvamento de todas as alterações é feito em lote para "
+            "não exceder a quota do Google Sheets."
+        )
+        with st.form("tex_bulk_completion_form", clear_on_submit=False):
+            captured: list[tuple[int, object, object, object, object]] = []
+            for index, item in enumerate(games()):
+                title = (
+                    f"{_format_import_date(item.get('Data'))} {item.get('Hora', '')} — "
+                    f"{item.get('Mandante', '')} x {item.get('Visitante', '')}"
+                )
+                with st.expander(title, expanded=False):
+                    st.caption(
+                        f"1X2 já salvo: {item.get('Odd mandante') or '—'} | "
+                        f"{item.get('Odd empate') or '—'} | {item.get('Odd visitante') or '—'}"
+                    )
+                    row_ou = st.columns(2)
+                    odd_o = row_ou[0].number_input(
+                        "Mais de 2,5",
+                        min_value=1.01,
+                        max_value=100.0,
+                        value=item.get("Odd mais de 2,5"),
+                        step=0.01,
+                        format="%.2f",
+                        key=f"bulk_o25_{item.get('ID', index)}",
+                    )
+                    odd_u = row_ou[1].number_input(
+                        "Menos de 2,5",
+                        min_value=1.01,
+                        max_value=100.0,
+                        value=item.get("Odd menos de 2,5"),
+                        step=0.01,
+                        format="%.2f",
+                        key=f"bulk_u25_{item.get('ID', index)}",
+                    )
+                    row_btts = st.columns(2)
+                    odd_y = row_btts[0].number_input(
+                        "Ambas marcam — Sim",
+                        min_value=1.01,
+                        max_value=100.0,
+                        value=item.get("Odd ambas marcam — Sim"),
+                        step=0.01,
+                        format="%.2f",
+                        key=f"bulk_btts_y_{item.get('ID', index)}",
+                    )
+                    odd_n = row_btts[1].number_input(
+                        "Ambas marcam — Não",
+                        min_value=1.01,
+                        max_value=100.0,
+                        value=item.get("Odd ambas marcam — Não"),
+                        step=0.01,
+                        format="%.2f",
+                        key=f"bulk_btts_n_{item.get('ID', index)}",
+                    )
+                    captured.append((index, odd_o, odd_u, odd_y, odd_n))
+            submitted = st.form_submit_button(
+                "SALVAR TODAS AS COTAÇÕES COMPLEMENTARES",
+                type="primary",
+                use_container_width=True,
+            )
+        if not submitted:
+            return
+        changed: list[dict] = []
+        errors: list[str] = []
+        for index, odd_o, odd_u, odd_y, odd_n in captured:
+            original = dict(games()[index])
+            title = f"{original.get('Mandante')} x {original.get('Visitante')}"
+            if (odd_o is None) != (odd_u is None):
+                errors.append(f"{title}: preencha as duas cotações de Mais/Menos de 2,5 ou deixe ambas vazias.")
+                continue
+            if (odd_y is None) != (odd_n is None):
+                errors.append(f"{title}: preencha Sim e Não de Ambas Marcam ou deixe ambos vazios.")
+                continue
+            try:
+                if odd_o is not None:
+                    validate_market_odds("OU25", [float(odd_o), float(odd_u)])
+                if odd_y is not None:
+                    validate_market_odds("BTTS", [float(odd_y), float(odd_n)])
+            except ValueError as exc:
+                errors.append(f"{title}: {exc}")
+                continue
+            candidate = dict(original)
+            candidate.update({
+                "Odd mais de 2,5": float(odd_o) if odd_o is not None else None,
+                "Odd menos de 2,5": float(odd_u) if odd_u is not None else None,
+                "Odd ambas marcam — Sim": float(odd_y) if odd_y is not None else None,
+                "Odd ambas marcam — Não": float(odd_n) if odd_n is not None else None,
+            })
+            changed_keys = (
+                "Odd mais de 2,5", "Odd menos de 2,5",
+                "Odd ambas marcam — Sim", "Odd ambas marcam — Não",
+            )
+            if any(candidate.get(key) != original.get(key) for key in changed_keys):
+                changed.append(candidate)
+        if errors:
+            st.error("As alterações não foram salvas.")
+            for error in errors[:20]:
+                st.write("• " + error)
+            return
+        if not changed:
+            st.info("Nenhuma cotação complementar foi alterada.")
+            return
+        try:
+            result = upsert_games_batch(changed, bankroll)
+        except Exception as exc:
+            st.error(str(exc))
+            return
+        st.session_state.tex_flash = True
+        st.session_state.tex_flash_message = (
+            f"Cotações complementares salvas em lote para {len(changed)} partida(s); "
+            f"{result['cotacoes']} registro(s) confirmado(s) no catálogo."
+        )
+        st.rerun()
+
+
+manual_tab, import_tab = st.tabs(["Cadastro manual", "Colar jogos e cotações 1X2"])
+with manual_tab:
+    render_game_entry()
+with import_tab:
+    render_bulk_import()
 
 st.subheader("2. Partidas do lote")
 if not games():
@@ -1282,6 +1757,7 @@ else:
         hide_index=True,
         use_container_width=True,
     )
+    render_bulk_odds_completion()
     remove_col, backup_col = st.columns([3, 1])
     labels = [f"{index + 1}. {item['Mandante']} x {item['Visitante']} — {item['Liga']}" for index, item in enumerate(games())]
     remove_label = remove_col.selectbox("Remover partida", ["Nenhuma"] + labels)

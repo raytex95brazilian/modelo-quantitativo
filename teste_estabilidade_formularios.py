@@ -60,4 +60,7 @@ assert 'APLICAR CONFIGURAÇÃO' not in sidebar
 assert 'on_change=_apply_operational_config_automatically' in sidebar
 
 assert 'streamlit>=1.37,<2.0' in requirements
-print("TESTE DE USABILIDADE E ESTABILIDADE V28.2.1: OK")
+assert 'st.tabs(["Cadastro manual", "Colar jogos e cotações 1X2"])' in entry
+assert 'INTERPRETAR E PREENCHER AUTOMATICAMENTE' in entry
+assert 'SALVAR TODAS AS COTAÇÕES COMPLEMENTARES' in source
+print("TESTE DE USABILIDADE E ESTABILIDADE V28.3.0: OK")

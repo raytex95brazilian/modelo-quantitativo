@@ -11,7 +11,7 @@ import time
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.2.1"
+STORAGE_API_VERSION = "28.3.0"
 
 from tex_v28_finance import COLUNAS_APOSTAS, identificador_registro, liquidar_registro
 
@@ -1146,6 +1146,156 @@ def registrar_evento_lote(
             campo: real.get(campo, "") for campo in campos_numericos
         },
         "Verificação": "GRAVADO E RELIDO",
+    }
+
+
+def registrar_eventos_lote(
+    secrets: Any,
+    jogos: Iterable[dict[str, Any]],
+    *,
+    interface_version: str = "",
+    lote_id: str = "principal",
+) -> dict[str, Any]:
+    """Grava e confere vários UPSERTs do lote com uma única escrita e uma leitura.
+
+    A função preserva o mesmo formato append-only de ``registrar_evento_lote``,
+    mas evita uma requisição por partida ao importar uma rodada inteira.
+    """
+    itens = [dict(jogo or {}) for jogo in jogos]
+    if not itens:
+        return {
+            "Eventos confirmados": 0,
+            "Primeira linha": None,
+            "Última linha": None,
+            "Verificação": "NENHUM EVENTO",
+        }
+    sem_id = [str(item.get("Mandante", "") or "?") for item in itens if not str(item.get("ID", "")).strip()]
+    if sem_id:
+        raise ValueError("Todos os eventos em lote exigem ID de partida. Sem ID: " + ", ".join(sem_id[:5]))
+
+    cfg = configuracao_google(secrets)
+    if not cfg["configurado"]:
+        raise RuntimeError(
+            cfg.get("erro_configuracao")
+            or "O Google Sheets não está configurado com um spreadsheet_id explícito."
+        )
+
+    registrado_em = datetime.now(ZoneInfo("America/Fortaleza")).replace(microsecond=0).isoformat()
+    registros: list[dict[str, Any]] = []
+    for posicao, dados in enumerate(itens):
+        registros.append({
+            "ID Evento": f"{registrado_em}-{posicao:04d}-{uuid4().hex}",
+            "ID do lote": str(lote_id or "principal"),
+            "Tipo de evento": "UPSERT",
+            "Registrado em": registrado_em,
+            "ID da partida": str(dados.get("ID", "") or ""),
+            "Data": str(dados.get("Data", "") or ""),
+            "Hora": str(dados.get("Hora", "") or ""),
+            "Código da liga": str(dados.get("Código da liga", "") or ""),
+            "Liga": str(dados.get("Liga", "") or ""),
+            "Mandante": str(dados.get("Mandante", "") or ""),
+            "Visitante": str(dados.get("Visitante", "") or ""),
+            "Casa de apostas": str(dados.get("Casa de apostas", "") or "PIXBET"),
+            "Odd mandante": dados.get("Odd mandante", ""),
+            "Odd empate": dados.get("Odd empate", ""),
+            "Odd visitante": dados.get("Odd visitante", ""),
+            "Odd mais de 2,5": dados.get("Odd mais de 2,5", ""),
+            "Odd menos de 2,5": dados.get("Odd menos de 2,5", ""),
+            "Odd ambas marcam — Sim": dados.get("Odd ambas marcam — Sim", ""),
+            "Odd ambas marcam — Não": dados.get("Odd ambas marcam — Não", ""),
+            "Versão da interface": str(interface_version),
+            "Origem": "Importação em lote verificada Tex Statistics",
+        })
+
+    normalizados = _normalizar(registros, COLUNAS_EVENTOS_LOTE)
+    aba = _obter_aba_cacheada(secrets, cfg["worksheet_eventos_lote"], COLUNAS_EVENTOS_LOTE)
+    chave_aba = (cfg["spreadsheet_id"], cfg["client_email"], cfg["worksheet_eventos_lote"])
+    cabecalho = _CABECALHOS_ATUAIS.get(chave_aba, list(COLUNAS_EVENTOS_LOTE))
+    linhas = [[registro.get(coluna, "") for coluna in cabecalho] for registro in normalizados]
+
+    resposta = _executar_com_backoff(
+        lambda: aba.append_rows(linhas, value_input_option="RAW"),
+        operacao="inclusão em lote de partidas",
+    )
+    intervalo = _intervalo_linhas_append(resposta)
+    row_by_event: dict[str, int] = {}
+    if intervalo and intervalo[1] - intervalo[0] + 1 == len(normalizados):
+        for offset, registro in enumerate(normalizados):
+            row_by_event[str(registro["ID Evento"])] = intervalo[0] + offset
+    else:
+        if "ID Evento" not in cabecalho:
+            raise RuntimeError("A aba entrada_jogos não contém a coluna 'ID Evento'.")
+        id_index = cabecalho.index("ID Evento")
+        ids = _executar_com_backoff(
+            lambda: list(aba.col_values(id_index + 1)),
+            operacao="confirmação dos IDs de partidas importadas",
+        )
+        wanted = {str(registro["ID Evento"]) for registro in normalizados}
+        for position in range(1, len(ids)):
+            value = str(ids[position]).strip()
+            if value in wanted:
+                row_by_event[value] = position + 1
+
+    missing = [str(registro["ID Evento"]) for registro in normalizados if str(registro["ID Evento"]) not in row_by_event]
+    if missing:
+        raise RuntimeError(
+            "A API respondeu, mas estes eventos não foram localizados na planilha: "
+            + ", ".join(missing[:10])
+        )
+
+    last_col = _letra_coluna(len(cabecalho))
+    ordered_ids = [str(registro["ID Evento"]) for registro in normalizados]
+    ranges = [f"A{row_by_event[event_id]}:{last_col}{row_by_event[event_id]}" for event_id in ordered_ids]
+    values_by_range = _batch_get_linhas_sem_formatacao(aba, ranges)
+    if len(values_by_range) != len(normalizados):
+        raise RuntimeError(
+            f"A conferência em lote retornou {len(values_by_range)} linha(s), "
+            f"mas eram esperadas {len(normalizados)}."
+        )
+
+    numeric_fields = [
+        "Odd mandante", "Odd empate", "Odd visitante", "Odd mais de 2,5",
+        "Odd menos de 2,5", "Odd ambas marcam — Sim", "Odd ambas marcam — Não",
+    ]
+    text_fields = [
+        "ID Evento", "ID do lote", "Tipo de evento", "ID da partida", "Data", "Hora",
+        "Código da liga", "Liga", "Mandante", "Visitante", "Casa de apostas",
+        "Versão da interface",
+    ]
+    divergencias: list[str] = []
+    for registro, values in zip(normalizados, values_by_range):
+        values = list(values) + [""] * max(0, len(cabecalho) - len(values))
+        real = dict(zip(cabecalho, values))
+        for field in text_fields:
+            if not _celula_equivalente(registro.get(field, ""), real.get(field, "")):
+                divergencias.append(f"{registro['ID Evento']}, {field}")
+        for field in numeric_fields:
+            if not _celula_equivalente(registro.get(field, ""), real.get(field, ""), numerico=True):
+                divergencias.append(f"{registro['ID Evento']}, {field}")
+        if len(divergencias) >= 20:
+            break
+    if divergencias:
+        raise RuntimeError(
+            "As partidas importadas apareceram na planilha, mas a conferência encontrou diferenças: "
+            + ", ".join(divergencias)
+        )
+
+    rows = [row_by_event[event_id] for event_id in ordered_ids]
+    url_base = url_planilha_configurada(secrets)
+    worksheet_id = getattr(aba, "id", None)
+    first_row, last_row = min(rows), max(rows)
+    url_range = (
+        f"{url_base}#gid={worksheet_id}&range=A{first_row}:A{last_row}"
+        if worksheet_id is not None else url_base
+    )
+    return {
+        "Eventos confirmados": len(normalizados),
+        "Primeira linha": first_row,
+        "Última linha": last_row,
+        "Aba": cfg["worksheet_eventos_lote"],
+        "Planilha URL": url_range,
+        "Verificação": "GRAVADO E RELIDO EM LOTE",
+        "IDs dos eventos": ordered_ids,
     }
 
 def _jogo_de_evento(registro: dict[str, Any]) -> dict[str, Any]:

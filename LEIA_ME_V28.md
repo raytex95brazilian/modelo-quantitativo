@@ -1,9 +1,10 @@
-# Tex Statistics V28.2.1
+# Tex Statistics V28.3.0
 
-- núcleo esportivo: API 28.1.2;
-- armazenamento: API 28.2.1;
-- finanças: API 28.1.5.12;
-- filtro e operação: API 28.2.0;
-- interface: V28.2.1.
+- interface: V28.3.0;
+- importador de programação e 1X2: API 28.3.0;
+- armazenamento: API 28.3.0;
+- núcleo preditivo: API 28.1.2;
+- filtro obrigatório de 2018: API 28.2.0;
+- operação filtrada: API 28.2.0.
 
-Leia `LEIA_PRIMEIRO.md` antes da implantação.
+Leia `LEIA_PRIMEIRO.md` antes do deploy.

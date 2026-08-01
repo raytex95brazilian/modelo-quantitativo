@@ -9,6 +9,7 @@ import py_compile
 import zipfile
 
 import tex_v25_storage as storage
+import tex_importador_programacao as importer
 import tex_v28_core_2812 as core
 from tex_v28_finance import COLUNAS_APOSTAS
 
@@ -21,6 +22,7 @@ EXPECTED_FILES = [
     "tex_operacional_core.py",
     "tex_filtro_2018.py",
     "tex_operacao_filtrada.py",
+    "tex_importador_programacao.py",
     "tex_v25_core.py",
     "tex_v25_storage.py",
     "tex_v25_atualizacao.py",
@@ -50,7 +52,7 @@ assert 'EXPECTED_FILTER_API = "28.2.0"' in app_source
 assert 'evaluate_lot_2018(current_games, matches)' in app_source
 assert 'build_operational_outputs(' in app_source
 assert 'Somente jogos aprovados no filtro de 2018' in app_source
-assert 'INTERFACE_VERSION = "V28.2.1"' in app_source
+assert 'INTERFACE_VERSION = "V28.3.0"' in app_source
 assert 'Partida e cotações — etapa única' in app_source
 assert 'CONFIRMAR CONFRONTO' not in app_source
 assert 'Etapa 1 de 2' not in app_source
@@ -62,6 +64,11 @@ assert '@_fragment' in app_source
 assert 'with st.form("tex_operational_config_form"' not in app_source
 assert 'on_change=_apply_operational_config_automatically' in app_source
 assert 'Cotação justa' in app_source
+assert 'INTERPRETAR E PREENCHER AUTOMATICAMENTE' in app_source
+assert 'Colar jogos e cotações 1X2' in app_source
+assert 'resolve_imported_matches' in app_source
+assert 'registrar_eventos_lote' in app_source
+assert 'SALVAR TODAS AS COTAÇÕES COMPLEMENTARES' in app_source
 assert 'with st.form(f"game_form_{form_version}"' in app_source
 assert '"weekly_target": 5' in app_source
 assert 'salvar_lote_pendente' in app_source
@@ -102,13 +109,15 @@ assert core.CORE_API_VERSION == "28.1.2"
 assert core.V28_CFG.max_entries == 5
 assert core.V28_CFG.strong_price_ev == 0.0
 assert core.V28_CFG.fallback_min_ev == -0.15
-assert storage.STORAGE_API_VERSION == "28.2.1"
+assert storage.STORAGE_API_VERSION == "28.3.0"
+assert importer.IMPORTER_API_VERSION == "28.3.0"
 assert "Lote JSON" in storage.COLUNAS_LOTE_PENDENTE
 assert "ID Evento" in storage.COLUNAS_EVENTOS_LOTE
 assert storage.COLUNAS_COTACOES[-1] == "Versão do filtro 2018"
 assert storage.COLUNAS_ANALISES[-1] == "Versão do filtro 2018"
 assert "Tipo de evento" in storage.COLUNAS_EVENTOS_LOTE
 assert callable(storage.criar_registros_cotacoes_digitadas)
+assert callable(storage.registrar_eventos_lote)
 
 for name, columns in {
     "cotações": storage.COLUNAS_COTACOES,
@@ -164,4 +173,4 @@ for relative, path in distributed_files.items():
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert manifest_entries[relative] == digest, f"SHA-256 divergente: {relative}"
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.2.1: OK")
+print("TESTE DE INTEGRIDADE DO PACOTE V28.3.0: OK")
