@@ -40,9 +40,9 @@ EXPECTED_STORAGE_API = "28.3.6"
 EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.3.3"
 EXPECTED_OPERATION_API = "28.2.0"
-EXPECTED_IMPORTER_API = "28.3.0"
-INTERFACE_VERSION = "V28.3.7"
-APP_NAME = "Tex Statistics V28.3.7 — Resumo dos aprovados"
+EXPECTED_IMPORTER_API = "28.3.8"
+INTERFACE_VERSION = "V28.3.8"
+APP_NAME = "Tex Statistics V28.3.8 — Reconhecimento atualizado de ligas"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -224,7 +224,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.3.7, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.3.8, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()

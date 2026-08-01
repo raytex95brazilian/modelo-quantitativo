@@ -1,4 +1,29 @@
-# Tex Statistics V28.3.7 — Resumo dos jogos aprovados
+# Tex Statistics V28.3.8 — Reconhecimento atualizado da 2. Bundesliga
+
+
+## Correção V28.3.8 — clubes promovidos, rebaixados e nomes alternativos
+
+A V28.3.7 montava o catálogo de reconhecimento usando apenas a temporada mais recente já presente na base histórica. Isso falhava quando a programação colada pertencia à temporada seguinte e havia clubes recém-promovidos, rebaixados ou apresentados com nomes diferentes dos usados internamente.
+
+Na programação da 2. Bundesliga 2026/27, por exemplo, `Wolfsburg`, `Heidenheim` e `St Pauli` ainda apareciam no catálogo recente da Bundesliga; `Osnabruck`, `Dresden` e `Cottbus` não estavam no recorte mais recente; e nomes como `Hertha Berlin`, `Eintracht Braunschweig` e `Dynamo Dresden` não coincidiam literalmente com `Hertha`, `Braunschweig` e `Dresden`.
+
+A correção acrescenta um catálogo sazonal datado para a 2. Bundesliga 2026/27 e equivalências explícitas de nomenclatura. O catálogo adicional só é aplicado a partidas da temporada 2026/27, evitando alterar a classificação de jogos de temporadas anteriores.
+
+Foram validados os seguintes confrontos do exemplo real:
+
+- Bochum × Hertha Berlin;
+- Magdeburg × Eintracht Braunschweig;
+- Heidenheim × Osnabruck;
+- Darmstadt × Holstein Kiel;
+- Karlsruhe × Bielefeld;
+- Wolfsburg × Kaiserslautern;
+- Energie Cottbus × Hannover;
+- Nurnberg × Dynamo Dresden;
+- St Pauli × Greuther Fürth.
+
+Todos passam a ser reconhecidos como **Alemanha - 2. Bundesliga** e recebem os nomes internos esperados pelo motor.
+
+Nenhuma coluna das planilhas, regra do filtro de 2018, cálculo estatístico, cotação ou lógica financeira foi modificada.
 
 
 ## Upgrade V28.3.7 — resumo imediato dos aprovados
@@ -142,7 +167,7 @@ Substitua todo o conteúdo do projeto pelo conteúdo deste pacote. Não misture 
 
 Versões esperadas:
 
-- interface: `V28.3.7`;
+- interface: `V28.3.8`;
 - armazenamento: `28.3.6`;
 - importador: `28.3.0`;
 - núcleo preditivo: `28.1.2`;

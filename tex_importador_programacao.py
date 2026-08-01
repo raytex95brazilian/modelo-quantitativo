@@ -8,7 +8,7 @@ import math
 import re
 import unicodedata
 
-IMPORTER_API_VERSION = "28.3.0"
+IMPORTER_API_VERSION = "28.3.8"
 
 _DATE_RE = re.compile(r"^(?P<day>\d{1,2})/(?P<month>\d{1,2})(?:/(?P<year>\d{2}|\d{4}))?$")
 _TIME_RE = re.compile(r"^(?P<hour>\d{1,2}):(?P<minute>\d{2})$")
@@ -63,6 +63,42 @@ _EXPLICIT_ALIASES: dict[str, tuple[str, str]] = {
     "sporting cp": ("P1", "Sp Lisbon"),
     "sporting lisboa": ("P1", "Sp Lisbon"),
     "sporting braga": ("P1", "Sp Braga"),
+    # Variações exibidas na programação oficial/operadores da 2. Bundesliga.
+    "hertha berlin": ("D2", "Hertha"),
+    "hertha bsc": ("D2", "Hertha"),
+    "eintracht braunschweig": ("D2", "Braunschweig"),
+    "dynamo dresden": ("D2", "Dresden"),
+    "sg dynamo dresden": ("D2", "Dresden"),
+    "energie cottbus": ("D2", "Cottbus"),
+    "fc energie cottbus": ("D2", "Cottbus"),
+    "spvgg greuther furth": ("D2", "Greuther Furth"),
+    "greuther furth": ("D2", "Greuther Furth"),
+    "1 fc nurnberg": ("D2", "Nurnberg"),
+    "vfl osnabruck": ("D2", "Osnabruck"),
+    "vfl bochum": ("D2", "Bochum"),
+    "vfl wolfsburg": ("D2", "Wolfsburg"),
+    "fc st pauli": ("D2", "St Pauli"),
+    "1 fc heidenheim": ("D2", "Heidenheim"),
+    "karlsruher sc": ("D2", "Karlsruhe"),
+    "arminia bielefeld": ("D2", "Bielefeld"),
+    "dsc arminia bielefeld": ("D2", "Bielefeld"),
+    "sv darmstadt 98": ("D2", "Darmstadt"),
+    "1 fc magdeburg": ("D2", "Magdeburg"),
+    "1 fc kaiserslautern": ("D2", "Kaiserslautern"),
+    "hannover 96": ("D2", "Hannover"),
+}
+
+# O catálogo histórico só contém a temporada mais recente já baixada. Em ligas
+# com promoção e rebaixamento, a programação da temporada seguinte pode trazer
+# clubes que ainda não aparecem no recorte mais recente da base. O overlay é
+# aplicado somente ao ano/temporada indicado pela data importada.
+_SEASONAL_ROSTER_OVERLAYS: dict[tuple[str, int], tuple[str, ...]] = {
+    ("D2", 2026): (
+        "Bielefeld", "Bochum", "Braunschweig", "Cottbus", "Darmstadt",
+        "Dresden", "Greuther Furth", "Hannover", "Heidenheim", "Hertha",
+        "Kaiserslautern", "Karlsruhe", "Holstein Kiel", "Magdeburg",
+        "Nurnberg", "Osnabruck", "St Pauli", "Wolfsburg",
+    ),
 }
 
 _DROP_TOKENS = {
@@ -298,8 +334,16 @@ def _team_match_score(raw_name: str, code: str, canonical: str) -> float:
     return score
 
 
-def resolve_team_in_league(raw_name: str, league_code: str, teams_by_code: dict[str, list[str]]) -> tuple[str, float]:
+def resolve_team_in_league(
+    raw_name: str,
+    league_code: str,
+    teams_by_code: dict[str, list[str]],
+    *,
+    extra_candidates: Iterable[str] | None = None,
+) -> tuple[str, float]:
     candidates = list(teams_by_code.get(str(league_code), []))
+    if extra_candidates:
+        candidates = sorted(set(candidates) | {str(item) for item in extra_candidates if str(item).strip()})
     if not candidates:
         return "", 0.0
     ranked = sorted(
@@ -310,24 +354,51 @@ def resolve_team_in_league(raw_name: str, league_code: str, teams_by_code: dict[
     return ranked[0]
 
 
+def _season_from_imported_date(value: Any) -> int | None:
+    if isinstance(value, date):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        try:
+            parsed = date.fromisoformat(text[:10])
+        except (TypeError, ValueError):
+            return None
+    # Ligas europeias usam o ano de início da temporada.
+    return parsed.year if parsed.month >= 7 else parsed.year - 1
+
+
 def infer_league_and_teams(
     home_raw: str,
     away_raw: str,
     *,
     teams_by_code: dict[str, list[str]],
     leagues: dict[str, str],
+    match_date: Any = None,
 ) -> dict[str, Any]:
+    season = _season_from_imported_date(match_date)
     ranking: list[tuple[str, str, str, float, float, float]] = []
     for code, league_name in leagues.items():
-        home, home_score = resolve_team_in_league(home_raw, code, teams_by_code)
-        away, away_score = resolve_team_in_league(away_raw, code, teams_by_code)
+        overlay = _SEASONAL_ROSTER_OVERLAYS.get((str(code), int(season))) if season is not None else None
+        home, home_score = resolve_team_in_league(
+            home_raw, code, teams_by_code, extra_candidates=overlay
+        )
+        away, away_score = resolve_team_in_league(
+            away_raw, code, teams_by_code, extra_candidates=overlay
+        )
         pair_score = min(home_score, away_score) * 0.65 + ((home_score + away_score) / 2.0) * 0.35
         ranking.append((code, league_name, home, home_score, away_score, pair_score))
     ranking.sort(key=lambda item: item[5], reverse=True)
     best = ranking[0] if ranking else ("", "", "", 0.0, 0.0, 0.0)
     runner_score = ranking[1][5] if len(ranking) > 1 else 0.0
     code, league_name, home, home_score, away_score, pair_score = best
-    away, _ = resolve_team_in_league(away_raw, code, teams_by_code) if code else ("", 0.0)
+    best_overlay = (
+        _SEASONAL_ROSTER_OVERLAYS.get((str(code), int(season)))
+        if code and season is not None else None
+    )
+    away, _ = (
+        resolve_team_in_league(away_raw, code, teams_by_code, extra_candidates=best_overlay)
+        if code else ("", 0.0)
+    )
     margin = pair_score - runner_score
     accepted = bool(code and home_score >= 0.72 and away_score >= 0.72 and (margin >= 0.035 or pair_score >= 0.965))
     if accepted:
@@ -370,6 +441,7 @@ def resolve_imported_matches(
             str(item.get("visitante_original", "")),
             teams_by_code=teams_by_code,
             leagues=leagues,
+            match_date=item.get("data"),
         )
         complete_odds = all(item.get(key) is not None for key in ("odd_mandante", "odd_empate", "odd_visitante"))
         status = str(resolution["status"])
