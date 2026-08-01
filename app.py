@@ -38,11 +38,11 @@ _importador = _load_required_module("tex_importador_programacao")
 EXPECTED_CORE_API = "28.1.2"
 EXPECTED_STORAGE_API = "28.3.6"
 EXPECTED_FINANCE_API = "28.1.5.12"
-EXPECTED_FILTER_API = "28.3.3"
-EXPECTED_OPERATION_API = "28.2.0"
+EXPECTED_FILTER_API = "28.3.10"
+EXPECTED_OPERATION_API = "28.3.10"
 EXPECTED_IMPORTER_API = "28.3.9"
-INTERFACE_VERSION = "V28.3.9"
-APP_NAME = "Tex Statistics V28.3.9 — Validação sazonal consistente"
+INTERFACE_VERSION = "V28.3.10"
+APP_NAME = "Tex Statistics V28.3.10 — Início de temporada sem falso reprovado"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -195,16 +195,22 @@ def build_ai_summary(
     body = original_lines[1:] if original_lines else []
     approved = 0
     rejected = 0
+    not_evaluable = 0
     if not evaluations.empty and "Filter2018Approved" in evaluations:
-        by_game = evaluations[["InputID", "Filter2018Approved"]].drop_duplicates("InputID")
+        columns = ["InputID", "Filter2018Approved"]
+        if "Filter2018Status" in evaluations.columns:
+            columns.append("Filter2018Status")
+        by_game = evaluations[columns].drop_duplicates("InputID")
         approved = int(by_game["Filter2018Approved"].fillna(False).astype(bool).sum())
-        rejected = int(len(by_game) - approved)
+        if "Filter2018Status" in by_game.columns:
+            not_evaluable = int(by_game["Filter2018Status"].fillna("").astype(str).eq("NÃO AVALIÁVEL").sum())
+        rejected = int(len(by_game) - approved - not_evaluable)
     return "\n".join([
         "ANÁLISE PARA IA — Tex Statistics",
         f"Interface: {APP_NAME}",
         f"Motor preditivo: {CORE_DISPLAY_NAME}",
-        f"Filtro eliminatório de 2018: {approved} aprovado(s) e {rejected} reprovado(s).",
-        "Jogos reprovados permanecem calculados e salvos, mas são proibidos em apostas simples e múltiplas.",
+        f"Filtro eliminatório de 2018: {approved} aprovado(s), {rejected} reprovado(s) e {not_evaluable} não avaliável(is) por falta de dados.",
+        "Jogos reprovados ou não avaliáveis permanecem calculados e salvos, mas são proibidos em apostas simples e múltiplas.",
         *body,
     ])
 
@@ -224,7 +230,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.3.9, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.3.10, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -255,6 +261,7 @@ def apply_style() -> None:
         .rule-box,.tex-info-card{padding:1rem 1.05rem;border-radius:16px;border:1px solid var(--tex-border);background:linear-gradient(135deg,rgba(240,253,250,.92),rgba(236,254,255,.92));margin:.55rem 0 1rem}
         .filter-approved{padding:1rem;border-radius:16px;border:1px solid rgba(22,163,74,.32);background:rgba(220,252,231,.72);margin:.5rem 0}
         .filter-rejected{padding:1rem;border-radius:16px;border:1px solid rgba(220,38,38,.28);background:rgba(254,226,226,.72);margin:.5rem 0}
+        .filter-unavailable{padding:1rem;border-radius:16px;border:1px solid rgba(217,119,6,.32);background:rgba(254,243,199,.78);margin:.5rem 0}
         .multiple-card{padding:1.05rem 1.15rem;border-radius:18px;background:linear-gradient(135deg,#172554,#164e63);color:#fff;box-shadow:0 14px 34px rgba(15,23,42,.18);margin:.75rem 0 1.1rem}
         .multiple-card strong{color:#a5f3fc}
         [data-testid="stMetric"],[data-testid="stDataFrame"]{border:1px solid rgba(120,120,120,.20);border-radius:15px;padding:.5rem;background:rgba(255,255,255,.02)}
@@ -2318,9 +2325,13 @@ def render_game_form_context(context: dict) -> None:
         st.info("Classificação e forma recente não puderam ser montadas para esta partida.")
         return
     season = int(context.get("StandingsSeason", 0) or 0)
-    title_suffix = f" — temporada {season}" if season else ""
+    season_label = str(context.get("StandingsSeasonLabel", "") or season or "")
+    title_suffix = f" — temporada {season_label}" if season_label else ""
     st.markdown(f"##### Classificação e forma antes da partida{title_suffix}")
     st.caption("V = vitória · E = empate · D = derrota. Todos os registros são anteriores à data do confronto analisado.")
+    unavailable_reason = str(context.get("StandingsUnavailableReason", "") or "").strip()
+    if unavailable_reason:
+        st.warning(unavailable_reason)
     home_col, away_col = st.columns(2)
     with home_col:
         _render_team_context(
@@ -2380,8 +2391,13 @@ if not readings.empty or not diagnostics.empty:
         if isinstance(filter_results, pd.DataFrame) and not filter_results.empty
         else 0
     )
+    not_evaluable_count = (
+        int(filter_results["Filter2018Status"].fillna("").astype(str).eq("NÃO AVALIÁVEL").sum())
+        if isinstance(filter_results, pd.DataFrame) and not filter_results.empty and "Filter2018Status" in filter_results
+        else 0
+    )
     rejected_count = (
-        int(len(filter_results) - approved_count)
+        int(len(filter_results) - approved_count - not_evaluable_count)
         if isinstance(filter_results, pd.DataFrame) and not filter_results.empty
         else 0
     )
@@ -2391,12 +2407,13 @@ if not readings.empty or not diagnostics.empty:
         else pd.DataFrame()
     )
     analyzed_games = int((diagnostics["Situação"] == "ANALISADO").sum()) if not diagnostics.empty else 0
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("Partidas calculadas", analyzed_games)
     m2.metric("Aprovadas no filtro", approved_count)
-    m3.metric("Eliminadas no filtro", rejected_count)
-    m4.metric("Apostas simples", len(entries))
-    m5.metric("Itens na múltipla", len(multiple_selections))
+    m3.metric("Reprovadas no filtro", rejected_count)
+    m4.metric("Sem dados para avaliar", not_evaluable_count)
+    m5.metric("Apostas simples", len(entries))
+    m6.metric("Itens na múltipla", len(multiple_selections))
 
     st.markdown("### Resumo dos jogos aprovados")
     approved_summary = approved_games_summary_table(games(), filter_results, readings)
@@ -2428,8 +2445,9 @@ if not readings.empty or not diagnostics.empty:
 
     st.markdown("### Lista de verificação do filtro de 2018")
     st.caption(
-        "Este é o único portão de elegibilidade esportiva. O resultado não apaga cálculos: "
-        "probabilidades e cotações de todos os jogos continuam armazenadas na planilha."
+        "Este é o único portão de elegibilidade esportiva. 'Não avaliável' significa que faltam dados para aplicar "
+        "uma regra com segurança; o jogo continua fora das apostas, sem ser confundido com uma reprovação esportiva. "
+        "Probabilidades e cotações de todos os jogos continuam armazenadas na planilha."
     )
     if isinstance(filter_results, pd.DataFrame) and not filter_results.empty:
         filter_view = filter_results[[
@@ -2542,6 +2560,8 @@ if not readings.empty or not diagnostics.empty:
         game_reading = readings[readings["InputID"].astype(str).eq(input_id)] if not readings.empty else pd.DataFrame()
         game_evaluations = evaluations[evaluations["InputID"].astype(str).eq(input_id)] if not evaluations.empty else pd.DataFrame()
         approved = bool(game_filter.get("Filter2018Approved", False))
+        filter_status = str(game_filter.get("Filter2018Status", "REPROVADO") or "REPROVADO")
+        not_evaluable = filter_status == "NÃO AVALIÁVEL"
 
         with st.container(border=True):
             st.markdown(f"#### {game_index}. {game['Mandante']} x {game['Visitante']} — {game['Liga']}")
@@ -2550,25 +2570,41 @@ if not readings.empty or not diagnostics.empty:
                 f"Casa de apostas: {game['Casa de apostas']}"
             )
             render_game_form_context(dict(form_contexts.get(input_id, {}) or {}))
-            css_class = "filter-approved" if approved else "filter-rejected"
-            filter_title = "APROVADO NO FILTRO DE 2018" if approved else "REPROVADO NO FILTRO DE 2018 — FORA DO UNIVERSO OPERACIONAL"
+            if approved:
+                css_class = "filter-approved"
+                filter_title = "APROVADO NO FILTRO DE 2018"
+            elif not_evaluable:
+                css_class = "filter-unavailable"
+                filter_title = "NÃO AVALIÁVEL — DADOS INSUFICIENTES PARA O FILTRO DE 2018"
+            else:
+                css_class = "filter-rejected"
+                filter_title = "REPROVADO NO FILTRO DE 2018 — FORA DO UNIVERSO OPERACIONAL"
             st.markdown(
                 f'<div class="{css_class}"><b>{filter_title}</b><br>{game_filter.get("Filter2018Summary", "Resultado indisponível.")}</div>',
                 unsafe_allow_html=True,
             )
+            rule1_missing = str(game_filter.get("Filter2018Rule1Basis", "")) == "DADOS INSUFICIENTES"
+            rule3_missing = int(game_filter.get("Filter2018HomeHistoryCount", 0) or 0) < 5
+            rule4_missing = int(game_filter.get("Filter2018AwayHistoryCount", 0) or 0) < 5
             checklist = pd.DataFrame([
-                {"Regra": "1 — posição e pontos do visitante", "Resultado": "Aprovada" if game_filter.get("Filter2018Rule1Pass") else "Reprovada", "Detalhe": game_filter.get("Filter2018Rule1Detail", "")},
+                {"Regra": "1 — posição e pontos do visitante", "Resultado": "Sem dados" if rule1_missing else ("Aprovada" if game_filter.get("Filter2018Rule1Pass") else "Reprovada"), "Detalhe": game_filter.get("Filter2018Rule1Detail", "")},
                 {"Regra": "2 — último confronto direto", "Resultado": "Aprovada" if game_filter.get("Filter2018Rule2Pass") else "Reprovada", "Detalhe": game_filter.get("Filter2018Rule2Detail", "")},
-                {"Regra": "3 — mandante marcou em 4 das últimas 5", "Resultado": "Aprovada" if game_filter.get("Filter2018Rule3Pass") else "Reprovada", "Detalhe": game_filter.get("Filter2018Rule3Detail", "")},
-                {"Regra": "4 — visitante marcou em 4 das últimas 5", "Resultado": "Aprovada" if game_filter.get("Filter2018Rule4Pass") else "Reprovada", "Detalhe": game_filter.get("Filter2018Rule4Detail", "")},
+                {"Regra": "3 — mandante marcou em 4 das últimas 5", "Resultado": "Sem dados" if rule3_missing else ("Aprovada" if game_filter.get("Filter2018Rule3Pass") else "Reprovada"), "Detalhe": game_filter.get("Filter2018Rule3Detail", "")},
+                {"Regra": "4 — visitante marcou em 4 das últimas 5", "Resultado": "Sem dados" if rule4_missing else ("Aprovada" if game_filter.get("Filter2018Rule4Pass") else "Reprovada"), "Detalhe": game_filter.get("Filter2018Rule4Detail", "")},
             ])
             st.dataframe(checklist, hide_index=True, use_container_width=True)
 
             if not approved:
-                st.warning(
-                    "O jogo morre operacionalmente neste ponto: não pode aparecer nas apostas simples nem na sugestão de múltipla. "
-                    "Os cálculos abaixo continuam salvos exclusivamente para formar a base de dados."
-                )
+                if not_evaluable:
+                    st.warning(
+                        "O jogo permanece fora das apostas porque o filtro obrigatório não pôde ser concluído com os dados atuais. "
+                        "Ele poderá ser reanalisado após a atualização da classificação e da forma recente; nenhum dado é inventado ou substituído pela temporada anterior."
+                    )
+                else:
+                    st.warning(
+                        "O jogo morre operacionalmente neste ponto: não pode aparecer nas apostas simples nem na sugestão de múltipla. "
+                        "Os cálculos abaixo continuam salvos exclusivamente para formar a base de dados."
+                    )
                 with st.expander("Ver probabilidades armazenadas para auditoria", expanded=False):
                     st.dataframe(
                         evaluation_table(game_evaluations.sort_values(

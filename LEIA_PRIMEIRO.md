@@ -1,4 +1,35 @@
-# Tex Statistics V28.3.9 — Correção da validação final da 2. Bundesliga
+# Tex Statistics V28.3.10 — Dados insuficientes no início da temporada
+
+## Diagnóstico confirmado da 2. Bundesliga 2026/27
+
+Os jogos de 8 e 9 de agosto de 2026 pertencem, para o motor, à temporada **2026/27** (`Season = 2026`). A base local distribuída no pacote contém a 2. Bundesliga somente até a temporada **2025/26**, cuja última partida é de **17/05/2026**. Portanto, antes desses eventos existem **zero partidas concluídas da temporada 2026/27** na base e não há classificação atual para aplicar a Regra 1 do filtro de 2018.
+
+A V28.3.9 apresentava esses casos como `REPROVADO`, embora a regra não tivesse sido efetivamente avaliada. A V28.3.10 corrige a classificação sem flexibilizar o portão obrigatório:
+
+- `APROVADO`: todas as regras puderam ser verificadas e foram atendidas;
+- `REPROVADO`: havia dados suficientes e alguma regra falhou;
+- `NÃO AVALIÁVEL`: faltam dados para aplicar uma ou mais regras com segurança.
+
+Jogos `NÃO AVALIÁVEIS` continuam fora das apostas simples e da múltipla. Eles permanecem calculados e salvos para a base histórica.
+
+## Proteção contra forma antiga apresentada como recente
+
+A revisão encontrou outro problema: clubes que passaram temporadas fora das 24 ligas cobertas podiam receber como “últimos cinco jogos” partidas muito antigas. No caso de `Cottbus`, a versão anterior utilizava partidas de abril e maio de **2014**; para `Osnabruck`, partidas de **2024**.
+
+Agora, as Regras 3 e 4 e o quadro de forma recente aceitam somente jogos da temporada atual ou da imediatamente anterior. Quando não existem cinco partidas recentes na base, o campo aparece como `Sem dados` e o evento fica `NÃO AVALIÁVEL`, em vez de usar resultados antigos como se fossem atuais.
+
+## Interface corrigida
+
+- novo contador **Sem dados para avaliar**;
+- cartões amarelos para eventos não avaliáveis;
+- Regra 1 mostra a temporada buscada e a última data disponível na base;
+- regras de forma mostram `Sem dados` quando faltarem cinco jogos recentes;
+- reprovados esportivos permanecem separados dos casos sem dados;
+- nenhuma posição ou pontuação da temporada anterior é usada como substituta automática.
+
+A atualização da base após partidas concluídas da nova temporada permitirá reconstruir a classificação. Clubes vindos de divisões não cobertas continuarão exigindo histórico recente suficiente na própria base ou uma futura fonte complementar de partidas oficiais.
+
+---
 
 ## Correção V28.3.9 — prévia reconhecia, gravação rejeitava
 

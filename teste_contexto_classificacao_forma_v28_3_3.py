@@ -25,7 +25,7 @@ game = {
 }
 
 context = build_game_form_context(game, matches)
-assert FILTER_API_VERSION == "28.3.3"
+assert FILTER_API_VERSION == "28.3.10"
 assert context["HomeTeam"] == "Gremio"
 assert context["AwayTeam"] == "Sao Paulo"
 assert context["HomeStanding"]["Available"]

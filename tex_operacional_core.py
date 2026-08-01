@@ -715,13 +715,58 @@ def standings_before_match(matches: list[dict[str, Any]], code: str, match_date:
 
 
 def standings_context(matches: list[dict[str, Any]], code: str, match_date: date, home: str, away: str) -> dict[str, Any]:
+    season = season_for_match(code, match_date)
+    season_label = str(season) if code in ANNUAL_CODES else f"{season}/{str(season + 1)[-2:]}"
     table = standings_before_match(matches, code, match_date)
-    context: dict[str, Any] = {"Available": False, "Table": table, "Season": season_for_match(code, match_date)}
+    league_before = [
+        m for m in matches
+        if m.get("Code") == code and isinstance(m.get("DateParsed"), date) and m.get("DateParsed") < match_date
+    ]
+    season_before = [m for m in league_before if int(m.get("Season", -1)) == season]
+    latest_league_date = max((m.get("DateParsed") for m in league_before), default=None)
+    context: dict[str, Any] = {
+        "Available": False,
+        "Table": table,
+        "Season": season,
+        "SeasonLabel": season_label,
+        "SeasonMatchCount": len(season_before),
+        "LatestLeagueDate": latest_league_date,
+        "UnavailableReasonCode": "",
+        "UnavailableReason": "",
+    }
     if table.empty:
+        latest_note = (
+            f" A última partida da liga presente na base é de {latest_league_date.strftime('%d/%m/%Y')}."
+            if latest_league_date else " A base não contém partidas anteriores dessa liga."
+        )
+        reason = (
+            f"A base não contém partida concluída da temporada {season_label} antes de "
+            f"{match_date.strftime('%d/%m/%Y')}; por isso não existe classificação atual para aplicar a Regra 1."
+            + latest_note
+        )
+        context.update({
+            "UnavailableReasonCode": "NO_CURRENT_SEASON_STANDINGS",
+            "UnavailableReason": reason,
+            "ConsolidationReason": reason,
+        })
         return context
     home_row = table[table["Equipe"].eq(home)]
     away_row = table[table["Equipe"].eq(away)]
     if home_row.empty or away_row.empty:
+        missing = []
+        if home_row.empty:
+            missing.append(home)
+        if away_row.empty:
+            missing.append(away)
+        reason = (
+            f"A classificação da temporada {season_label} possui {len(season_before)} partida(s), mas "
+            f"não contém dados anteriores suficientes para: {', '.join(missing)}."
+        )
+        context.update({
+            "UnavailableReasonCode": "TEAM_NOT_IN_CURRENT_TABLE",
+            "UnavailableReason": reason,
+            "ConsolidationReason": reason,
+        })
         return context
     h = home_row.iloc[0]; a = away_row.iloc[0]
     home_games = int(h["Jogos"])

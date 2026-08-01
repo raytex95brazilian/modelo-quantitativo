@@ -9,7 +9,7 @@ import pandas as pd
 
 from tex_operacional_core import clean_text, parse_date, standings_context
 
-FILTER_API_VERSION = "28.3.3"
+FILTER_API_VERSION = "28.3.10"
 FILTER_NAME = "Filtro eliminatório de 2018"
 
 
@@ -102,6 +102,11 @@ class HistoryIndex:
                 continue
             if not home or not away or home == away:
                 continue
+            raw_season = raw.get("Season")
+            try:
+                item_season = int(raw_season)
+            except (TypeError, ValueError):
+                item_season = int(match_date.year)
             item = {
                 "DateParsed": match_date,
                 "Home": home,
@@ -110,6 +115,7 @@ class HistoryIndex:
                 "AG": ag,
                 "Code": clean_text(raw.get("Code")),
                 "League": clean_text(raw.get("League")),
+                "Season": item_season,
                 "IsRoundRobin": _is_round_robin_match(raw),
             }
             team_history[home].append(item)
@@ -128,10 +134,13 @@ class HistoryIndex:
         before: date,
         limit: int = 5,
         venue: str | None = None,
+        minimum_season: int | None = None,
     ) -> list[dict[str, Any]]:
         selected: list[dict[str, Any]] = []
         for item in self.team_history.get(team, []):
             if item["DateParsed"] >= before:
+                continue
+            if minimum_season is not None and int(item.get("Season", -1)) < int(minimum_season):
                 continue
             if venue == "home" and item["Home"] != team:
                 continue
@@ -142,14 +151,20 @@ class HistoryIndex:
                 break
         return selected
 
-    def last_matches(self, team: str, before: date, limit: int = 5) -> list[dict[str, Any]]:
-        return self._last_matches_by_venue(team, before, limit, venue=None)
+    def last_matches(
+        self, team: str, before: date, limit: int = 5, minimum_season: int | None = None
+    ) -> list[dict[str, Any]]:
+        return self._last_matches_by_venue(team, before, limit, venue=None, minimum_season=minimum_season)
 
-    def last_home_matches(self, team: str, before: date, limit: int = 5) -> list[dict[str, Any]]:
-        return self._last_matches_by_venue(team, before, limit, venue="home")
+    def last_home_matches(
+        self, team: str, before: date, limit: int = 5, minimum_season: int | None = None
+    ) -> list[dict[str, Any]]:
+        return self._last_matches_by_venue(team, before, limit, venue="home", minimum_season=minimum_season)
 
-    def last_away_matches(self, team: str, before: date, limit: int = 5) -> list[dict[str, Any]]:
-        return self._last_matches_by_venue(team, before, limit, venue="away")
+    def last_away_matches(
+        self, team: str, before: date, limit: int = 5, minimum_season: int | None = None
+    ) -> list[dict[str, Any]]:
+        return self._last_matches_by_venue(team, before, limit, venue="away", minimum_season=minimum_season)
 
     def last_h2h(self, home: str, away: str, before: date) -> tuple[dict[str, Any] | None, int]:
         skipped_non_round_robin = 0
@@ -214,7 +229,8 @@ def evaluate_game_2018(
     else:
         rule1_pass = False
         rule1_basis = "DADOS INSUFICIENTES"
-        rule1_detail = "Não foi possível reconstruir posição e pontuação antes da partida."
+        unavailable_reason = clean_text(context.get("UnavailableReason"))
+        rule1_detail = unavailable_reason or "Não foi possível reconstruir posição e pontuação antes da partida."
 
     last_h2h, skipped_non_round_robin = history.last_h2h(home, away, match_date)
     exception_note = (
@@ -248,24 +264,42 @@ def evaluate_game_2018(
                 "não houve gols das duas equipes, portanto a regra foi atendida." + exception_note
             )
 
-    home_last5 = history.last_matches(home, match_date, 5)
-    away_last5 = history.last_matches(away, match_date, 5)
+    target_season = int(context.get("Season") or match_date.year)
+    minimum_form_season = target_season - 1
+    home_last5 = history.last_matches(home, match_date, 5, minimum_season=minimum_form_season)
+    away_last5 = history.last_matches(away, match_date, 5, minimum_season=minimum_form_season)
     home_scored = sum(_team_scored(item, home) for item in home_last5)
     away_scored = sum(_team_scored(item, away) for item in away_last5)
 
-    rule3_pass = len(home_last5) == 5 and home_scored >= 4
-    rule4_pass = len(away_last5) == 5 and away_scored >= 4
-    rule3_detail = (
-        f"Mandante marcou em {home_scored} das {len(home_last5)} partidas anteriores encontradas; "
-        + ("regra atendida." if rule3_pass else "são necessárias cinco partidas e gols em pelo menos quatro.")
-    )
-    rule4_detail = (
-        f"Visitante marcou em {away_scored} das {len(away_last5)} partidas anteriores encontradas; "
-        + ("regra atendida." if rule4_pass else "são necessárias cinco partidas e gols em pelo menos quatro.")
-    )
+    home_form_available = len(home_last5) == 5
+    away_form_available = len(away_last5) == 5
+    rule3_pass = home_form_available and home_scored >= 4
+    rule4_pass = away_form_available and away_scored >= 4
+    if not home_form_available:
+        rule3_detail = (
+            f"Dados insuficientes: foram encontradas apenas {len(home_last5)} de 5 partidas recentes do mandante "
+            f"na temporada atual ou na imediatamente anterior. A Regra 3 não pode ser aplicada com segurança."
+        )
+    else:
+        rule3_detail = (
+            f"Mandante marcou em {home_scored} das {len(home_last5)} partidas anteriores encontradas; "
+            + ("regra atendida." if rule3_pass else "são necessários gols em pelo menos quatro.")
+        )
+    if not away_form_available:
+        rule4_detail = (
+            f"Dados insuficientes: foram encontradas apenas {len(away_last5)} de 5 partidas recentes do visitante "
+            f"na temporada atual ou na imediatamente anterior. A Regra 4 não pode ser aplicada com segurança."
+        )
+    else:
+        rule4_detail = (
+            f"Visitante marcou em {away_scored} das {len(away_last5)} partidas anteriores encontradas; "
+            + ("regra atendida." if rule4_pass else "são necessários gols em pelo menos quatro.")
+        )
 
-    approved = bool(rule1_pass and rule2_pass and rule3_pass and rule4_pass)
-    status = "APROVADO" if approved else "REPROVADO"
+    rule1_available = bool(context.get("Available"))
+    evaluable = bool(rule1_available and home_form_available and away_form_available)
+    approved = bool(evaluable and rule1_pass and rule2_pass and rule3_pass and rule4_pass)
+    status = "APROVADO" if approved else ("REPROVADO" if evaluable else "NÃO AVALIÁVEL")
     failed: list[str] = []
     if not rule1_pass:
         failed.append("Regra 1")
@@ -275,11 +309,22 @@ def evaluate_game_2018(
         failed.append("Regra 3")
     if not rule4_pass:
         failed.append("Regra 4")
-    summary = (
-        "Todas as regras foram atendidas; evento apto para análise estatística e financeira."
-        if approved
-        else "Evento eliminado no filtro de 2018: " + ", ".join(failed) + "."
-    )
+    if approved:
+        summary = "Todas as regras foram atendidas; evento apto para análise estatística e financeira."
+    elif not evaluable:
+        unavailable_rules: list[str] = []
+        if not rule1_available:
+            unavailable_rules.append("Regra 1 sem classificação atual")
+        if not home_form_available:
+            unavailable_rules.append("Regra 3 sem cinco jogos recentes")
+        if not away_form_available:
+            unavailable_rules.append("Regra 4 sem cinco jogos recentes")
+        summary = (
+            "Evento não avaliável no filtro de 2018 e, portanto, fora das apostas: "
+            + "; ".join(unavailable_rules) + "."
+        )
+    else:
+        summary = "Evento eliminado no filtro de 2018: " + ", ".join(failed) + "."
 
     return Filter2018Result(
         input_id=input_id,
@@ -390,10 +435,12 @@ def build_game_form_context(
     history = history or HistoryIndex(matches)
     table_context = standings_context(matches, code, match_date, home, away)
 
-    home_overall = history.last_matches(home, match_date, 5)
-    home_at_home = history.last_home_matches(home, match_date, 5)
-    away_overall = history.last_matches(away, match_date, 5)
-    away_away = history.last_away_matches(away, match_date, 5)
+    target_season = int(table_context.get("Season") or match_date.year)
+    minimum_form_season = target_season - 1
+    home_overall = history.last_matches(home, match_date, 5, minimum_season=minimum_form_season)
+    home_at_home = history.last_home_matches(home, match_date, 5, minimum_season=minimum_form_season)
+    away_overall = history.last_matches(away, match_date, 5, minimum_season=minimum_form_season)
+    away_away = history.last_away_matches(away, match_date, 5, minimum_season=minimum_form_season)
 
     return {
         "InputID": input_id,
@@ -404,7 +451,9 @@ def build_game_form_context(
         "AwayTeam": away,
         "StandingsAvailable": bool(table_context.get("Available")),
         "StandingsSeason": int(table_context.get("Season", 0) or 0),
+        "StandingsSeasonLabel": clean_text(table_context.get("SeasonLabel")),
         "StandingsReason": clean_text(table_context.get("ConsolidationReason")),
+        "StandingsUnavailableReason": clean_text(table_context.get("UnavailableReason")),
         "HomeStanding": _standing_snapshot(table_context, home),
         "AwayStanding": _standing_snapshot(table_context, away),
         "HomeOverall": [_form_match(item, home) for item in home_overall],

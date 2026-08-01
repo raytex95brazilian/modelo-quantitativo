@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pandas as pd
 
-OPERATION_API_VERSION = "28.2.0"
+OPERATION_API_VERSION = "28.3.10"
 
 
 @dataclass(frozen=True)
@@ -56,16 +56,21 @@ def build_operational_outputs(
 
     out = evaluations.copy()
     out["Filter2018Approved"] = out.get("Filter2018Approved", False).fillna(False).astype(bool)
+    filter_status = out.get("Filter2018Status", pd.Series("REPROVADO", index=out.index)).fillna("REPROVADO").astype(str)
+    not_evaluable = filter_status.eq("NÃO AVALIÁVEL")
     out["FinanciallyFavorable"] = out.apply(_financially_favorable, axis=1)
-    out["OperationalUniverse"] = np.where(
-        out["Filter2018Approved"], "APTO — FILTRO DE 2018 APROVADO", "FORA DO UNIVERSO OPERACIONAL"
+    out["OperationalUniverse"] = np.select(
+        [out["Filter2018Approved"], not_evaluable],
+        ["APTO — FILTRO DE 2018 APROVADO", "FORA — DADOS INSUFICIENTES PARA O FILTRO"],
+        default="FORA DO UNIVERSO OPERACIONAL",
     )
     out["OperationalDecision"] = np.select(
         [
+            not_evaluable,
             ~out["Filter2018Approved"],
             out["Filter2018Approved"] & out["FinanciallyFavorable"],
         ],
-        ["REPROVADO NO FILTRO DE 2018", "COTAÇÃO FAVORÁVEL"],
+        ["NÃO AVALIÁVEL — DADOS INSUFICIENTES", "REPROVADO NO FILTRO DE 2018", "COTAÇÃO FAVORÁVEL"],
         default="SEM VALOR AO PREÇO ATUAL",
     )
     out["Status"] = out["OperationalDecision"]
@@ -84,8 +89,13 @@ def build_operational_outputs(
             chosen = group.sort_values(
                 ["ConservativeProbability", "DecisionProbability"], ascending=[False, False]
             ).iloc[0].copy()
-            chosen["Status"] = "REPROVADO NO FILTRO DE 2018"
-            chosen["Reason"] = str(chosen.get("Filter2018Summary", "Evento reprovado no filtro de 2018."))
+            chosen_status = str(chosen.get("Filter2018Status", "REPROVADO"))
+            chosen["Status"] = (
+                "NÃO AVALIÁVEL — DADOS INSUFICIENTES"
+                if chosen_status == "NÃO AVALIÁVEL"
+                else "REPROVADO NO FILTRO DE 2018"
+            )
+            chosen["Reason"] = str(chosen.get("Filter2018Summary", "Evento fora do universo operacional."))
             reading_rows.append(chosen)
             continue
 
