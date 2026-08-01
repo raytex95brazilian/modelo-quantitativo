@@ -1,4 +1,24 @@
-# Tex Statistics V28.3.5 — Correção de indisponibilidade 503
+# Tex Statistics V28.3.6 — Lotes separados por importação
+
+## Correção V28.3.6 — cada importação pode formar um lote independente
+
+A versão anterior sempre fazia *upsert* sobre o lote ativo. Por isso, ao importar a Liga MX depois do Brasileirão, os jogos mexicanos eram somados aos brasileiros na área **Partidas do lote** e no formulário de complementação manual.
+
+A V28.3.6 acrescenta, antes da colagem, o seletor **Destino desta importação**:
+
+- **Criar novo lote — substituir apenas o lote exibido**: opção padrão e recomendada. A nova importação passa a ser o único lote ativo da tela.
+- **Adicionar ao lote atual**: mantém o comportamento cumulativo, mas somente quando escolhido deliberadamente.
+
+Criar um novo lote **não apaga dados históricos**. Permanecem intactos:
+
+- `catalogo_odds`;
+- `historico_analises`;
+- apostas e liquidações;
+- eventos anteriores de `entrada_jogos`;
+- cotações complementares já gravadas.
+
+O sistema registra um evento `CLEAR` e os novos `UPSERTs` na mesma escrita em lote. Assim, a restauração após reinício também retorna somente o lote ativo mais recente, sem misturar Brasil e México.
+
 
 Esta versão foi construída diretamente sobre a V28.3.4 e preserva o motor, o filtro obrigatório de 2018, a interface principal, a banca, a unidade e a estrutura das planilhas existentes.
 
@@ -106,8 +126,8 @@ Substitua todo o conteúdo do projeto pelo conteúdo deste pacote. Não misture 
 
 Versões esperadas:
 
-- interface: `V28.3.5`;
-- armazenamento: `28.3.5`;
+- interface: `V28.3.6`;
+- armazenamento: `28.3.6`;
 - importador: `28.3.0`;
 - núcleo preditivo: `28.1.2`;
 - filtro de 2018 e contexto esportivo: `28.3.3`.

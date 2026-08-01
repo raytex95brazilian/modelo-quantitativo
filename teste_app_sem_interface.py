@@ -112,7 +112,7 @@ update_stub = types.ModuleType("tex_v25_atualizacao")
 sys.modules["tex_v25_atualizacao"] = update_stub
 
 app = importlib.import_module("app")
-assert app.INTERFACE_VERSION == "V28.3.5"
+assert app.INTERFACE_VERSION == "V28.3.6"
 assert app.EXPECTED_CORE_API == "28.1.2"
 assert app.max_entries == 5
 
@@ -171,7 +171,7 @@ with TemporaryDirectory() as temp_dir:
         "Odd ambas marcam — Não": 2.00,
     })
     st.session_state.tex_games = [existing]
-    app.registrar_eventos_lote = lambda secrets, jogos, interface_version="": {
+    app.registrar_eventos_lote = lambda secrets, jogos, interface_version="", substituir_lote=False: {
         "Eventos confirmados": len(list(jogos)),
         "Primeira linha": 2,
         "Última linha": 2,
@@ -198,6 +198,63 @@ with TemporaryDirectory() as temp_dir:
 
     app.LOCAL_PENDING_LOT_PATH = original_path
     app.google_configurado = original_google_configurado
+    st.session_state.pop("tex_games", None)
+
+
+# Uma nova importação deve substituir somente o lote ativo quando essa opção for escolhida.
+original_google = app.google_configurado
+original_register_batch = app.registrar_eventos_lote
+original_create_records = app.criar_registros_cotacoes_digitadas
+original_save_odds = app.salvar_cotacoes
+original_persist = app._persist_snapshot_best_effort
+try:
+    app.google_configurado = lambda secrets: True
+    calls = []
+    app.registrar_eventos_lote = lambda secrets, jogos, interface_version="", substituir_lote=False: calls.append(bool(substituir_lote)) or {
+        "Eventos confirmados": len(list(jogos)) + (1 if substituir_lote else 0),
+        "Primeira linha": 2,
+        "Última linha": 3,
+        "Aba": "entrada_jogos",
+        "Verificação": "GRAVADO E RELIDO EM LOTE",
+    }
+    app.criar_registros_cotacoes_digitadas = lambda jogo, **kwargs: [{"ID Coleta": jogo["ID"]}]
+    app.salvar_cotacoes = lambda secrets, registros: len(list(registros))
+    app._persist_snapshot_best_effort = lambda reason: None
+    brazil = {
+        "ID": "bra-1", "Data": "2026-08-08", "Hora": "16:00",
+        "Código da liga": "BRA", "Liga": "Brasileirão Série A",
+        "Mandante": "Gremio", "Visitante": "Sao Paulo",
+        "Casa de apostas": "PIXBET", "Odd mandante": 2.32,
+        "Odd empate": 3.09, "Odd visitante": 2.92,
+        "Odd mais de 2,5": 2.03, "Odd menos de 2,5": 1.65,
+        "Odd ambas marcam — Sim": None, "Odd ambas marcam — Não": None,
+    }
+    mexico = {
+        "ID": "mex-1", "Data": "2026-08-15", "Hora": "20:00",
+        "Código da liga": "MEX", "Liga": "México - Liga MX",
+        "Mandante": "Atlante", "Visitante": "Toluca",
+        "Casa de apostas": "PIXBET", "Odd mandante": 5.10,
+        "Odd empate": 3.62, "Odd visitante": 1.48,
+        "Odd mais de 2,5": None, "Odd menos de 2,5": None,
+        "Odd ambas marcam — Sim": None, "Odd ambas marcam — Não": None,
+    }
+    st.session_state.tex_games = [brazil]
+    result_replace = app.upsert_games_batch([mexico], 1000.0, replace_current_lot=True)
+    assert calls[-1] is True
+    assert result_replace["substituiu_lote"] is True
+    assert [item["Código da liga"] for item in st.session_state.tex_games] == ["MEX"]
+
+    st.session_state.tex_games = [brazil]
+    result_append = app.upsert_games_batch([mexico], 1000.0, replace_current_lot=False)
+    assert calls[-1] is False
+    assert result_append["substituiu_lote"] is False
+    assert {item["Código da liga"] for item in st.session_state.tex_games} == {"BRA", "MEX"}
+finally:
+    app.google_configurado = original_google
+    app.registrar_eventos_lote = original_register_batch
+    app.criar_registros_cotacoes_digitadas = original_create_records
+    app.salvar_cotacoes = original_save_odds
+    app._persist_snapshot_best_effort = original_persist
     st.session_state.pop("tex_games", None)
 
 
@@ -266,10 +323,10 @@ assert abs(float(catalog[catalog["Grupo do mercado"].eq("1X2")].iloc[0]["Margem 
 config = json.loads(str(analysis.iloc[0]["Configuração JSON"]))
 assert config["api_nucleo"] == "28.1.2"
 assert config["percentual_unidade"] == 0.01
-assert catalog.iloc[0]["Versão da interface"] == "V28.3.5"
-assert analysis.iloc[0]["Versão da interface"] == "V28.3.5"
+assert catalog.iloc[0]["Versão da interface"] == "V28.3.6"
+assert analysis.iloc[0]["Versão da interface"] == "V28.3.6"
 summary_text = app.build_ai_summary(games, evaluations.sort_values(["MatchID", "StatusOrder"]).drop_duplicates("MatchID"), evaluations, diagnostics, matches)
 for forbidden in ("AGUARDAR PREÇO", "PREÇO FORTE", "ELEGÍVEL PARA META", "RESERVA", "mínima de admissibilidade da meta", "equilíbrio individual"):
     assert forbidden not in summary_text, forbidden
 
-print("TESTE DO APP SEM INTERFACE GRÁFICA V28.3.5: OK")
+print("TESTE DO APP SEM INTERFACE GRÁFICA V28.3.6: OK")

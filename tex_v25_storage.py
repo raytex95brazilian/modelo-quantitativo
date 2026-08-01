@@ -13,7 +13,7 @@ import random
 
 import pandas as pd
 
-STORAGE_API_VERSION = "28.3.5"
+STORAGE_API_VERSION = "28.3.6"
 
 from tex_v28_finance import COLUNAS_APOSTAS, identificador_registro, liquidar_registro
 
@@ -1326,11 +1326,13 @@ def registrar_eventos_lote(
     *,
     interface_version: str = "",
     lote_id: str = "principal",
+    substituir_lote: bool = False,
 ) -> dict[str, Any]:
-    """Grava e confere vários UPSERTs do lote com uma única escrita e uma leitura.
+    """Grava e confere uma importação em lote com uma única escrita e leitura.
 
-    A função preserva o mesmo formato append-only de ``registrar_evento_lote``,
-    mas evita uma requisição por partida ao importar uma rodada inteira.
+    Quando ``substituir_lote`` é verdadeiro, um evento CLEAR e todos os UPSERTs
+    são incluídos na mesma chamada. Assim, o lote ativo é substituído sem apagar
+    o histórico das partidas, das cotações ou das análises já salvas.
     """
     itens = [dict(jogo or {}) for jogo in jogos]
     if not itens:
@@ -1353,6 +1355,30 @@ def registrar_eventos_lote(
 
     registrado_em = datetime.now(ZoneInfo("America/Fortaleza")).replace(microsecond=0).isoformat()
     registros: list[dict[str, Any]] = []
+    if substituir_lote:
+        registros.append({
+            "ID Evento": f"{registrado_em}-clear-{uuid4().hex}",
+            "ID do lote": str(lote_id or "principal"),
+            "Tipo de evento": "CLEAR",
+            "Registrado em": registrado_em,
+            "ID da partida": "",
+            "Data": "",
+            "Hora": "",
+            "Código da liga": "",
+            "Liga": "",
+            "Mandante": "",
+            "Visitante": "",
+            "Casa de apostas": "",
+            "Odd mandante": "",
+            "Odd empate": "",
+            "Odd visitante": "",
+            "Odd mais de 2,5": "",
+            "Odd menos de 2,5": "",
+            "Odd ambas marcam — Sim": "",
+            "Odd ambas marcam — Não": "",
+            "Versão da interface": str(interface_version),
+            "Origem": "Substituição de lote verificada Tex Statistics",
+        })
     for posicao, dados in enumerate(itens):
         registros.append({
             "ID Evento": f"{registrado_em}-{posicao:04d}-{uuid4().hex}",
@@ -1457,6 +1483,8 @@ def registrar_eventos_lote(
         "Planilha URL": url_range,
         "Verificação": "GRAVADO E RELIDO EM LOTE",
         "IDs dos eventos": ordered_ids,
+        "Lote substituído": bool(substituir_lote),
+        "Partidas confirmadas": len(itens),
     }
 
 def _jogo_de_evento(registro: dict[str, Any]) -> dict[str, Any]:

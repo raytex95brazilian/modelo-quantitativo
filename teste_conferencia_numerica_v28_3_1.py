@@ -83,7 +83,7 @@ record.update({
     "Cotação": 2.32,
 })
 
-assert storage.STORAGE_API_VERSION == "28.3.5"
+assert storage.STORAGE_API_VERSION == "28.3.6"
 assert storage.salvar_cotacoes(secrets, [record]) == 1
 assert storage._celula_equivalente(17.0, 17)
 assert storage._celula_equivalente(17.0, 17, numerico=True)

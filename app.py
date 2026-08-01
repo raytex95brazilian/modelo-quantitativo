@@ -36,13 +36,13 @@ _operacao_filtrada = _load_required_module("tex_operacao_filtrada")
 _importador = _load_required_module("tex_importador_programacao")
 
 EXPECTED_CORE_API = "28.1.2"
-EXPECTED_STORAGE_API = "28.3.5"
+EXPECTED_STORAGE_API = "28.3.6"
 EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.3.3"
 EXPECTED_OPERATION_API = "28.2.0"
 EXPECTED_IMPORTER_API = "28.3.0"
-INTERFACE_VERSION = "V28.3.5"
-APP_NAME = "Tex Statistics V28.3.5 — Correção de indisponibilidade 503"
+INTERFACE_VERSION = "V28.3.6"
+APP_NAME = "Tex Statistics V28.3.6 — Lotes separados por importação"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -224,7 +224,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.3.2, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.3.6, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -578,8 +578,13 @@ def _merge_imported_game(existing: dict | None, incoming: dict) -> dict:
     return merged
 
 
-def upsert_games_batch(imported_games: list[dict], bankroll_value: float) -> dict:
-    """Persiste uma rodada inteira sem gerar uma requisição por partida."""
+def upsert_games_batch(
+    imported_games: list[dict],
+    bankroll_value: float,
+    *,
+    replace_current_lot: bool = False,
+) -> dict:
+    """Persiste uma importação inteira e controla se ela substitui o lote ativo."""
     if not imported_games:
         return {"adicionadas": 0, "atualizadas": 0, "cotacoes": 0}
     if not google_configurado(st.secrets):
@@ -589,7 +594,12 @@ def upsert_games_batch(imported_games: list[dict], bankroll_value: float) -> dic
             + str(detalhe.get("erro") or "Informe spreadsheet_id ou spreadsheet_url nos Secrets.")
         )
 
-    current = [dict(item) for item in games()]
+    previous = [dict(item) for item in games()]
+    current = [] if replace_current_lot else [dict(item) for item in previous]
+    previous_by_key = {
+        (item.get("Data"), item.get("Código da liga"), item.get("Mandante"), item.get("Visitante")): item
+        for item in previous
+    }
     index_by_key = {
         (item.get("Data"), item.get("Código da liga"), item.get("Mandante"), item.get("Visitante")): index
         for index, item in enumerate(current)
@@ -604,7 +614,7 @@ def upsert_games_batch(imported_games: list[dict], bankroll_value: float) -> dic
             incoming.get("Mandante"), incoming.get("Visitante"),
         )
         existing_index = index_by_key.get(key)
-        existing = current[existing_index] if existing_index is not None else None
+        existing = current[existing_index] if existing_index is not None else previous_by_key.get(key)
         candidate = _merge_imported_game(existing, incoming)
         if existing is not None:
             candidate["ID"] = existing.get("ID") or incoming.get("ID")
@@ -617,6 +627,7 @@ def upsert_games_batch(imported_games: list[dict], bankroll_value: float) -> dic
         st.secrets,
         prepared,
         interface_version=INTERFACE_VERSION,
+        substituir_lote=bool(replace_current_lot),
     )
     if str(event_confirmation.get("Verificação", "")) != "GRAVADO E RELIDO EM LOTE":
         raise RuntimeError("A leitura pós-gravação do lote não foi confirmada.")
@@ -641,6 +652,7 @@ def upsert_games_batch(imported_games: list[dict], bankroll_value: float) -> dic
         )
 
     # Atualiza a sessão apenas depois de as duas abas terem sido gravadas e relidas.
+    # Em novo lote, a lista começa vazia; o histórico anterior permanece nas planilhas.
     result = current
     index_by_key = {
         (item.get("Data"), item.get("Código da liga"), item.get("Mandante"), item.get("Visitante")): index
@@ -659,8 +671,9 @@ def upsert_games_batch(imported_games: list[dict], bankroll_value: float) -> dic
             result[existing_index] = candidate
     st.session_state.tex_games = result
     invalidate_analysis()
+    mode_label = "novo lote" if replace_current_lot else "acréscimo ao lote atual"
     _persist_snapshot_best_effort(
-        f"importação em lote: {added} nova(s), {updated} atualizada(s)"
+        f"{mode_label}: {added} nova(s), {updated} atualizada(s)"
     )
     st.session_state.tex_last_batch_confirmation = {
         **event_confirmation,
@@ -668,7 +681,13 @@ def upsert_games_batch(imported_games: list[dict], bankroll_value: float) -> dic
         "Partidas atualizadas": updated,
         "Cotações no catálogo": confirmed_odds,
     }
-    return {"adicionadas": added, "atualizadas": updated, "cotacoes": confirmed_odds}
+    return {
+        "adicionadas": added,
+        "atualizadas": updated,
+        "cotacoes": confirmed_odds,
+        "substituiu_lote": bool(replace_current_lot),
+        "partidas_ativas": len(result),
+    }
 
 def remove_game(index: int) -> dict:
     target = dict(games()[index])
@@ -1429,6 +1448,27 @@ def render_bulk_import() -> None:
             value="PIXBET",
             key="tex_import_bookmaker",
         )
+        import_mode = st.selectbox(
+            "Destino desta importação",
+            [
+                "Criar novo lote — substituir apenas o lote exibido",
+                "Adicionar ao lote atual",
+            ],
+            index=0,
+            key="tex_import_mode",
+            help=(
+                "Criar novo lote remove as partidas anteriores somente da área ativa do aplicativo. "
+                "Nada é apagado do catálogo de cotações, do histórico de análises ou da planilha."
+            ),
+        )
+        replace_current_lot = import_mode.startswith("Criar novo lote")
+        if games():
+            active_leagues = sorted({str(item.get("Liga", "")) for item in games() if str(item.get("Liga", "")).strip()})
+            st.caption(
+                f"Lote ativo: {len(games())} partida(s)"
+                + (f" — {', '.join(active_leagues[:3])}" if active_leagues else "")
+                + (". A nova importação substituirá esta lista ativa." if replace_current_lot else ". Os novos jogos serão somados a ela.")
+            )
         raw_text = st.text_area(
             "Programação copiada",
             height=300,
@@ -1522,8 +1562,12 @@ def render_bulk_import() -> None:
         )
 
         selected = edited[edited["Usar"].fillna(False).astype(bool)].copy()
+        destination_text = (
+            "formarão um novo lote ativo" if replace_current_lot
+            else "serão acrescentadas ao lote ativo"
+        )
         st.info(
-            f"{len(selected)} partida(s) marcada(s) para importação. "
+            f"{len(selected)} partida(s) marcada(s) {destination_text}. "
             "Os mercados adicionais permanecerão vazios até o preenchimento manual."
         )
         if not st.button(
@@ -1599,7 +1643,9 @@ def render_bulk_import() -> None:
         try:
             with st.status("Gravando partidas no Google Sheets...", expanded=True) as status:
                 st.write(f"Enviando {len(prepared)} partida(s) e as respectivas cotações 1X2 em lote.")
-                result = upsert_games_batch(prepared, bankroll)
+                result = upsert_games_batch(
+                    prepared, bankroll, replace_current_lot=replace_current_lot
+                )
                 status.update(label="Partidas gravadas e confirmadas.", state="complete", expanded=False)
         except Exception as exc:
             detalhe = str(exc)
@@ -1627,10 +1673,15 @@ def render_bulk_import() -> None:
             return
         st.session_state.pop("tex_import_preview", None)
         st.session_state.tex_flash = True
+        mode_message = (
+            "Novo lote ativo criado" if result.get("substituiu_lote")
+            else "Jogos adicionados ao lote ativo"
+        )
         st.session_state.tex_flash_message = (
-            f"Importação concluída: {result['adicionadas']} partida(s) adicionada(s), "
-            f"{result['atualizadas']} atualizada(s) e {result['cotacoes']} cotação(ões) "
-            "1X2 confirmada(s) na planilha."
+            f"{mode_message}: {result['partidas_ativas']} partida(s) ativas; "
+            f"{result['adicionadas']} nova(s), {result['atualizadas']} atualizada(s) e "
+            f"{result['cotacoes']} cotação(ões) 1X2 confirmada(s). "
+            "Os lotes anteriores permanecem preservados nas planilhas históricas."
         )
         st.rerun()
 
