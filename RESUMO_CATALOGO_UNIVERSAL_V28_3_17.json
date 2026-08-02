@@ -1,0 +1,59 @@
+{
+  "versao": "28.3.17",
+  "ligas": 24,
+  "vinculos_historicos_liga_equipe": 888,
+  "equipes_canonicas_historicas_distintas": 783,
+  "vinculos_sazonais_configurados": 38,
+  "vinculos_sazonais_ausentes_do_historico": 4,
+  "vinculos_liga_equipe_disponiveis": 892,
+  "equipes_canonicas_distintas_disponiveis": 786,
+  "aliases_explicitos": 183,
+  "overlays": {
+    "D2-2026": [
+      "Bielefeld",
+      "Bochum",
+      "Braunschweig",
+      "Cottbus",
+      "Darmstadt",
+      "Dresden",
+      "Greuther Furth",
+      "Hannover",
+      "Heidenheim",
+      "Hertha",
+      "Kaiserslautern",
+      "Karlsruhe",
+      "Holstein Kiel",
+      "Magdeburg",
+      "Nurnberg",
+      "Osnabruck",
+      "St Pauli",
+      "Wolfsburg"
+    ],
+    "P1-2026": [
+      "Academico Viseu",
+      "Alverca",
+      "Arouca",
+      "Benfica",
+      "Casa Pia",
+      "Estoril",
+      "Estrela",
+      "Famalicao",
+      "Gil Vicente",
+      "Guimaraes",
+      "Maritimo",
+      "Moreirense",
+      "Nacional",
+      "Porto",
+      "Rio Ave",
+      "Santa Clara",
+      "Sp Braga",
+      "Sp Lisbon"
+    ],
+    "T1-2026": [
+      "Amed SK",
+      "Corum FK"
+    ]
+  },
+  "contingencia_clube_novo": "Disponível somente mediante confirmação manual explícita; não cria histórico.",
+  "observacao": "A V28.3.17 acrescenta Amed SK e Corum FK como candidatos sazonais T1 2026/27, variantes de Goztepe Izmir e transliteração do i turco sem ponto."
+}

@@ -8,12 +8,20 @@ import math
 import re
 import unicodedata
 
-IMPORTER_API_VERSION = "28.3.16"
+IMPORTER_API_VERSION = "28.3.17"
 
 _DATE_RE = re.compile(r"^(?P<day>\d{1,2})/(?P<month>\d{1,2})(?:/(?P<year>\d{2}|\d{4}))?$")
 _TIME_RE = re.compile(r"^(?P<hour>\d{1,2}):(?P<minute>\d{2})$")
 _NUMBER_RE = re.compile(r"^\d+(?:[\.,]\d+)?$")
 _INLINE_ODD_RE = re.compile(r"^(?P<label>.+?)\s+(?P<odd>\d{1,3}[\.,]\d{1,3})$")
+
+# Caracteres que não são decompostos de forma útil pelo NFKD. A tradução
+# ocorre antes da remoção de diacríticos para preservar nomes turcos,
+# escandinavos e centro-europeus em comparações ASCII estáveis.
+_SPECIAL_CHAR_TRANSLATION = str.maketrans({
+    "ı": "i", "ø": "o", "đ": "d", "ł": "l", "æ": "ae",
+    "œ": "oe", "ß": "ss", "þ": "th", "ð": "d",
+})
 
 _UI_NOISE_PREFIXES = (
     "rodada ", "sabado", "sábado", "domingo", "segunda", "terca", "terça",
@@ -209,6 +217,18 @@ _EXPLICIT_CANONICAL_ALIASES: dict[str, str] = {
     "adana demirspor": "Ad. Demirspor",
     "fatih karagumruk": "Karagumruk",
     "goztepe": "Goztep",
+    "goztepe izmir": "Goztep",
+    "goztepe sk": "Goztep",
+    "goztepe spor kulubu": "Goztep",
+    "corum fk": "Corum FK",
+    "corum futbol kulubu": "Corum FK",
+    "ahl atci corum fk": "Corum FK",
+    "ahlatci corum fk": "Corum FK",
+    "corum belediyespor": "Corum FK",
+    "amed sk": "Amed SK",
+    "amedspor": "Amed SK",
+    "amed sportif faaliyetler": "Amed SK",
+    "amed sportif faaliyetler kulubu": "Amed SK",
     # Grécia
     "aek athens": "AEK",
     "paok thessaloniki": "PAOK",
@@ -238,6 +258,12 @@ _SEASONAL_ROSTER_OVERLAYS: dict[tuple[str, int], tuple[str, ...]] = {
         "Estoril", "Estrela", "Famalicao", "Gil Vicente", "Guimaraes",
         "Maritimo", "Moreirense", "Nacional", "Porto", "Rio Ave",
         "Santa Clara", "Sp Braga", "Sp Lisbon",
+    ),
+    # Süper Lig 2026/27: clubes sem ocorrência anterior na primeira divisão
+    # do recorte local precisam existir como candidatos sazonais. Goztep já
+    # possui histórico T1; suas grafias comerciais são tratadas nos aliases.
+    ("T1", 2026): (
+        "Amed SK", "Corum FK",
     ),
 }
 
@@ -327,7 +353,8 @@ class TeamResolution:
 
 
 def normalize_name(value: Any) -> str:
-    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    text = str(value or "").casefold().translate(_SPECIAL_CHAR_TRANSLATION)
+    text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return " ".join(text.split())
@@ -336,6 +363,35 @@ def normalize_name(value: Any) -> str:
 def simplified_name(value: Any) -> str:
     tokens = [token for token in normalize_name(value).split() if token not in _DROP_TOKENS]
     return " ".join(tokens)
+
+
+def canonicalize_new_team_name(value: Any) -> str:
+    """Cria um nome canônico conservador para clube novo confirmado pelo usuário.
+
+    O recurso não tenta inferir história nem liga. Ele apenas translitera, remove
+    pontuação e preserva siglas institucionais em maiúsculas. Retorna vazio para
+    textos curtos, números, rótulos de mercado ou conteúdo sem letras.
+    """
+    normalized = normalize_name(value)
+    if not normalized or not re.search(r"[a-z]", normalized):
+        return ""
+    if normalized in {"empate", "sim", "nao", "mais de", "menos de"}:
+        return ""
+    tokens = normalized.split()
+    if not tokens or all(token.isdigit() for token in tokens):
+        return ""
+    if len("".join(tokens)) < 3:
+        return ""
+    acronym_tokens = _INSTITUTION_TOKENS | {"ud", "cf", "cd", "rb", "afc", "bsc"}
+    words: list[str] = []
+    for token in tokens:
+        if token in acronym_tokens and len(token) <= 5:
+            words.append(token.upper())
+        elif token.isdigit():
+            words.append(token)
+        else:
+            words.append(token.capitalize())
+    return " ".join(words)
 
 
 def _clean_lines(raw_text: str) -> list[str]:

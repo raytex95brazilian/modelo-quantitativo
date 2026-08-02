@@ -18,7 +18,7 @@ LATEST, _ = latest_team_catalog(MATCHES)
 UNIVERSAL = all_team_catalog(MATCHES)
 BY_SEASON = seasonal_team_catalog(MATCHES)
 
-assert IMPORTER_API_VERSION == "28.3.16"
+assert IMPORTER_API_VERSION == "28.3.17"
 assert set(UNIVERSAL) == set(LEAGUES)
 assert set(BY_SEASON) == set(LEAGUES)
 assert sum(len(values) for values in UNIVERSAL.values()) >= 888
@@ -120,6 +120,6 @@ assert finland["league_code"] == "FIN", finland
 assert finland["home"] == "VPS" and finland["away"] == "Ilves", finland
 
 print(
-    "TESTE DO CATÁLOGO UNIVERSAL V28.3.16: OK — "
+    "TESTE DO CATÁLOGO UNIVERSAL V28.3.17: OK — "
     f"{len(LEAGUES)} ligas e {sum(len(v) for v in UNIVERSAL.values())} vínculos liga/equipe."
 )

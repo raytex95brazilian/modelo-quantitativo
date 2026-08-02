@@ -28,9 +28,9 @@ EXPECTED_FILES = [
     "tex_v25_atualizacao.py",
     "requirements.txt",
     "runtime.txt",
-    "RELATORIO_V28_3_15.md",
+    "RELATORIO_V28_3_17.md",
     "CATALOGO_UNIVERSAL_EQUIPES_24_LIGAS.csv",
-    "RESUMO_CATALOGO_UNIVERSAL_V28_3_16.json",
+    "RESUMO_CATALOGO_UNIVERSAL_V28_3_17.json",
     "data/TEX_V22_DADOS_24_LIGAS.zip",
     "model/metadata.json",
     "model/reliability_profiles.csv",
@@ -56,7 +56,7 @@ assert 'EXPECTED_OPERATION_API = "28.3.12"' in app_source
 assert 'evaluate_lot_2018(current_games, matches)' in app_source
 assert 'build_operational_outputs(' in app_source
 assert 'Somente jogos aprovados no filtro de 2018' in app_source
-assert 'INTERFACE_VERSION = "V28.3.16"' in app_source
+assert 'INTERFACE_VERSION = "V28.3.17"' in app_source
 assert 'Partida e cotações — etapa única' in app_source
 assert 'CONFIRMAR CONFRONTO' not in app_source
 assert 'Etapa 1 de 2' not in app_source
@@ -80,6 +80,8 @@ assert 'Últimos 5 em casa' in app_source
 assert 'Últimos 5 fora' in app_source
 assert 'build_lot_form_contexts(current_games, matches)' in app_source
 assert 'INTERPRETAR E PREENCHER AUTOMATICAMENTE' in app_source
+assert 'Permitir clubes novos ausentes do histórico' in app_source
+assert 'canonicalize_new_team_name' in app_source
 assert 'Colar jogos e cotações 1X2' in app_source
 assert 'resolve_imported_matches' in app_source
 assert 'all_team_catalog' in app_source
@@ -135,7 +137,7 @@ assert core.V28_CFG.max_entries == 0
 assert core.V28_CFG.strong_price_ev == 0.0
 assert core.V28_CFG.fallback_min_ev == 0.0
 assert storage.STORAGE_API_VERSION == "28.3.6"
-assert importer.IMPORTER_API_VERSION == "28.3.16"
+assert importer.IMPORTER_API_VERSION == "28.3.17"
 assert "Lote JSON" in storage.COLUNAS_LOTE_PENDENTE
 assert "ID Evento" in storage.COLUNAS_EVENTOS_LOTE
 assert storage.COLUNAS_COTACOES[-1] == "Versão do filtro 2018"
@@ -161,7 +163,7 @@ with gzip.open(ROOT / "backtest" / "V28_OOS_PREDICTIONS.csv.gz", "rb") as handle
 summary = json.loads(
     (ROOT / "backtest" / "V28_1_5_7_META_5_RESUMO.json").read_text(encoding="utf-8")
 )
-assert summary["entries"] > 0  # artefato histórico, sem poder operacional na V28.3.16
+assert summary["entries"] > 0  # artefato histórico, sem poder operacional na V28.3.17
 
 for path in ROOT.rglob("*"):
     if path.is_file() and path.suffix != ".pyc" and "__pycache__" not in path.parts and path.stat().st_size < 5_000_000:
@@ -192,4 +194,4 @@ for relative, path in distributed_files.items():
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert manifest_entries[relative] == digest, f"SHA-256 divergente: {relative}"
 
-print("TESTE DE INTEGRIDADE DO PACOTE V28.3.16: OK")
+print("TESTE DE INTEGRIDADE DO PACOTE V28.3.17: OK")

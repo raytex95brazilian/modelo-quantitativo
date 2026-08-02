@@ -1,6 +1,6 @@
 from tex_importador_programacao import IMPORTER_API_VERSION, resolve_team_in_league
 
-assert IMPORTER_API_VERSION == "28.3.16"
+assert IMPORTER_API_VERSION == "28.3.17"
 
 cases = [
     ("SWE", "IFK Gotemburgo", "Goteborg"),
@@ -20,4 +20,4 @@ for code, raw, expected in cases:
     assert resolved == expected, (code, raw, resolved, score)
     assert score >= 0.98, (code, raw, score)
 
-print("TESTE DE NOMES LOCALIZADOS V28.3.16: OK")
+print("TESTE DE NOMES LOCALIZADOS V28.3.17: OK")

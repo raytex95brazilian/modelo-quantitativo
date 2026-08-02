@@ -40,9 +40,9 @@ EXPECTED_STORAGE_API = "28.3.6"
 EXPECTED_FINANCE_API = "28.1.5.12"
 EXPECTED_FILTER_API = "28.3.11"
 EXPECTED_OPERATION_API = "28.3.12"
-EXPECTED_IMPORTER_API = "28.3.16"
-INTERFACE_VERSION = "V28.3.16"
-APP_NAME = "Tex Statistics V28.3.16 — Catálogo universal e nomes localizados"
+EXPECTED_IMPORTER_API = "28.3.17"
+INTERFACE_VERSION = "V28.3.17"
+APP_NAME = "Tex Statistics V28.3.17 — Catálogo universal e promovidos da Süper Lig"
 CORE_NAME = getattr(_v28, "APP_NAME", "Tex Statistics V28.1.2 — Estado Isolado")
 CORE_DISPLAY_NAME = "V28.1.2 — Estado Isolado"
 MODEL_VERSION = getattr(_v28, "MODEL_VERSION", "V28.0")
@@ -78,7 +78,7 @@ _REQUIRED_FILTER_2018 = ("evaluate_lot_2018", "build_lot_form_contexts")
 _REQUIRED_OPERATION_FILTERED = ("attach_filter_results", "build_operational_outputs")
 _REQUIRED_IMPORTER = (
     "parse_pasted_schedule", "resolve_imported_matches",
-    "resolve_team_in_league",
+    "resolve_team_in_league", "canonicalize_new_team_name",
 )
 
 _IMPORT_PROBLEMS = list(_MODULE_IMPORT_ERRORS)
@@ -181,6 +181,7 @@ build_operational_outputs = getattr(_operacao_filtrada, "build_operational_outpu
 parse_pasted_schedule = getattr(_importador, "parse_pasted_schedule", None)
 resolve_imported_matches = getattr(_importador, "resolve_imported_matches", None)
 resolve_team_in_league = getattr(_importador, "resolve_team_in_league", None)
+canonicalize_new_team_name = getattr(_importador, "canonicalize_new_team_name", None)
 
 
 def build_ai_summary(
@@ -418,7 +419,7 @@ if _IMPORT_PROBLEMS:
     st.code("\n".join(_IMPORT_PROBLEMS), language="text")
     st.info(
         "O deploy misturou arquivos de versões diferentes. Substitua TODO o conteúdo da raiz "
-        "pelo mesmo pacote V28.3.16, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
+        "pelo mesmo pacote V28.3.17, confirme os módulos do filtro de 2018 e de armazenamento no GitHub, "
         "faça commit e execute Reboot app no Streamlit Cloud."
     )
     st.stop()
@@ -1731,6 +1732,16 @@ def render_bulk_import() -> None:
             "de todas as temporadas das 24 ligas, com prioridade para a temporada da partida. "
             "Você pode corrigir liga, nomes, data, horário ou cotações diretamente na tabela."
         )
+        allow_new_teams = st.checkbox(
+            "Permitir clubes novos ausentes do histórico, após conferência manual",
+            value=False,
+            key="tex_import_allow_new_teams",
+            help=(
+                "Use somente para equipes promovidas ou estreantes que realmente pertencem à liga "
+                "selecionada. Marque a partida em Importar, escolha a liga e confira os dois nomes. "
+                "O clube será salvo sem inventar histórico; a análise poderá indicar dados insuficientes."
+            ),
+        )
 
         editable_columns = [
             "Usar", "Status", "Confiança", "Liga", "Data", "Hora",
@@ -1780,6 +1791,7 @@ def render_bulk_import() -> None:
 
         prepared: list[dict] = []
         errors: list[str] = []
+        new_team_notices: list[str] = []
         for position, row in selected.reset_index(drop=True).iterrows():
             label = f"Linha {position + 1}"
             league_name = str(row.get("Liga", "") or "").strip()
@@ -1814,11 +1826,31 @@ def render_bulk_import() -> None:
                 teams_by_season=teams_by_season,
             )
             if not home or home_score < 0.72:
-                errors.append(f"{label}: mandante não reconhecido em {league_name}: {row.get('Mandante', '')!r}.")
-                continue
+                if allow_new_teams and callable(canonicalize_new_team_name):
+                    home = canonicalize_new_team_name(row.get("Mandante", ""))
+                    if home:
+                        new_team_notices.append(
+                            f"{label}: novo mandante confirmado em {league_name}: {home}."
+                        )
+                    else:
+                        errors.append(f"{label}: nome do mandante novo é inválido.")
+                        continue
+                else:
+                    errors.append(f"{label}: mandante não reconhecido em {league_name}: {row.get('Mandante', '')!r}.")
+                    continue
             if not away or away_score < 0.72:
-                errors.append(f"{label}: visitante não reconhecido em {league_name}: {row.get('Visitante', '')!r}.")
-                continue
+                if allow_new_teams and callable(canonicalize_new_team_name):
+                    away = canonicalize_new_team_name(row.get("Visitante", ""))
+                    if away:
+                        new_team_notices.append(
+                            f"{label}: novo visitante confirmado em {league_name}: {away}."
+                        )
+                    else:
+                        errors.append(f"{label}: nome do visitante novo é inválido.")
+                        continue
+                else:
+                    errors.append(f"{label}: visitante não reconhecido em {league_name}: {row.get('Visitante', '')!r}.")
+                    continue
             if home == away:
                 errors.append(f"{label}: mandante e visitante foram resolvidos como a mesma equipe.")
                 continue
@@ -1856,6 +1888,13 @@ def render_bulk_import() -> None:
             for error in errors[:20]:
                 st.write("• " + error)
             return
+        if new_team_notices:
+            st.warning(
+                "Clubes novos confirmados manualmente. Eles serão gravados na liga selecionada, "
+                "mas não receberão histórico artificial."
+            )
+            for notice in new_team_notices[:20]:
+                st.write("• " + notice)
         try:
             with st.status("Gravando partidas no Google Sheets...", expanded=True) as status:
                 st.write(f"Enviando {len(prepared)} partida(s) e as respectivas cotações 1X2 em lote.")

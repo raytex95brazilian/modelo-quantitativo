@@ -1,7 +1,7 @@
 from datetime import date
 from tex_importador_programacao import IMPORTER_API_VERSION, resolve_team_in_league
 
-assert IMPORTER_API_VERSION == "28.3.16"
+assert IMPORTER_API_VERSION == "28.3.17"
 
 # O catálogo histórico deliberadamente não contém o promovido, reproduzindo a falha real.
 teams_by_code = {"P1": [
@@ -27,4 +27,4 @@ team_old, score_old = resolve_team_in_league(
 )
 assert score_old < 0.72, (team_old, score_old)
 
-print("TESTE PRIMEIRA LIGA 2026/27 V28.3.16: OK")
+print("TESTE PRIMEIRA LIGA 2026/27 V28.3.17: OK")
