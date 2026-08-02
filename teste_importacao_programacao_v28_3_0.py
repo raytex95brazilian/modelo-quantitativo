@@ -9,7 +9,7 @@ from tex_importador_programacao import (
 from tex_operacional_core import latest_team_catalog
 from tex_v25_core import LEAGUES, normalize_zip
 
-assert IMPORTER_API_VERSION == "28.3.15"
+assert IMPORTER_API_VERSION == "28.3.16"
 
 RAW = """
 08/08

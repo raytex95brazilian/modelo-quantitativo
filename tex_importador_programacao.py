@@ -8,7 +8,7 @@ import math
 import re
 import unicodedata
 
-IMPORTER_API_VERSION = "28.3.15"
+IMPORTER_API_VERSION = "28.3.16"
 
 _DATE_RE = re.compile(r"^(?P<day>\d{1,2})/(?P<month>\d{1,2})(?:/(?P<year>\d{2}|\d{4}))?$")
 _TIME_RE = re.compile(r"^(?P<hour>\d{1,2}):(?P<minute>\d{2})$")
@@ -245,7 +245,7 @@ _SEASONAL_ROSTER_OVERLAYS: dict[tuple[str, int], tuple[str, ...]] = {
 # preserva distinções como Atlético-GO x Atlético-MG, sem deixar de aceitar
 # prefixos como FC, SC, EC e sufixos estaduais usados por alguns operadores.
 _INSTITUTION_TOKENS = {
-    "fc", "sc", "ec", "ac", "cf", "afc", "cfc", "club", "clube",
+    "fc", "sc", "ec", "ac", "cf", "afc", "cfc", "ifk", "club", "clube",
     "futebol", "football", "fk", "sk", "if", "bk", "ff", "ik", "kv",
     "ca", "cd", "cr", "cs", "se", "aa", "ad", "sd", "ud", "rc", "rcd",
     "ssc", "ss", "us", "sv", "vfb", "vfl", "fsv", "tsg", "sg", "dsc",
@@ -268,6 +268,29 @@ _TOKEN_EQUIVALENTS = {
     "atl": "atletico",
     "sp": "sporting",
     "ind": "independiente",
+    # Exônimos e grafias localizadas frequentes em casas de apostas em português/inglês.
+    "gotemburgo": "goteborg",
+    "gothenburg": "goteborg",
+    "goeteborg": "goteborg",
+    "munique": "munich",
+    "milao": "milan",
+    "lisboa": "lisbon",
+    "marselha": "marseille",
+    "sevilha": "sevilla",
+    "napoles": "napoli",
+    "turim": "torino",
+    "colonia": "koln",
+    "nuremberg": "nurnberg",
+    "hanover": "hannover",
+    "salonica": "thessaloniki",
+    "tessalonica": "thessaloniki",
+    "atenas": "athens",
+    "pireu": "piraeus",
+    "pequim": "beijing",
+    "xangai": "shanghai",
+    "cantao": "guangzhou",
+    "nova": "new",
+    "iorque": "york",
 }
 
 
@@ -534,9 +557,13 @@ def _token_containment_score(raw_name: str, canonical: str) -> float:
 def _team_match_score(raw_name: str, canonical: str) -> float:
     raw_normalized = normalize_name(raw_name)
     canonical_normalized = normalize_name(canonical)
-    explicit_target = _EXPLICIT_CANONICAL_ALIASES.get(raw_normalized)
-    if explicit_target and normalize_name(explicit_target) == canonical_normalized:
-        return 1.0
+    # Procura aliases também após remover artigos/prefixos e converter exônimos.
+    # Ex.: "IFK Gotemburgo" -> "ifk goteborg" -> Goteborg;
+    # "Inter de Milão" -> "inter milan" -> Inter.
+    for alias_form in _candidate_forms(raw_name) | {raw_normalized}:
+        explicit_target = _EXPLICIT_CANONICAL_ALIASES.get(alias_form)
+        if explicit_target and normalize_name(explicit_target) == canonical_normalized:
+            return 1.0
     if raw_normalized == canonical_normalized:
         return 1.0
 

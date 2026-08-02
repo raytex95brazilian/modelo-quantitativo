@@ -18,7 +18,7 @@ LEAGUES = {
     "SWE": "Suécia - Allsvenskan",
 }
 
-assert IMPORTER_API_VERSION == "28.3.15"
+assert IMPORTER_API_VERSION == "28.3.16"
 
 EXPECTED = {
     "VPS Vaasa": "VPS",
@@ -50,4 +50,4 @@ for home_raw, away_raw, home, away in (
     assert result["home_score"] == 1.0, result
     assert result["away_score"] == 1.0, result
 
-print("TESTE DE RECONHECIMENTO DA VEIKKAUSLIIGA V28.3.15: OK")
+print("TESTE DE RECONHECIMENTO DA VEIKKAUSLIIGA V28.3.16: OK")

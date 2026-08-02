@@ -1,0 +1,11 @@
+{
+  "versao": "28.3.16",
+  "ligas": 24,
+  "vinculos_historicos_liga_equipe": 888,
+  "equipes_sazonais_adicionais": 1,
+  "vinculos_liga_equipe_disponiveis": 889,
+  "equipes_canonicas_distintas_disponiveis": 784,
+  "aliases_explicitos": 171,
+  "observacao": "O catálogo universal e os overlays sazonais são preservados. A V28.3.16 acrescenta normalização de exônimos e grafias localizadas, incluindo IFK Gotemburgo -> Goteborg.",
+  "normalizacoes_localizadas": 20
+}
