@@ -1,4 +1,4 @@
-# Metodologia operacional — V28.3.14
+# Metodologia operacional — V28.3.15
 
 ## Motor
 
@@ -20,4 +20,4 @@ O motor identifica que a base histórica não possui odds completas desse mercad
 
 ## Evidência retrospectiva
 
-Os artefatos antigos de meta semanal permanecem no pacote somente para auditoria histórica e não controlam a V28.3.14. Resultados passados não garantem desempenho futuro.
+Os artefatos antigos de meta semanal permanecem no pacote somente para auditoria histórica e não controlam a V28.3.15. Resultados passados não garantem desempenho futuro.

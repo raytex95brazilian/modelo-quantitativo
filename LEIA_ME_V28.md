@@ -1,8 +1,8 @@
-# Tex Statistics V28.3.14
+# Tex Statistics V28.3.15
 
-- interface: V28.3.14;
+- interface: V28.3.15;
 - armazenamento: 28.3.6;
-- importador: 28.3.14;
+- importador: 28.3.15;
 - núcleo preditivo: 28.1.2;
 - filtro de 2018: 28.3.11;
 - camada operacional: 28.3.12.

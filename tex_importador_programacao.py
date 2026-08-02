@@ -8,7 +8,7 @@ import math
 import re
 import unicodedata
 
-IMPORTER_API_VERSION = "28.3.14"
+IMPORTER_API_VERSION = "28.3.15"
 
 _DATE_RE = re.compile(r"^(?P<day>\d{1,2})/(?P<month>\d{1,2})(?:/(?P<year>\d{2}|\d{4}))?$")
 _TIME_RE = re.compile(r"^(?P<hour>\d{1,2}):(?P<minute>\d{2})$")
@@ -180,6 +180,14 @@ _EXPLICIT_CANONICAL_ALIASES: dict[str, str] = {
     "vitoria guimaraes": "Guimaraes",
     "sl benfica": "Benfica",
     "pacos de ferreira": "Pacos Ferreira",
+    "academico viseu": "Academico Viseu",
+    "academico de viseu": "Academico Viseu",
+    "academico de viseu fc": "Academico Viseu",
+    "ac viseu": "Academico Viseu",
+    "academico viseu fc": "Academico Viseu",
+    "cs maritimo": "Maritimo",
+    "maritimo madeira": "Maritimo",
+    "maritimo m": "Maritimo",
     # Holanda
     "psv": "PSV Eindhoven",
     "fortuna sittard": "For Sittard",
@@ -221,6 +229,15 @@ _SEASONAL_ROSTER_OVERLAYS: dict[tuple[str, int], tuple[str, ...]] = {
         "Dresden", "Greuther Furth", "Hannover", "Heidenheim", "Hertha",
         "Kaiserslautern", "Karlsruhe", "Holstein Kiel", "Magdeburg",
         "Nurnberg", "Osnabruck", "St Pauli", "Wolfsburg",
+    ),
+    # Primeira Liga 2026/27. O Académico de Viseu regressou à elite após
+    # um intervalo anterior ao recorte histórico local; por isso precisa
+    # entrar como candidato sazonal mesmo sem partidas P1 desde 2012.
+    ("P1", 2026): (
+        "Academico Viseu", "Alverca", "Arouca", "Benfica", "Casa Pia",
+        "Estoril", "Estrela", "Famalicao", "Gil Vicente", "Guimaraes",
+        "Maritimo", "Moreirense", "Nacional", "Porto", "Rio Ave",
+        "Santa Clara", "Sp Braga", "Sp Lisbon",
     ),
 }
 
